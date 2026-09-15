@@ -1,0 +1,42 @@
+\documentclass[a4paper,11pt]{jsarticle}
+
+\usepackage{amsmath}
+\usepackage{booktabs}
+\usepackage[dvipdfmx]{graphicx}
+
+\begin{document}
+
+\section{見出しサンプル}
+
+段落のサンプルです。特殊文字のエスケープ確認: \% \& \_ \# なども想定しています。
+
+\begin{itemize}
+  \item 項目1
+  \item 項目2
+  \item 項目3
+\end{itemize}
+
+\begin{align}
+  x = \frac{-b \pm \sqrt{b^{2}-4ac}}{2a}
+\end{align}
+
+\begin{table}[htbp]
+  \centering
+  \caption{サンプル表}
+  \begin{tabular}{lc}
+    \toprule
+    列A & 列B \\
+    \midrule
+    1 & 2 \\
+    3 & 4 \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\begin{figure}[htbp]
+  \centering
+  \includegraphics[width=0.6\linewidth]{sample-image.png}
+  \caption{サンプル画像}
+\end{figure}
+
+\end{document}

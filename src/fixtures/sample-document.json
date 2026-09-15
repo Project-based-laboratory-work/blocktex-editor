@@ -1,0 +1,47 @@
+{
+  "schemaVersion": 1,
+  "id": "doc-sample",
+  "title": "サンプル文書",
+  "blocks": [
+    {
+      "id": "blk-heading",
+      "type": "heading",
+      "level": 1,
+      "text": "見出しサンプル"
+    },
+    {
+      "id": "blk-paragraph",
+      "type": "paragraph",
+      "text": "段落のサンプルです。特殊文字のエスケープ確認: % & _ # なども想定しています。"
+    },
+    {
+      "id": "blk-list",
+      "type": "list",
+      "items": ["項目1", "項目2", "項目3"]
+    },
+    {
+      "id": "blk-math",
+      "type": "math",
+      "displayMode": true,
+      "tex": "x = \\frac{-b \\pm \\sqrt{b^{2}-4ac}}{2a}"
+    },
+    {
+      "id": "blk-table",
+      "type": "table",
+      "caption": "サンプル表",
+      "columns": [{ "align": "l" }, { "align": "c" }],
+      "header": ["列A", "列B"],
+      "rows": [
+        ["1", "2"],
+        ["3", "4"]
+      ]
+    },
+    {
+      "id": "blk-image",
+      "type": "image",
+      "src": "sample-image.png",
+      "caption": "サンプル画像",
+      "widthRatio": 0.6
+    }
+  ]
+}
