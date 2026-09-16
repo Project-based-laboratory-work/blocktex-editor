@@ -30,11 +30,8 @@
       "type": "table",
       "caption": "サンプル表",
       "columns": [{ "align": "l" }, { "align": "c" }],
-      "header": ["列A", "列B"],
-      "rows": [
-        ["1", "2"],
-        ["3", "4"]
-      ]
+      "header": { "cells": ["列A", "列B"] },
+      "rows": [{ "cells": ["1", "2"] }, { "cells": ["3", "4"] }]
     },
     {
       "id": "blk-image",

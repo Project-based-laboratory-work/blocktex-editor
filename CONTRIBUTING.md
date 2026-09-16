@@ -5,6 +5,21 @@
 - `main` への直接pushは禁止。
 - 作業は `feature/xxx`（機能追加）や `phase0/xxx`（フェーズ単位の作業）のようなブランチを切って行い、GitHub上のPull Requestを経由して `main` にマージする。
 
+## CI（自動チェック）
+
+PRを出すと [.github/workflows/frontend.yml](.github/workflows/frontend.yml) が動き、`frontend/` に対して lint → フォーマット確認 → テスト → ビルド を実行する。これが通らないPRはマージしない。
+
+手元で同じ内容を先に確認できる:
+
+```bash
+cd frontend
+npm run lint && npm run format:check && npm run test && npm run build
+```
+
+`format:check` で落ちた場合は `npm run format` で整形すれば直る。
+
+GitHubのリポジトリ設定で `main` ブランチに保護ルール（PR必須・上記チェック必須）を入れておくと、「直接pushは禁止」が運用ではなく仕組みで担保される。
+
 ## リポジトリ構成
 
 モノレポ構成のため、作業するディレクトリに注意すること。
