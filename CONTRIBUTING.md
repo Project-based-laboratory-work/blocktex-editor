@@ -5,38 +5,47 @@
 - `main` への直接pushは禁止。
 - 作業は `feature/xxx`（機能追加）や `phase0/xxx`（フェーズ単位の作業）のようなブランチを切って行い、GitHub上のPull Requestを経由して `main` にマージする。
 
-## LaTeX（uplatex）開発環境の構築手順
+## リポジトリ構成
 
-このプロジェクトは **uplatex + jsarticle** でTeXをコンパイルする（`uplatex` を2回実行後、`dvipdfmx` でPDF化）。以下はメンバー各自の環境構築手順。
+モノレポ構成のため、作業するディレクトリに注意すること。
 
-### Linux（Debian/Ubuntu系）
+- `frontend/` — Webアプリ本体。npmコマンドはこのディレクトリで実行する（`cd frontend && npm install`）。
+- `ai/` — Phase 4の学習コード（Python）。Pythonの仮想環境はこのディレクトリに作る。
+- `docker/` — TeXコンパイル確認用のDockerイメージ定義とスクリプト。
+
+## TeX環境（Dockerを使う方法・推奨）
+
+メンバーのOSがバラバラでもTeXの環境を揃えられるよう、コンパイル確認用のDockerイメージを用意してある。各自ローカルにTeX Liveを入れる必要はない。
+
+### 1. イメージをビルドする（初回のみ）
 
 ```bash
-sudo apt install texlive-lang-japanese texlive-latex-extra
+docker build -t blocktex-tex -f docker/tex.Dockerfile docker/
 ```
 
-### macOS
+TeX Liveのダウンロードがあるため、初回は数分〜十数分かかる。
 
-[MacTeX](https://www.tug.org/mactex/) をインストールする（フル版で `uplatex`/`dvipdfmx` が含まれる）。容量を抑えたい場合は BasicTeX + `tlmgr` で `collection-langjapanese` を追加インストールする。
+### 2. .texをコンパイルする
 
-### Windows
+```bash
+docker/compile-tex.sh frontend/src/fixtures/sample-document.expected.tex
+```
 
-WSL2を導入し、Linux（Debian/Ubuntu）と同じ手順でTeX Liveを導入することを推奨する。
+指定した`.tex`と同じディレクトリにPDFが生成される。中では `uplatex`（2回）→ `dvipdfmx` を実行している。
 
-### 動作確認
+生成物（`.aux` `.dvi` `.log` `.pdf`）はgitignore済み。
+
+## TeX環境（Dockerを使わない方法）
+
+Dockerを使いたくない場合は各自でTeX Liveを導入する。バージョン差で結果が変わる可能性があるため、その場合も最終確認はDocker側で行うこと。
+
+- **Linux（Debian/Ubuntu系）**: `sudo apt install texlive-lang-japanese texlive-latex-extra`
+- **macOS**: [MacTeX](https://www.tug.org/mactex/) をインストール（BasicTeX + `tlmgr install collection-langjapanese` でも可）
+- **Windows**: WSL2を導入してLinuxと同じ手順
+
+動作確認:
 
 ```bash
 uplatex --version
 dvipdfmx --version
-```
-
-リポジトリのサンプルで実際にコンパイルできることを確認する:
-
-```bash
-cd src/fixtures
-cp sample-document.expected.tex /tmp/sample.tex
-cp sample-image.png /tmp/
-cd /tmp
-uplatex sample.tex && uplatex sample.tex && dvipdfmx sample.dvi
-# sample.pdf が生成され、エラーが出なければOK
 ```
