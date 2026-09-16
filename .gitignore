@@ -39,6 +39,9 @@ __pycache__/
 # TeX build artifacts
 *.aux
 *.dvi
+*.pdf
+*.toc
+*.out
 *.synctex.gz
 *.fdb_latexmk
 *.fls
