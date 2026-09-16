@@ -1,0 +1,4 @@
+# Phase 4 で使用予定。バージョンはIS計算機サーバのCUDA環境に合わせて着手時に確定する。
+torch
+numpy
+onnx

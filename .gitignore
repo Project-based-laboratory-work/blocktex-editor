@@ -24,4 +24,21 @@ dist-ssr
 *.sw?
 
 # Progress sheet & personal implementation notes (not shared with the team)
-docks/
+docs/
+
+# Firebase config (API keys etc.)
+.env
+.env.*
+!.env.example
+
+# Python (ai/)
+.venv/
+__pycache__/
+*.pyc
+
+# TeX build artifacts
+*.aux
+*.dvi
+*.synctex.gz
+*.fdb_latexmk
+*.fls
