@@ -1,17 +1,20 @@
 """
-4-1-2: ルールベースでブロックを 見出し/段落/表/図 に分類するベースライン実装。
+4-1-2: ルールベースでブロックを 見出し/段落/キャプション/表/図 に分類するベースライン実装。
 
 ルール:
   1. 表として検出された領域と重なるテキストは "table" として扱う（テキスト自体は重複させない）
   2. 図として検出された領域と重なるテキストは "figure" として扱う
-  3. 残ったテキストのうち、本文フォントサイズより明らかに大きい／太字のものを "heading"
-  4. それ以外を "paragraph"
+  3. 残ったテキストのうち、「図1」「Table 2」などで始まるものを "caption"
+  4. 本文フォントサイズより明らかに大きい／太字で、短いものを "heading"
+  5. それ以外を "paragraph"
 
 本文フォントサイズは、ページ内で最も多く使われているフォントサイズ（最頻値）を採用する。
+分類後のブロックは、2段組みを考慮した読み順（段をまたぐブロックで区切り、左の段→右の段）に並べる。
 Transformerによる分類（4-3）の精度比較用ベースラインとして使う。
 """
 
 import sys
+import re
 from dataclasses import dataclass
 
 from pdf_extract import PageBlocks, TextBlock, extract
@@ -19,13 +22,16 @@ from pdf_extract import PageBlocks, TextBlock, extract
 Bbox = tuple[float, float, float, float]
 
 HEADING_SIZE_RATIO = 1.3  # 本文フォントサイズの何倍から見出しとみなすか
+HEADING_MAX_CHARS = 50
 OVERLAP_RATIO_THRESHOLD = 0.5  # テキストbboxの何割が表/図と重なったら吸収するか
+CAPTION_PATTERN = re.compile(r"(図|表|Figure|Fig\.|Table)\s*\d+([.\-]\d+)*")
+COLUMN_GUTTER = 10.0
 
 
 @dataclass
 class ClassifiedBlock:
     page: int
-    kind: str  # "heading" | "paragraph" | "table" | "figure"
+    kind: str  # "heading" | "paragraph" | "table" | "figure" | "caption"
     bbox: Bbox
     text: str | None
 
@@ -53,6 +59,29 @@ def _body_font_size(text_blocks: list[TextBlock]) -> float:
     return max(counts, key=lambda size: counts[size])
 
 
+def _column_of(bbox: Bbox, page_width: float) -> int:
+    x0, _, x1, _ = bbox
+    center = page_width / 2
+    if x1 <= center + COLUMN_GUTTER:
+        return 1
+    if x0 >= center - COLUMN_GUTTER:
+        return 2
+    return 0
+
+
+def _sort_reading_order(blocks: list[ClassifiedBlock], page_width: float) -> list[ClassifiedBlock]:
+    columns = [_column_of(block.bbox, page_width) for block in blocks]
+    spanner_tops = sorted(block.bbox[1] for block, col in zip(blocks, columns) if col == 0)
+
+    def key(pair):
+        block, col = pair
+        top = block.bbox[1]
+        section = sum(1 for spanner_top in spanner_tops if spanner_top <= top)
+        return (section, col, top)
+
+    return [block for block, _ in sorted(zip(blocks, columns), key=key)]
+
+
 def classify_page(page: PageBlocks) -> list[ClassifiedBlock]:
     absorbed_bboxes = [t.bbox for t in page.table_blocks] + [f.bbox for f in page.figure_blocks]
     body_size = _body_font_size(page.text_blocks)
@@ -64,12 +93,18 @@ def classify_page(page: PageBlocks) -> list[ClassifiedBlock]:
         if any(_overlap_ratio(block.bbox, absorbed) >= OVERLAP_RATIO_THRESHOLD for absorbed in absorbed_bboxes):
             continue
 
-        is_heading = block.font_size >= body_size * HEADING_SIZE_RATIO or block.bold
-        kind = "heading" if is_heading else "paragraph"
-        results.append(ClassifiedBlock(page.page, kind, block.bbox, block.text))
+        is_large = block.font_size >= body_size * HEADING_SIZE_RATIO
+        is_short = len(block.text) <= HEADING_MAX_CHARS
 
-    results.sort(key=lambda b: (b.page, b.bbox[1]))
-    return results
+        if CAPTION_PATTERN.match(block.text):
+            kind = "caption"
+        elif (is_large or block.bold) and is_short:
+            kind = "heading"
+        else:
+            kind = "paragraph"
+        
+        results.append(ClassifiedBlock(page.page, kind, block.bbox, block.text))
+    return _sort_reading_order(results, page.width)
 
 
 def classify(pdf_path: str) -> list[ClassifiedBlock]:

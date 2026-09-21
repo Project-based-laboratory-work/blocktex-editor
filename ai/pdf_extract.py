@@ -1,14 +1,6 @@
 """
 4-1-1: PDFからテキスト・座標・フォントサイズを抽出する。
 
-- テキスト: PyMuPDF (pymupdf) の get_text("dict") でブロック単位のテキスト＋bbox＋フォント情報を取得
-- 表: pdfplumber の find_tables() でbboxを取得（罫線・列位置の検出精度がPyMuPDFより高いため）
-- 図: PyMuPDF の get_images() / get_drawings() でラスター画像・ベクター図形のbboxを取得
-
-選定理由・比較結果は README.md の「4-1-1 調査結果」を参照。
-
-使い方:
-    python pdf_extract.py sample_data/sample.pdf
 """
 
 import sys
@@ -38,12 +30,13 @@ class TableBlock:
 class FigureBlock:
     page: int
     bbox: tuple[float, float, float, float]
-    source: str  # "image" (ラスター画像) or "drawing" (ベクター図形)
+    source: str 
 
 
 @dataclass
 class PageBlocks:
     page: int
+    width: float
     text_blocks: list[TextBlock] = field(default_factory=list)
     table_blocks: list[TableBlock] = field(default_factory=list)
     figure_blocks: list[FigureBlock] = field(default_factory=list)
@@ -90,11 +83,11 @@ def _extract_text_blocks(page: pymupdf.Page, page_no: int) -> list[TextBlock]:
     return blocks
 
 
-def _extract_table_blocks(pdf_path: str, page_no: int) -> list[TableBlock]:
-    with pdfplumber.open(pdf_path) as pdf:
-        page = pdf.pages[page_no]
-        return [TableBlock(page=page_no, bbox=table.bbox) for table in page.find_tables()]
-
+def _extract_table_blocks(page: pdfplumber.page.Page, page_no: int) -> list[TableBlock]:
+    result = []
+    for table in page.find_tables():
+        result.append(TableBlock(page=page_no, bbox=table.bbox))
+    return result
 
 def _extract_figure_blocks(page: pymupdf.Page, page_no: int) -> list[FigureBlock]:
     figures = []
@@ -105,26 +98,80 @@ def _extract_figure_blocks(page: pymupdf.Page, page_no: int) -> list[FigureBlock
 
     for drawing in page.get_drawings():
         rect = drawing["rect"]
-        # 罫線1本などの細長い矩形は表の枠線であることが多く図として扱わないため除外
-        if rect.width > 5 and rect.height > 5:
-            figures.append(FigureBlock(page=page_no, bbox=tuple(rect), source="drawing"))
-
+        figures.append(FigureBlock(page=page_no, bbox=tuple(rect), source="drawing"))
     return figures
 
 
-def extract(pdf_path: str) -> list[PageBlocks]:
-    doc = pymupdf.open(pdf_path)
-    pages = []
-    for page_no, page in enumerate(doc):
-        pages.append(
-            PageBlocks(
-                page=page_no,
-                text_blocks=_extract_text_blocks(page, page_no),
-                table_blocks=_extract_table_blocks(pdf_path, page_no),
-                figure_blocks=_extract_figure_blocks(page, page_no),
+def _union_bbox(bboxes: list[tuple[float, float, float, float]]) -> tuple[float, float, float, float]:
+    return (
+        min(bbox[0] for bbox in bboxes),
+        min(bbox[1] for bbox in bboxes),
+        max(bbox[2] for bbox in bboxes),
+        max(bbox[3] for bbox in bboxes),
+    )
+
+def _merge_figure_blocks(figure_blocks: list[FigureBlock],margin: float = 5.0,min_size: float = 5.0,) -> list[FigureBlock]:
+    def _is_near(bbox_a, bbox_b, margin: float) -> bool:
+        ax0,ay0,ax1,ay1 = bbox_a
+        bx0,by0,bx1,by1 = bbox_b
+        ax0, ay0, ax1, ay1 = ax0 - margin, ay0 - margin, ax1 + margin, ay1 + margin
+
+        overlap_w = max(0.0,min(ax1,bx1) - max(ax0,bx0))
+        overlap_h = max(0.0,min(ay1,by1) - max(ay0,by0))
+
+        return overlap_h * overlap_w > 0.0
+    
+    remaining = list(figure_blocks)
+    merged = []
+
+    while remaining:
+        group = [remaining.pop(0)]
+        group_bbox = group[0].bbox
+
+        while True:
+            near = [block for block in remaining if _is_near(group_bbox, block.bbox, margin)]
+            if not near:
+                break
+            
+            group.extend(near)
+            remaining = [block for block in remaining if block not in near]
+            group_bbox = _union_bbox([block.bbox for block in group])
+        
+        width = group_bbox[2] - group_bbox[0]
+        height = group_bbox[3] - group_bbox[1]
+        if width <= min_size or height <= min_size:
+            continue
+        
+        sources = {block.source for block in group}
+        merged.append(
+            FigureBlock(
+                page = group[0].page,
+                bbox = group_bbox,
+                source = sources.pop() if len(sources) == 1 else "mixed",
             )
         )
+    return merged
+        
+
+
+def extract(pdf_path: str) -> list[PageBlocks]:
+    pages = []
+    with pymupdf.open(pdf_path) as doc, pdfplumber.open(pdf_path) as pdf:
+        for page_no, (mu_page, plumber_page) in enumerate(zip(doc, pdf.pages)):
+            text_blocks = _extract_text_blocks(mu_page,page_no)
+            table_blocks = _extract_table_blocks(plumber_page,page_no)
+
+            pages.append(
+                PageBlocks(
+                    page=page_no,
+                    width = mu_page.rect.width,
+                    text_blocks = text_blocks,
+                    table_blocks = table_blocks,
+                    figure_blocks=_merge_figure_blocks(_extract_figure_blocks(mu_page, page_no)),
+                )
+            )
     return pages
+
 
 
 def main() -> None:
