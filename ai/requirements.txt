@@ -2,3 +2,8 @@
 torch
 numpy
 onnx
+
+# 4-1: PDF解析・ルールベース分類（着手時点で導入）
+pymupdf
+pdfplumber
+reportlab  # 動作確認用サンプルPDFの生成にのみ使用
