@@ -6,7 +6,7 @@
 
 | ディレクトリ | 役割 |
 |---|---|
-| `frontend/` | Vite + React + TypeScript のWebアプリ本体（Phase 1〜3） |
+| `web/` | HTML + CSS + JavaScript のWebアプリ本体（Phase 1〜3） |
 | `ai/` | 自作TransformerによるPDFブロック分類の学習コード（Phase 4、Python） |
 | `docker/` | TeX Live（uplatex）入りのコンパイル確認用Dockerイメージ |
 
@@ -14,7 +14,7 @@
 
 ## MVP範囲（対応ブロック種別）
 
-データモデル（[frontend/src/model/block.ts](frontend/src/model/block.ts)）は以下の6種類を持つ:
+データモデル（[web/js/model.js](web/js/model.js)）は以下の6種類を持つ:
 
 - 見出し (heading)
 - 段落 (paragraph)
@@ -27,7 +27,7 @@
 
 ## 対応文書クラス・LaTeXエンジン
 
-**uplatex + jsarticle** を採用する。ソースコード・保存用JSONはいずれもUTF-8前提のため、UTF-8ネイティブなuplatexを使うことで文字コード変換が不要になる。コンパイルは `uplatex`（2回）→ `dvipdfmx` の流れ。必要なパッケージはブロック種別ごとに [frontend/src/tex/preamble.ts](frontend/src/tex/preamble.ts) にまとめている。
+**uplatex + jsarticle** を採用する。ソースコード・保存用JSONはいずれもUTF-8前提のため、UTF-8ネイティブなuplatexを使うことで文字コード変換が不要になる。コンパイルは `uplatex`（2回）→ `dvipdfmx` の流れ。必要なパッケージはブロック種別ごとに [web/js/tex.js](web/js/tex.js) にまとめている。
 
 ## 画面のワイヤーフレーム
 
@@ -49,26 +49,15 @@
 - 正式なプロジェクトタイトル: 未決定（"blocktex-editor" は作業名）。
 - 表・画像の編集UX / ローカル保存のデータ形式 / アカウント機能の目的（個人保存か共同編集か）/ 学習データのラベリング方法: 要件定義書の「未決事項」を参照し、各フェーズ着手前にチームで確定する。
 
-## frontend/ のディレクトリ構成
+## web/ のディレクトリ構成
 
 | ディレクトリ | 役割 |
 |---|---|
-| `src/model` | ブロック/文書の型定義、ID生成、スキーマバージョン、クラウド保存の型 |
-| `src/tex` | TeX変換方針（プリアンブル定義）。変換ロジック本体はPhase 1 |
-| `src/components` | ブロックエディタのUIコンポーネント（Phase 1〜） |
-| `src/store` | zustandによる状態管理（Phase 1〜） |
-| `src/fixtures` | サンプルJSON・手書き期待TeX（Phase 1のスナップショットテストで再利用） |
+| `js/model.js` | ブロック/文書の型定義（JSDoc）、ID生成、スキーマバージョン、クラウド保存の型 |
+| `js/tex.js` | TeX変換方針（プリアンブル定義）。変換ロジック本体はPhase 1 |
+| `js/script.js` | 画面の動作（Phase 1〜） |
+| `css/` | スタイル定義 |
 
 ## 開発
 
-```bash
-cd frontend
-npm install
-npm run dev          # 開発サーバ起動
-npm run lint         # oxlint
-npm run format       # Prettier整形
-npm run format:check # Prettierチェックのみ
-npm run test         # Vitest（一回実行）
-npm run test:watch   # Vitest（watchモード）
-npm run build        # 型チェック + 本番ビルド
-```
+ビルド不要の静的サイトのため、`web/index.html` をブラウザで直接開けば動作確認できる。

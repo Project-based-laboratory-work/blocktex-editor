@@ -7,24 +7,15 @@
 
 ## CI（自動チェック）
 
-PRを出すと [.github/workflows/frontend.yml](.github/workflows/frontend.yml) が動き、`frontend/` に対して lint → フォーマット確認 → テスト → ビルド を実行する。これが通らないPRはマージしない。
+現在 `web/` はビルド不要の静的サイト（HTML/CSS/JavaScript）のため、専用のCIは設けていない。
 
-手元で同じ内容を先に確認できる:
-
-```bash
-cd frontend
-npm run lint && npm run format:check && npm run test && npm run build
-```
-
-`format:check` で落ちた場合は `npm run format` で整形すれば直る。
-
-GitHubのリポジトリ設定で `main` ブランチに保護ルール（PR必須・上記チェック必須）を入れておくと、「直接pushは禁止」が運用ではなく仕組みで担保される。
+GitHubのリポジトリ設定で `main` ブランチに保護ルール（PR必須）を入れておくと、「直接pushは禁止」が運用ではなく仕組みで担保される。
 
 ## リポジトリ構成
 
 モノレポ構成のため、作業するディレクトリに注意すること。
 
-- `frontend/` — Webアプリ本体。npmコマンドはこのディレクトリで実行する（`cd frontend && npm install`）。
+- `web/` — Webアプリ本体。ビルド不要で、`web/index.html` をブラウザで直接開けば動作確認できる。
 - `ai/` — Phase 4の学習コード（Python）。Pythonの仮想環境はこのディレクトリに作る。
 - `docker/` — TeXコンパイル確認用のDockerイメージ定義とスクリプト。
 
@@ -43,7 +34,7 @@ TeX Liveのダウンロードがあるため、初回は数分〜十数分かか
 ### 2. .texをコンパイルする
 
 ```bash
-docker/compile-tex.sh frontend/src/fixtures/sample-document.expected.tex
+docker/compile-tex.sh path/to/your.tex
 ```
 
 指定した`.tex`と同じディレクトリにPDFが生成される。中では `uplatex`（2回）→ `dvipdfmx` を実行している。
