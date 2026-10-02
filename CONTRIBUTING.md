@@ -7,7 +7,7 @@
 
 ## CI（自動チェック）
 
-現在 `web/` はビルド不要の静的サイト（HTML/CSS/JavaScript）のため、専用のCIは設けていない。
+現在 `web/` はtscでコンパイルするだけの静的サイト（HTML/CSS/TypeScript）のため、専用のCIは設けていない。PR前に `npm run typecheck` が通ることを確認すること。
 
 GitHubのリポジトリ設定で `main` ブランチに保護ルール（PR必須）を入れておくと、「直接pushは禁止」が運用ではなく仕組みで担保される。
 
@@ -15,7 +15,7 @@ GitHubのリポジトリ設定で `main` ブランチに保護ルール（PR必�
 
 モノレポ構成のため、作業するディレクトリに注意すること。
 
-- `web/` — Webアプリ本体。ビルド不要で、`web/index.html` をブラウザで直接開けば動作確認できる。
+- `web/` — Webアプリ本体（TypeScript）。`npm install && npm run build` で `web/js/` を生成すれば、`web/index.html` をブラウザで直接開いて動作確認できる。
 - `ai/` — Phase 4の学習コード（Python）。Pythonの仮想環境はこのディレクトリに作る。
 - `docker/` — TeXコンパイル確認用のDockerイメージ定義とスクリプト。
 

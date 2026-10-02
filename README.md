@@ -6,7 +6,7 @@
 
 | ディレクトリ | 役割 |
 |---|---|
-| `web/` | HTML + CSS + JavaScript のWebアプリ本体（Phase 1〜3） |
+| `web/` | HTML + CSS + TypeScript のWebアプリ本体（Phase 1〜3） |
 | `ai/` | 自作TransformerによるPDFブロック分類の学習コード（Phase 4、Python） |
 | `docker/` | TeX Live（uplatex）入りのコンパイル確認用Dockerイメージ |
 
@@ -14,7 +14,7 @@
 
 ## MVP範囲（対応ブロック種別）
 
-データモデル（[web/js/model.js](web/js/model.js)）は以下の6種類を持つ:
+データモデル（[web/src/model.ts](web/src/model.ts)）は以下の6種類を持つ:
 
 - 見出し (heading)
 - 段落 (paragraph)
@@ -27,7 +27,7 @@
 
 ## 対応文書クラス・LaTeXエンジン
 
-**uplatex + jsarticle** を採用する。ソースコード・保存用JSONはいずれもUTF-8前提のため、UTF-8ネイティブなuplatexを使うことで文字コード変換が不要になる。コンパイルは `uplatex`（2回）→ `dvipdfmx` の流れ。必要なパッケージはブロック種別ごとに [web/js/tex.js](web/js/tex.js) にまとめている。
+**uplatex + jsarticle** を採用する。ソースコード・保存用JSONはいずれもUTF-8前提のため、UTF-8ネイティブなuplatexを使うことで文字コード変換が不要になる。コンパイルは `uplatex`（2回）→ `dvipdfmx` の流れ。必要なパッケージはブロック種別ごとに [web/src/tex.ts](web/src/tex.ts) にまとめている。
 
 ## 画面のワイヤーフレーム
 
@@ -53,11 +53,19 @@
 
 | ディレクトリ | 役割 |
 |---|---|
-| `js/model.js` | ブロック/文書の型定義（JSDoc）、ID生成、スキーマバージョン、クラウド保存の型 |
-| `js/tex.js` | TeX変換方針（プリアンブル定義）。変換ロジック本体はPhase 1 |
-| `js/script.js` | 画面の動作（Phase 1〜） |
+| `src/model.ts` | ブロック/文書の型定義、ID生成、スキーマバージョン、クラウド保存の型 |
+| `src/tex.ts` | TeX変換方針（プリアンブル定義）。変換ロジック本体はPhase 1 |
+| `src/script.ts` | 画面の動作（Phase 1〜） |
+| `js/` | `src/` のコンパイル結果（`npm run build` で生成。gitignore済み） |
 | `css/` | スタイル定義 |
 
 ## 開発
 
-ビルド不要の静的サイトのため、`web/index.html` をブラウザで直接開けば動作確認できる。
+`web/src/*.ts` を tsc でコンパイルして `web/js/` に出力する。バンドラは使わず、`import`/`export` も使わないグローバルスクリプト方式のため、ビルド後は `web/index.html` をブラウザで直接開けば動作確認できる。
+
+```bash
+npm install
+npm run build      # web/js/ を生成
+npm run watch      # 変更を監視して自動ビルド
+npm run typecheck  # 型チェックのみ
+```
