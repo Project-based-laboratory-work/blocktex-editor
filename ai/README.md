@@ -64,3 +64,8 @@ python rule_based_classifier.py sample_data/sample.pdf
 3. それ以外は段落
 
 Transformer（4-3）との精度比較の基準として使う。
+
+## 数式画像 → LaTeX（math_ocr）
+
+数式の画像をLaTeXに変換する、CNN＋Transformerのエンコーダ・デコーダモデル。学習データは自動生成する。
+詳細・実行方法・読む順番は [math_ocr/README.md](math_ocr/README.md) を参照。
