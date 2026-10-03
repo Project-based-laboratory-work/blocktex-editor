@@ -45,7 +45,11 @@ __pycache__/
 *.synctex.gz
 *.fdb_latexmk
 *.fls
+<<<<<<< HEAD
 
 # 数式OCR（ai/math_ocr）の生成データ・学習済みモデル
 ai/data/
 ai/checkpoints/
+=======
+web/js/
+>>>>>>> origin/main

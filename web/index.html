@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="ja">
+    <head>
+        <meta charset="UTF-8">
+        <title>ReTex</title>
+        <meta name="description" content="PDF・画像からLaTexコードを復元する変換ツール">
+        <!--CSS-->
+        <link rel="stylesheet" href="https://unpkg.com/ress/dist/ress.min.css">
+        <link href="css/style.css" rel="stylesheet">
+        <script src="js/model.js" defer></script>
+        <script src="js/tex.js" defer></script>
+        <script src="js/script.js" defer></script>
+        <link rel="preconnect" href="https://fonts.googleapis.com">
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link href="https://fonts.googleapis.com/css2?family=M+PLUS+Rounded+1c&family=Merriweather:ital,opsz,wght@0,18..144,300..900;1,18..144,300..900&display=swap" rel="stylesheet"> 
+        <link rel="icon" type="image/png" href="images/favicon.png">
+    </head>
+
+    <body>
+        <div class="page">
+        
+            <div class="home-content wrapper">
+                <h1 class="page-title">ReTex</h1>
+                <p>PDFや数式の画像を、もう一度編集できるLaTexに</p>
+            
+            </div>
+    
+
+            <div class="content">
+                <div class="input">
+                    <h2>PDFや画像をアップロード</h2>
+                    <label for="file-upload" class="file-button" id="file-button">
+                        ファイルを選択
+                    </label>
+                    <input type="file" id="file-upload" class="file-upload" accept=".pdf,image/*">
+                    <p id="file-name">ファイルが選択されていません</p>
+                </div>
+                <div class="output">
+                    <h2>LaTexコード</h2>
+                </div>
+            </div>
+            <footer>
+                <div class="wrapper">
+                    <p><small>&copy; 2026 project 12</small></p>
+                </div>
+            </footer>
+        </div>
+    </body>
+</html>

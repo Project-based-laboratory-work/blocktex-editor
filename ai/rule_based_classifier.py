@@ -24,6 +24,7 @@ Bbox = tuple[float, float, float, float]
 HEADING_SIZE_RATIO = 1.3  # 本文フォントサイズの何倍から見出しとみなすか
 HEADING_MAX_CHARS = 50
 OVERLAP_RATIO_THRESHOLD = 0.5  # テキストbboxの何割が表/図と重なったら吸収するか
+CAPTION_MAX_CHARS = 100
 CAPTION_PATTERN = re.compile(r"(図|表|Figure|Fig\.|Table)\s*\d+([.\-]\d+)*")
 COLUMN_GUTTER = 10.0
 
@@ -96,7 +97,7 @@ def classify_page(page: PageBlocks) -> list[ClassifiedBlock]:
         is_large = block.font_size >= body_size * HEADING_SIZE_RATIO
         is_short = len(block.text) <= HEADING_MAX_CHARS
 
-        if CAPTION_PATTERN.match(block.text):
+        if CAPTION_PATTERN.match(block.text) and len(block.text) <= CAPTION_MAX_CHARS:
             kind = "caption"
         elif (is_large or block.bold) and is_short:
             kind = "heading"
