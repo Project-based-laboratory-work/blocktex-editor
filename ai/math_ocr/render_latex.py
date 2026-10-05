@@ -7,7 +7,7 @@ synth_data.py の画像は matplotlib の mathtext で描いたもので、LaTeX
 1ページに数式を1つだけ置いた文書をまとめてコンパイルし、ページごとに画像へ変換する。
 数式1つごとにLaTeXを起動するより、はるかに速い（1000件で数十秒）。
 
-    python -m math_ocr.render_latex --src data/math_synth_60k --split val --out data/math_latex
+    python -m math_ocr.render_latex --src math_ocr/data/math_synth_60k --split val --out math_ocr/data/math_latex
 
 pdflatex と pdftoppm（poppler-utils）が必要。
 """
@@ -85,7 +85,7 @@ def render_dataset(src: Path, out: Path, split: str, limit: int | None, seed: in
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--src", type=Path, required=True, help="数式の一覧（{split}.tsv）があるディレクトリ")
-    parser.add_argument("--out", type=Path, default=Path("data/math_latex"))
+    parser.add_argument("--out", type=Path, default=Path("math_ocr/data/math_latex"))
     parser.add_argument("--split", nargs="+", default=["val"])
     parser.add_argument("--limit", type=int, default=None)
     parser.add_argument("--workers", type=int, default=6)

@@ -1,9 +1,9 @@
 """
 学習スクリプト。
 
-    python -m math_ocr.train --data data/math_synth --epochs 10
-    python -m math_ocr.train --data data/math_synth --overfit-batch   # 学習ループが正しいかの確認
-    python -m math_ocr.train --data data/math_synth --epochs 10 --resume   # 中断した学習を last.pt から再開
+    python -m math_ocr.train --data math_ocr/data/math_synth --epochs 10
+    python -m math_ocr.train --data math_ocr/data/math_synth --overfit-batch   # 学習ループが正しいかの確認
+    python -m math_ocr.train --data math_ocr/data/math_synth --epochs 10 --resume   # 中断した学習を last.pt から再開
 
 学習1ステップの流れ（PyTorchの学習ループはほぼ必ずこの形になる）:
   1. 順伝播 (forward):   logits = model(入力)
@@ -39,8 +39,8 @@ from math_ocr.tokenizer import Vocab
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--data", type=Path, default=Path("data/math_synth"))
-    parser.add_argument("--out", type=Path, default=Path("checkpoints/math_ocr"))
+    parser.add_argument("--data", type=Path, default=Path("math_ocr/data/math_synth"))
+    parser.add_argument("--out", type=Path, default=Path("math_ocr/checkpoints/math_ocr"))
     parser.add_argument("--epochs", type=int, default=10)
     parser.add_argument("--batch-size", type=int, default=64)
     parser.add_argument("--lr", type=float, default=5e-4)

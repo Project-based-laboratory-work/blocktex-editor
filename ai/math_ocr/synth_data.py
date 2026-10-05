@@ -10,7 +10,7 @@ mathtext は LaTeX のサブセットしか描画できない（\\begin{align} �
 同じ数式でも書き方が何通りもあると（x_i と x_{i} など）、モデルはどちらを出せばよいか分からず
 学習が難しくなる。そのため生成する数式は「添字は常に {} で囲む」などの書き方に統一している。
 
-    python -m math_ocr.synth_data --out data/math_synth --train 20000 --val 1000
+    python -m math_ocr.synth_data --out math_ocr/data/math_synth --train 20000 --val 1000
 """
 
 import argparse
@@ -174,7 +174,7 @@ def generate(out_dir: Path, split: str, count: int, seed: int, workers: int) -> 
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--out", type=Path, default=Path("data/math_synth"))
+    parser.add_argument("--out", type=Path, default=Path("math_ocr/data/math_synth"))
     parser.add_argument("--train", type=int, default=20000)
     parser.add_argument("--val", type=int, default=1000)
     parser.add_argument("--workers", type=int, default=8)

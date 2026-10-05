@@ -1,4 +1,4 @@
-from labels import LabeledBlock, load_labels, save_labels, to_coarse, validate
+from rule_based.labels import LabeledBlock, load_labels, save_labels, to_coarse, validate
 
 # --- 正しいデータ ---
 blocks = [
