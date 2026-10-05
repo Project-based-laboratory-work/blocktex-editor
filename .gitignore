@@ -45,4 +45,10 @@ __pycache__/
 *.synctex.gz
 *.fdb_latexmk
 *.fls
+
+# 数式OCR（ai/math_ocr）の生成データ・学習済みモデル
+ai/data/
+ai/checkpoints/
+
+# web/ のビルド成果物（tsc の出力）
 web/js/

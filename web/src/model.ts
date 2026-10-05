@@ -16,18 +16,40 @@ interface HeadingBlock {
   text: string;
 }
 
+/**
+ * 文中に数式を混ぜられる文字列。段落本文や箇条書きの項目に使う。
+ * 数式は $...$ の中身だけを持つ（$ 自体は TeX 出力時に付ける）。
+ */
+type InlineSegment =
+  | { type: 'text'; text: string } // [平文] 改行は '\n'
+  | { type: 'math'; tex: string }; // [生TeX]
+type RichText = InlineSegment[];
+
 interface ParagraphBlock {
   id: BlockId;
   type: 'paragraph';
-  /** [平文] 段落本文 */
-  text: string;
+  /** 段落本文（平文と文中数式の並び） */
+  content: RichText;
 }
+
+/** 箇条書きのマーカー。表示とTeX出力は tex.ts の LIST_MARKERS で定義する */
+type ListMarker = 'dot' | 'bullet' | 'dash' | 'number' | 'paren';
 
 interface ListBlock {
   id: BlockId;
   type: 'list';
-  /** [平文] 各項目。itemize の \item 1つに対応する */
-  items: string[];
+  /** [その他] マーカーの種類。未指定は 'dot'（・）として扱う。後から足した項目なので optional */
+  marker?: ListMarker;
+  /** 各項目。itemize の \item 1つに対応する */
+  items: ListItem[];
+}
+
+/**
+ * 箇条書きの1項目。`RichText[]` ではなくオブジェクトで包んでいる。
+ * Firestore は入れ子配列を保存できないため（TableRow と同じ理由）。
+ */
+interface ListItem {
+  content: RichText;
 }
 
 interface MathBlock {
@@ -37,6 +59,23 @@ interface MathBlock {
   displayMode: boolean;
   /** [生TeX] 数式本体。エスケープしない */
   tex: string;
+}
+
+/** 文書タイトル。1文書に1つだけで、常に先頭に置く（\maketitle に対応） */
+interface TitleBlock {
+  id: BlockId;
+  type: 'title';
+  /** [平文] タイトル */
+  text: string;
+  /** [平文] 著者。空なら \author{} */
+  author: string;
+  /** [平文] 日付。空なら \date{}（日付を出さない） */
+  date: string;
+}
+
+interface TocBlock {
+  id: BlockId;
+  type: 'toc';
 }
 
 type TableCellAlign = 'l' | 'c' | 'r';
@@ -83,13 +122,23 @@ interface ImageBlock {
   caption?: string;
   /** \linewidth に対する幅の比率（0〜1）。未指定なら等倍 */
   widthRatio?: number;
+  /**
+   * 画像の左端の位置（\linewidth に対する比率。0〜1-widthRatio）。
+   * offsetX / offsetY がどちらも未指定なら中央寄せ。どちらかが指定されたら配置モードで、
+   * 未指定側は X=中央、Y=0 として扱う。
+   */
+  offsetX?: number;
+  /** ブロック先頭から画像上端までの余白（\linewidth に対する比率。0〜1） */
+  offsetY?: number;
 }
 
 type Block =
+  | TitleBlock
   | HeadingBlock
   | ParagraphBlock
   | ListBlock
   | MathBlock
+  | TocBlock
   | TableBlock
   | ImageBlock;
 
@@ -105,6 +154,7 @@ type BlockType = Block['type'];
 interface BlockDocument {
   schemaVersion: number;
   id: string;
+  /** 文書の名前（ファイル名など）。TeXのタイトルは TitleBlock が持つ */
   title: string;
   blocks: Block[];
 }
@@ -126,8 +176,12 @@ interface CloudProject {
   updatedAt: Date;
 }
 
-/** 現行のスキーマ版数。ブロックの形を変えたらインクリメントし、移行処理を書く。 */
-const SCHEMA_VERSION = 1;
+/**
+ * 現行のスキーマ版数。ブロックの形を変えたらインクリメントし、移行処理を書く。
+ * v2: 段落の text → content、箇条書きの items: string[] → ListItem[]（文中数式のため）。
+ *     保存機能が未実装で旧形式のデータは存在しないため、v1 からの移行処理は書いていない。
+ */
+const SCHEMA_VERSION = 2;
 
 /** 読み込んだ文書が現行スキーマかどうか。false なら移行処理が必要。 */
 function isCurrentSchema(doc: BlockDocument): boolean {
