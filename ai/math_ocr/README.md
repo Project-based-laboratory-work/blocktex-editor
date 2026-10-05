@@ -23,7 +23,7 @@ CNNエンコーダとTransformerデコーダを組み合わせたエンコーダ
 | 8 | [evaluate.py](evaluate.py) | データセット全体での評価、誤り例の表示 | 学習時と異なるデータでの評価（汎化の確認） |
 | 9 | [render_latex.py](render_latex.py) | 数式を本物のLaTeX（pdflatex）で描画 | 学習データと実データのずれ（ドメインシフト） |
 
-テスト（[../tests/test_math_ocr.py](../tests/test_math_ocr.py)）も読み物として役に立つ。特に以下の2つは、
+テスト（[tests/test_math_ocr.py](tests/test_math_ocr.py)）も読み物として役に立つ。特に以下の2つは、
 系列モデルを書いたときに必ず確認すべき性質をテストにしたもの。
 
 - `test_causal_mask_hides_future_tokens`: 未来のトークンを書き換えても過去の位置の出力が変わらない
@@ -40,11 +40,11 @@ source .venv/bin/activate
 pip install -r requirements.txt   # GPUが無い環境では torch を CPU版にすると軽い（下記）
 
 python -m pytest                                     # テスト
-python -m math_ocr.synth_data --train 20000 --val 1000   # data/math_synth/ にデータ生成（約2分）
+python -m math_ocr.synth_data --train 20000 --val 1000   # math_ocr/data/math_synth/ にデータ生成（約2分）
 python -m math_ocr.train --overfit-batch             # 1バッチ過学習チェック
-python -m math_ocr.train --epochs 10                 # 学習 → checkpoints/math_ocr/best.pt
+python -m math_ocr.train --epochs 10                 # 学習 → math_ocr/checkpoints/math_ocr/best.pt
 python -m math_ocr.train --epochs 10 --resume        # 止まった学習を last.pt から再開（他の引数は前回と同じにする）
-python -m math_ocr.predict checkpoints/math_ocr/best.pt data/math_synth/images/val_000000.png
+python -m math_ocr.predict math_ocr/checkpoints/math_ocr/best.pt math_ocr/data/math_synth/images/val_000000.png
 ```
 
 CPU版のtorchは `pip install torch --index-url https://download.pytorch.org/whl/cpu` で入る。
@@ -59,8 +59,8 @@ CPU版のtorchは `pip install torch --index-url https://download.pytorch.org/wh
 合成データ6万件（`synth_data.py --train 60000`）、d_model=192（約310万パラメータ）、5エポック、CPUで約4時間。
 
 ```bash
-python -m math_ocr.synth_data --out data/math_synth_60k --train 60000 --val 1000
-python -m math_ocr.train --data data/math_synth_60k --out checkpoints/math_ocr_d192 \
+python -m math_ocr.synth_data --out math_ocr/data/math_synth_60k --train 60000 --val 1000
+python -m math_ocr.train --data math_ocr/data/math_synth_60k --out math_ocr/checkpoints/math_ocr_d192 \
     --d-model 192 --epochs 5 --batch-size 64 --threads 6 --workers 2
 ```
 
@@ -76,9 +76,9 @@ python -m math_ocr.train --data data/math_synth_60k --out checkpoints/math_ocr_d
 （pdflatex）で描き直した画像での評価は次のとおり（`best.pt`、5エポック目）。
 
 ```bash
-python -m math_ocr.render_latex --src data/math_synth_60k --split val --out data/math_latex
-python -m math_ocr.evaluate checkpoints/math_ocr_d192/best.pt --data data/math_synth_60k
-python -m math_ocr.evaluate checkpoints/math_ocr_d192/best.pt --data data/math_latex
+python -m math_ocr.render_latex --src math_ocr/data/math_synth_60k --split val --out math_ocr/data/math_latex
+python -m math_ocr.evaluate math_ocr/checkpoints/math_ocr_d192/best.pt --data math_ocr/data/math_synth_60k
+python -m math_ocr.evaluate math_ocr/checkpoints/math_ocr_d192/best.pt --data math_ocr/data/math_latex
 ```
 
 | 検証データ（各1000件、数式は同じ） | 完全一致率 | トークン誤り率 | 推論時間（CPU） |

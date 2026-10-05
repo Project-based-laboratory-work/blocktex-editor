@@ -46,9 +46,10 @@ __pycache__/
 *.fdb_latexmk
 *.fls
 
-# 数式OCR（ai/math_ocr）の生成データ・学習済みモデル
-ai/data/
-ai/checkpoints/
+# 各モデル（ai/<モデル名>/）の生成データ・学習中のチェックポイント
+ai/*/data/
+ai/*/checkpoints/
+ai/models/**/*.pt
 
 # web/ のビルド成果物（tsc の出力）
 web/js/

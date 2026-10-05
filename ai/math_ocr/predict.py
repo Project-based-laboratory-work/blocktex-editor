@@ -1,7 +1,7 @@
 """
 学習済みモデルで数式画像をLaTeXに変換する。
 
-    python -m math_ocr.predict checkpoints/math_ocr/best.pt 画像1.png 画像2.png ...
+    python -m math_ocr.predict math_ocr/checkpoints/math_ocr/best.pt 画像1.png 画像2.png ...
 """
 
 import argparse
