@@ -20,6 +20,8 @@ CNNエンコーダとTransformerデコーダを組み合わせたエンコーダ
 | 5 | [train.py](train.py) | 学習ループ | teacher forcing、損失、optimizer、学習率スケジュール、`train()`と`eval()` |
 | 6 | [metrics.py](metrics.py) | 評価指標 | 完全一致率、トークン誤り率（編集距離） |
 | 7 | [predict.py](predict.py) | 学習済みモデルで推論 | チェックポイントの保存と読み込み |
+| 8 | [evaluate.py](evaluate.py) | データセット全体での評価、誤り例の表示 | 学習時と異なるデータでの評価（汎化の確認） |
+| 9 | [render_latex.py](render_latex.py) | 数式を本物のLaTeX（pdflatex）で描画 | 学習データと実データのずれ（ドメインシフト） |
 
 テスト（[../tests/test_math_ocr.py](../tests/test_math_ocr.py)）も読み物として役に立つ。特に以下の2つは、
 系列モデルを書いたときに必ず確認すべき性質をテストにしたもの。
@@ -41,6 +43,7 @@ python -m pytest                                     # テスト
 python -m math_ocr.synth_data --train 20000 --val 1000   # data/math_synth/ にデータ生成（約2分）
 python -m math_ocr.train --overfit-batch             # 1バッチ過学習チェック
 python -m math_ocr.train --epochs 10                 # 学習 → checkpoints/math_ocr/best.pt
+python -m math_ocr.train --epochs 10 --resume        # 止まった学習を last.pt から再開（他の引数は前回と同じにする）
 python -m math_ocr.predict checkpoints/math_ocr/best.pt data/math_synth/images/val_000000.png
 ```
 
@@ -50,6 +53,44 @@ CPU版のtorchは `pip install torch --index-url https://download.pytorch.org/wh
 1ステップ（バッチ16）あたり約1.4秒かかる。2万件×10エポックの学習はCPUでは数時間かかるので、
 手元では `--d-model 128 --limit-train 6000` などで縮めて動作を確認し、本番の学習はGPU
 （IS計算機サーバ）で行う。
+
+## 学習結果（2026-10-05）
+
+合成データ6万件（`synth_data.py --train 60000`）、d_model=192（約310万パラメータ）、5エポック、CPUで約4時間。
+
+```bash
+python -m math_ocr.synth_data --out data/math_synth_60k --train 60000 --val 1000
+python -m math_ocr.train --data data/math_synth_60k --out checkpoints/math_ocr_d192 \
+    --d-model 192 --epochs 5 --batch-size 64 --threads 6 --workers 2
+```
+
+| epoch | val_loss | 完全一致率 | トークン誤り率 |
+|---|---|---|---|
+| 1 | 1.126 | 35.5% | 0.147 |
+| 2 | 0.903 | 70.7% | 0.062 |
+| 3 | 0.838 | 90.6% | 0.015 |
+| 4 | 0.826 | 93.4% | 0.018 |
+| 5 | 0.822 | 93.8% | 0.012 |
+
+上の表は学習中の簡易評価（検証データの先頭200件）。全1000件での評価と、同じ数式を本物のLaTeX
+（pdflatex）で描き直した画像での評価は次のとおり（`best.pt`、5エポック目）。
+
+```bash
+python -m math_ocr.render_latex --src data/math_synth_60k --split val --out data/math_latex
+python -m math_ocr.evaluate checkpoints/math_ocr_d192/best.pt --data data/math_synth_60k
+python -m math_ocr.evaluate checkpoints/math_ocr_d192/best.pt --data data/math_latex
+```
+
+| 検証データ（各1000件、数式は同じ） | 完全一致率 | トークン誤り率 | 推論時間（CPU） |
+|---|---|---|---|
+| matplotlibで描画（学習データと同じ方法） | 95.0% | 0.008 | 229 ms/件 |
+| pdflatexで描画（学習では見ていない） | 90.2% | 0.017 | 256 ms/件 |
+
+LaTeXの画像は学習で一度も見せていないが、精度の低下は約5ポイントにとどまった。
+
+**注意:** どちらも「`synth_data.py` が生成する種類の数式」に限った成績。語彙は105トークンで、
+実際の文書に出てくる `,` `\bar` `\chi` `\{` `\to` `\dots` や文字 `l` `o`、行列・場合分けなどは
+生成していないので読めない。実文書の数式での評価は未実施。
 
 ## 押さえておきたい概念
 
