@@ -20,6 +20,8 @@ CNNエンコーダとTransformerデコーダを組み合わせたエンコーダ
 | 5 | [train.py](train.py) | 学習ループ | teacher forcing、損失、optimizer、学習率スケジュール、`train()`と`eval()` |
 | 6 | [metrics.py](metrics.py) | 評価指標 | 完全一致率、トークン誤り率（編集距離） |
 | 7 | [predict.py](predict.py) | 学習済みモデルで推論 | チェックポイントの保存と読み込み |
+| 8 | [evaluate.py](evaluate.py) | データセット全体での評価、誤り例の表示 | 学習時と異なるデータでの評価（汎化の確認） |
+| 9 | [render_latex.py](render_latex.py) | 数式を本物のLaTeX（pdflatex）で描画 | 学習データと実データのずれ（ドメインシフト） |
 
 テスト（[../tests/test_math_ocr.py](../tests/test_math_ocr.py)）も読み物として役に立つ。特に以下の2つは、
 系列モデルを書いたときに必ず確認すべき性質をテストにしたもの。
@@ -70,8 +72,25 @@ python -m math_ocr.train --data data/math_synth_60k --out checkpoints/math_ocr_d
 | 4 | 0.826 | 93.4% | 0.018 |
 | 5 | 0.822 | 93.8% | 0.012 |
 
-**注意:** 評価は学習データと同じ方法（matplotlibのmathtext）で描画した検証データ200件で行っている。
-uplatexで組版した実際のPDFの数式では未評価で、字形が異なるため精度は下がる見込み。
+上の表は学習中の簡易評価（検証データの先頭200件）。全1000件での評価と、同じ数式を本物のLaTeX
+（pdflatex）で描き直した画像での評価は次のとおり（`best.pt`、5エポック目）。
+
+```bash
+python -m math_ocr.render_latex --src data/math_synth_60k --split val --out data/math_latex
+python -m math_ocr.evaluate checkpoints/math_ocr_d192/best.pt --data data/math_synth_60k
+python -m math_ocr.evaluate checkpoints/math_ocr_d192/best.pt --data data/math_latex
+```
+
+| 検証データ（各1000件、数式は同じ） | 完全一致率 | トークン誤り率 | 推論時間（CPU） |
+|---|---|---|---|
+| matplotlibで描画（学習データと同じ方法） | 95.0% | 0.008 | 229 ms/件 |
+| pdflatexで描画（学習では見ていない） | 90.2% | 0.017 | 256 ms/件 |
+
+LaTeXの画像は学習で一度も見せていないが、精度の低下は約5ポイントにとどまった。
+
+**注意:** どちらも「`synth_data.py` が生成する種類の数式」に限った成績。語彙は105トークンで、
+実際の文書に出てくる `,` `\bar` `\chi` `\{` `\to` `\dots` や文字 `l` `o`、行列・場合分けなどは
+生成していないので読めない。実文書の数式での評価は未実施。
 
 ## 押さえておきたい概念
 
