@@ -3,6 +3,7 @@
 
     python -m math_ocr.train --data data/math_synth --epochs 10
     python -m math_ocr.train --data data/math_synth --overfit-batch   # 学習ループが正しいかの確認
+    python -m math_ocr.train --data data/math_synth --epochs 10 --resume   # 中断した学習を last.pt から再開
 
 学習1ステップの流れ（PyTorchの学習ループはほぼ必ずこの形になる）:
   1. 順伝播 (forward):   logits = model(入力)
@@ -20,6 +21,7 @@ teacher forcing:
 """
 
 import argparse
+import itertools
 import math
 import time
 from dataclasses import asdict
@@ -48,6 +50,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--workers", type=int, default=4)
     parser.add_argument("--overfit-batch", action="store_true", help="1バッチだけを繰り返し学習する")
     parser.add_argument("--seed", type=int, default=0)
+    parser.add_argument("--threads", type=int, default=None, help="CPUで使うスレッド数（多すぎると逆に遅くなることがある）")
+    parser.add_argument("--save-every", type=int, default=200, help="何ステップごとに last.pt を保存するか")
+    parser.add_argument("--resume", action="store_true", help="out/last.pt から学習を再開する")
     return parser.parse_args()
 
 
@@ -114,6 +119,8 @@ def show_examples(model: MathOCRModel, loader: DataLoader, vocab: Vocab, device:
 def main() -> None:
     args = parse_args()
     torch.manual_seed(args.seed)
+    if args.threads:
+        torch.set_num_threads(args.threads)
     device = pick_device()
     args.out.mkdir(parents=True, exist_ok=True)
 
@@ -130,8 +137,9 @@ def main() -> None:
     val_loader = DataLoader(val_ds, batch_size=args.batch_size, collate_fn=collate, num_workers=args.workers)
 
     config = ModelConfig(
-        vocab_size=len(vocab), pad_id=vocab.pad_id, bos_id=vocab.bos_id, eos_id=vocab.eos_id, d_model=args.d_model
-    )
+        vocab_size=len(vocab), pad_id=vocab.pad_id, bos_id=vocab.bos_id, eos_id=vocab.eos_id,
+        d_model=args.d_model, dim_feedforward=4 * args.d_model,  # FFNの中間層は d_model の4倍にするのが定番
+    )  # fmt: skip
     model = MathOCRModel(config).to(device)
     print(f"device={device}  語彙数={len(vocab)}  パラメータ数={count_parameters(model):,}  学習データ={len(train_ds)}件")
 
@@ -144,17 +152,38 @@ def main() -> None:
         overfit_one_batch(model, criterion, optimizer, train_loader, vocab, device)
         return
 
-    total_steps = args.epochs * len(train_loader)
+    steps_per_epoch = len(train_loader)
+    total_steps = args.epochs * steps_per_epoch
     scheduler = torch.optim.lr_scheduler.LambdaLR(
         optimizer, warmup_cosine(total_steps, warmup_steps=min(1000, total_steps // 10))
     )
 
-    best_ter = float("inf")
-    step = 0
-    for epoch in range(1, args.epochs + 1):
+    step, best_ter = 0, float("inf")
+    if args.resume:
+        # モデルだけでなく、optimizer（AdamWが溜めている勾配の移動平均）とschedulerの状態も戻さないと、
+        # 再開した直後に学習率や更新の大きさが変わってしまう
+        state = torch.load(args.out / "last.pt", map_location=device)
+        model.load_state_dict(state["model"])
+        optimizer.load_state_dict(state["optimizer"])
+        scheduler.load_state_dict(state["scheduler"])
+        step, best_ter = state["step"], state["best_ter"]
+        print(f"last.pt から再開: step {step}/{total_steps}")
+
+    def save_last() -> None:
+        torch.save(
+            {
+                "model": model.state_dict(), "optimizer": optimizer.state_dict(), "scheduler": scheduler.state_dict(),
+                "step": step, "best_ter": best_ter, "config": asdict(config), "vocab": vocab.itos,
+            },
+            args.out / "last.pt",
+        )  # fmt: skip
+
+    for epoch in range(step // steps_per_epoch + 1, args.epochs + 1):
         model.train()  # Dropout・BatchNormを学習モードにする
         started = time.time()
-        for images, seqs in train_loader:
+        # 途中から再開したエポックは、残りのステップ数だけ回す
+        remaining = epoch * steps_per_epoch - step
+        for images, seqs in itertools.islice(train_loader, remaining):
             images, seqs = images.to(device), seqs.to(device)
             loss = compute_loss(model, criterion, images, seqs)
 
@@ -168,6 +197,8 @@ def main() -> None:
             step += 1
             if step % 50 == 0:
                 print(f"epoch {epoch} step {step}/{total_steps} loss {loss.item():.4f} lr {scheduler.get_last_lr()[0]:.2e}")
+            if step % args.save_every == 0:
+                save_last()
 
         metrics = validate(model, criterion, val_loader, vocab, device, args.eval_samples)
         elapsed = time.time() - started
@@ -184,6 +215,7 @@ def main() -> None:
                 args.out / "best.pt",
             )
             print(f"  → best.pt を保存（TER {best_ter:.3f}）")
+        save_last()
 
 
 def overfit_one_batch(model, criterion, optimizer, loader, vocab, device, steps: int = 300) -> None:

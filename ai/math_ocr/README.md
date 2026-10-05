@@ -41,6 +41,7 @@ python -m pytest                                     # テスト
 python -m math_ocr.synth_data --train 20000 --val 1000   # data/math_synth/ にデータ生成（約2分）
 python -m math_ocr.train --overfit-batch             # 1バッチ過学習チェック
 python -m math_ocr.train --epochs 10                 # 学習 → checkpoints/math_ocr/best.pt
+python -m math_ocr.train --epochs 10 --resume        # 止まった学習を last.pt から再開（他の引数は前回と同じにする）
 python -m math_ocr.predict checkpoints/math_ocr/best.pt data/math_synth/images/val_000000.png
 ```
 
@@ -50,6 +51,27 @@ CPU版のtorchは `pip install torch --index-url https://download.pytorch.org/wh
 1ステップ（バッチ16）あたり約1.4秒かかる。2万件×10エポックの学習はCPUでは数時間かかるので、
 手元では `--d-model 128 --limit-train 6000` などで縮めて動作を確認し、本番の学習はGPU
 （IS計算機サーバ）で行う。
+
+## 学習結果（2026-10-05）
+
+合成データ6万件（`synth_data.py --train 60000`）、d_model=192（約310万パラメータ）、5エポック、CPUで約4時間。
+
+```bash
+python -m math_ocr.synth_data --out data/math_synth_60k --train 60000 --val 1000
+python -m math_ocr.train --data data/math_synth_60k --out checkpoints/math_ocr_d192 \
+    --d-model 192 --epochs 5 --batch-size 64 --threads 6 --workers 2
+```
+
+| epoch | val_loss | 完全一致率 | トークン誤り率 |
+|---|---|---|---|
+| 1 | 1.126 | 35.5% | 0.147 |
+| 2 | 0.903 | 70.7% | 0.062 |
+| 3 | 0.838 | 90.6% | 0.015 |
+| 4 | 0.826 | 93.4% | 0.018 |
+| 5 | 0.822 | 93.8% | 0.012 |
+
+**注意:** 評価は学習データと同じ方法（matplotlibのmathtext）で描画した検証データ200件で行っている。
+uplatexで組版した実際のPDFの数式では未評価で、字形が異なるため精度は下がる見込み。
 
 ## 押さえておきたい概念
 
