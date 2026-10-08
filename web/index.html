@@ -2,48 +2,94 @@
 <html lang="ja">
     <head>
         <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
         <title>ReTex</title>
         <meta name="description" content="PDF・画像からLaTexコードを復元する変換ツール">
         <!--CSS-->
         <link rel="stylesheet" href="https://unpkg.com/ress/dist/ress.min.css">
         <link href="css/style.css" rel="stylesheet">
+        <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.11/katex.min.css">
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.11/katex.min.js" defer></script>
         <script src="js/model.js" defer></script>
         <script src="js/tex.js" defer></script>
+        <script src="js/richtext.js" defer></script>
+        <script src="js/editor.js" defer></script>
         <script src="js/script.js" defer></script>
         <link rel="preconnect" href="https://fonts.googleapis.com">
         <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-        <link href="https://fonts.googleapis.com/css2?family=M+PLUS+Rounded+1c&family=Merriweather:ital,opsz,wght@0,18..144,300..900;1,18..144,300..900&display=swap" rel="stylesheet"> 
+        <link href="https://fonts.googleapis.com/css2?family=M+PLUS+Rounded+1c&family=Merriweather:ital,opsz,wght@0,18..144,300..900;1,18..144,300..900&display=swap" rel="stylesheet">
         <link rel="icon" type="image/png" href="images/favicon.png">
     </head>
 
     <body>
-        <div class="page">
-        
-            <div class="home-content wrapper">
-                <h1 class="page-title">ReTex</h1>
-                <p>PDFや数式の画像を、もう一度編集できるLaTexに</p>
-            
+        <!-- トップ画面 -->
+        <section id="home-view" class="home">
+            <h1 class="page-title">ReTex</h1>
+            <p class="lead">PDFや数式の画像を、もう一度編集できるLaTexに</p>
+            <div class="home-cards">
+                <button type="button" class="home-card" id="new-doc">
+                    <span class="home-card-title">新規作成</span>
+                    <span class="home-card-desc">空のドキュメントから書き始める</span>
+                </button>
+                <label class="home-card" for="file-upload">
+                    <span class="home-card-title">PDF・画像を読み込む</span>
+                    <span class="home-card-desc" id="file-name">ファイルを選択して編集を始める</span>
+                </label>
+                <input type="file" id="file-upload" class="file-upload" accept=".pdf,image/*">
             </div>
-    
+            <footer><small>&copy; 2026 project 12</small></footer>
+        </section>
 
-            <div class="content">
-                <div class="input">
-                    <h2>PDFや画像をアップロード</h2>
-                    <label for="file-upload" class="file-button" id="file-button">
-                        ファイルを選択
-                    </label>
-                    <input type="file" id="file-upload" class="file-upload" accept=".pdf,image/*">
-                    <p id="file-name">ファイルが選択されていません</p>
-                </div>
-                <div class="output">
-                    <h2>LaTexコード</h2>
-                </div>
+        <!-- エディタ画面 -->
+        <section id="editor-view" class="editor" hidden>
+            <header class="toolbar">
+                <button type="button" class="toolbar-home" id="back-home" title="トップへ戻る">ReTex</button>
+                <button type="button" class="toolbar-toggle" id="toggle-palette" aria-pressed="true" title="Ctrl+B">ブロック</button>
+                <span class="toolbar-spacer"></span>
+                <button type="button" class="toolbar-toggle" id="toggle-tex" aria-pressed="false" title="Ctrl+/">TeX</button>
+            </header>
+            <div class="editor-body">
+                <aside class="palette" id="palette">
+                    <h2 class="palette-title">ブロックを追加</h2>
+                    <section class="palette-group">
+                        <h3>テキスト</h3>
+                        <button type="button" data-add="heading1"><span class="palette-icon">H1</span>見出し1</button>
+                        <button type="button" data-add="heading2"><span class="palette-icon">H2</span>見出し2</button>
+                        <button type="button" data-add="heading3"><span class="palette-icon">H3</span>見出し3</button>
+                        <button type="button" data-add="paragraph"><span class="palette-icon">¶</span>段落</button>
+                        <button type="button" data-add="list"><span class="palette-icon">•</span>箇条書き</button>
+                    </section>
+                    <section class="palette-group">
+                        <h3>数式</h3>
+                        <button type="button" data-add="math"><span class="palette-icon">∑</span>数式</button>
+                        <button type="button" id="insert-inline-math" title="Ctrl+M"><span class="palette-icon">x²</span>文中数式</button>
+                        <p class="palette-hint" id="palette-hint" hidden>段落か箇条書きの中をクリックしてから押してください</p>
+                    </section>
+                    <section class="palette-group">
+                        <h3>構成</h3>
+                        <button type="button" data-add="title"><span class="palette-icon">T</span>タイトル</button>
+                        <button type="button" data-add="toc"><span class="palette-icon">☰</span>目次</button>
+                    </section>
+                    <section class="palette-group">
+                        <h3>表・画像</h3>
+                        <button type="button" data-add="table"><span class="palette-icon">▦</span>表</button>
+                        <button type="button" data-add="image"><span class="palette-icon">▣</span>画像</button>
+                    </section>
+                </aside>
+                <main class="canvas">
+                    <div class="canvas-page">
+                        <div id="block-list"></div>
+                    </div>
+                </main>
+                <aside class="side-pane" id="tex-pane" hidden>
+                    <div class="side-tabs" role="tablist">
+                        <button type="button" role="tab" aria-selected="true">TeX</button>
+                        <button type="button" role="tab" disabled title="準備中">PDFプレビュー</button>
+                        <button type="button" class="copy-button" id="copy-tex">コピー</button>
+                    </div>
+                    <pre class="tex-output" id="tex-output"></pre>
+                </aside>
             </div>
-            <footer>
-                <div class="wrapper">
-                    <p><small>&copy; 2026 project 12</small></p>
-                </div>
-            </footer>
-        </div>
+        </section>
     </body>
 </html>

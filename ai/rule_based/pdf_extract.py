@@ -8,7 +8,7 @@
 選定理由・比較結果は README.md の「4-1-1 調査結果」を参照。
 
 使い方:
-    python pdf_extract.py sample_data/sample.pdf
+    python -m rule_based.pdf_extract rule_based/sample_data/sample.pdf
 """
 
 import sys
@@ -227,7 +227,7 @@ def extract(pdf_path: str) -> list[PageBlocks]:
 
 
 def main() -> None:
-    pdf_path = sys.argv[1] if len(sys.argv) > 1 else "sample_data/sample.pdf"
+    pdf_path = sys.argv[1] if len(sys.argv) > 1 else "rule_based/sample_data/sample.pdf"
     for page in extract(pdf_path):
         print(f"=== page {page.page} ===")
         for block in page.text_blocks:
