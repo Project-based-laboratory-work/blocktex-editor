@@ -53,3 +53,4 @@ ai/models/**/*.pt
 
 # web/ のビルド成果物（tsc の出力）
 web/js/
+ai/probe/*.json
