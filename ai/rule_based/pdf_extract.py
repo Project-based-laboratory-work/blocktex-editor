@@ -56,12 +56,30 @@ def _extract_text_blocks(page: pymupdf.Page, page_no: int) -> list[TextBlock]:
         if raw_block.get("type") != 0:  # 0 = テキストブロック（画像ブロックは1）
             continue
 
-        spans = [span for line in raw_block["lines"] for span in line["spans"]]
+        spans = []
+        for line in raw_block["lines"]:
+            for span in line["spans"]:
+                spans.append(span)
         if not spans:
             continue
 
-        lines = ["".join(span["text"] for span in line["spans"]) for line in raw_block["lines"]]
-        text = "\n".join(lines).strip()
+        sorted_lines = sorted(raw_block["lines"], key=lambda line: (line["bbox"][1], line["bbox"][0]))
+        groups = []
+        for line in sorted_lines:
+            top = line["bbox"][1]
+            height = (line["bbox"][3] - line["bbox"][1]) / 2
+
+            if groups and abs(top - groups[-1][0]["bbox"][1]) <= height:
+                groups[-1].append(line)
+            else:
+                groups.append([line])
+        
+        rows = []
+        for group in groups:
+            parts = ["".join(span["text"] for span in line["spans"]) for line in group]
+            rows.append(" ".join(parts))
+
+        text = "\n".join(rows).strip()
         if not text:
             continue
 
