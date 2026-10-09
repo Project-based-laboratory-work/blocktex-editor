@@ -5,7 +5,7 @@ from PIL import Image
 import os
 
 # 読み取らせたいファイル（画像またはPDF）のパスをここで指定します
-file_path = "sample.pdf"  # ※用意したファイル名に書き換えてください
+file_path = "sampleopen.png"  # ※用意したファイル名に書き換えてください
 
 if not os.path.exists(file_path):
     print(f"エラー: {file_path} が見つかりません。同じフォルダにファイルがあるか確認してください。")
