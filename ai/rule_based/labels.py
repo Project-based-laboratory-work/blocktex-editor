@@ -13,11 +13,11 @@ from typing import Literal, get_args
 
 Bbox = tuple[float, float, float, float]
 
-Label = Literal["heading", "paragraph", "list", "math", "caption", "table", "figure", "other"]
+Label = Literal["heading", "paragraph", "list", "math", "caption", "table", "figure", "other", "code"]
 Source = Literal["auto", "manual", "prelabel"]
 
 FINE_LABELS = list(get_args(Label))
-COARSE_LABELS = ["heading", "paragraph", "caption", "table", "figure", "other"]
+COARSE_LABELS = ["heading", "paragraph", "caption", "table", "figure", "other", "code"]
 VALID_SOURCES = list(get_args(Source))
 
 # 細かいラベル → 学習・評価用の粗いラベル
@@ -30,6 +30,7 @@ COARSE_MAP = {
     "table": "table",
     "figure": "figure",
     "other": "other",
+    "code": "code",  # プログラムのコード（lstlisting / verbatim）
 }
 
 
