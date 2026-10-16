@@ -11,6 +11,17 @@
 
 GitHubのリポジトリ設定で `main` ブランチに保護ルール（PR必須）を入れておくと、「直接pushは禁止」が運用ではなく仕組みで担保される。
 
+## PR通知（Teams）
+
+PRを作成（またはreopen、draftからReady for reviewに変更）すると、GitHub Actions（`.github/workflows/notify-pr.yml`）がTeamsのチャンネルに通知を投稿する。draftの間は通知されない。
+
+通知にはリポジトリのSecret `TEAMS_WEBHOOK_URL` を使う。未設定の場合は通知をスキップするだけで、ジョブは失敗しない。設定手順:
+
+1. Teamsで通知先チャンネルの「ワークフロー」から「Webhook要求を受信したらチャンネルに投稿する」を作成し、URLを控える
+2. GitHubのリポジトリ設定（Settings → Secrets and variables → Actions）で `TEAMS_WEBHOOK_URL` にそのURLを登録する（Admin権限が必要）
+
+フォークからのPRにはSecretが渡されないため通知されない。
+
 ## リポジトリ構成
 
 モノレポ構成のため、作業するディレクトリに注意すること。

@@ -1,7 +1,7 @@
 """
 学習済みモデルをデータセット全体で評価し、間違えた例を表示する。
 
-    python -m math_ocr.evaluate checkpoints/math_ocr_d192/best.pt --data data/math_latex --split val
+    python -m math_ocr.evaluate math_ocr/checkpoints/math_ocr_d192/best.pt --data math_ocr/data/math_latex --split val
 
 学習時の検証（train.py の validate）は時間節約のため一部のサンプルしか生成していない。
 こちらは全件を生成して評価するので、モデル同士・データ同士の比較にはこちらの数字を使う。

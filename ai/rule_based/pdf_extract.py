@@ -8,7 +8,7 @@
 選定理由・比較結果は README.md の「4-1-1 調査結果」を参照。
 
 使い方:
-    python pdf_extract.py sample_data/sample.pdf
+    python -m rule_based.pdf_extract rule_based/sample_data/sample.pdf
 """
 
 import sys
@@ -56,12 +56,30 @@ def _extract_text_blocks(page: pymupdf.Page, page_no: int) -> list[TextBlock]:
         if raw_block.get("type") != 0:  # 0 = テキストブロック（画像ブロックは1）
             continue
 
-        spans = [span for line in raw_block["lines"] for span in line["spans"]]
+        spans = []
+        for line in raw_block["lines"]:
+            for span in line["spans"]:
+                spans.append(span)
         if not spans:
             continue
 
-        lines = ["".join(span["text"] for span in line["spans"]) for line in raw_block["lines"]]
-        text = "\n".join(lines).strip()
+        sorted_lines = sorted(raw_block["lines"], key=lambda line: (line["bbox"][1], line["bbox"][0]))
+        groups = []
+        for line in sorted_lines:
+            top = line["bbox"][1]
+            height = (line["bbox"][3] - line["bbox"][1]) / 2
+
+            if groups and abs(top - groups[-1][0]["bbox"][1]) <= height:
+                groups[-1].append(line)
+            else:
+                groups.append([line])
+        
+        rows = []
+        for group in groups:
+            parts = ["".join(span["text"] for span in line["spans"]) for line in group]
+            rows.append(" ".join(parts))
+
+        text = "\n".join(rows).strip()
         if not text:
             continue
 
@@ -209,7 +227,7 @@ def extract(pdf_path: str) -> list[PageBlocks]:
 
 
 def main() -> None:
-    pdf_path = sys.argv[1] if len(sys.argv) > 1 else "sample_data/sample.pdf"
+    pdf_path = sys.argv[1] if len(sys.argv) > 1 else "rule_based/sample_data/sample.pdf"
     for page in extract(pdf_path):
         print(f"=== page {page.page} ===")
         for block in page.text_blocks:

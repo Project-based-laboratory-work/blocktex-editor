@@ -4,7 +4,7 @@
 4-1-2のルールベース分類のテスト入力として使う。
 
 使い方:
-    python sample_data/generate_sample_pdf.py
+    python rule_based/sample_data/generate_sample_pdf.py
 """
 
 import os

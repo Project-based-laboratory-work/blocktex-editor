@@ -17,7 +17,7 @@ import sys
 import re
 from dataclasses import dataclass
 
-from pdf_extract import PageBlocks, TextBlock, extract
+from rule_based.pdf_extract import PageBlocks, TextBlock, extract
 
 Bbox = tuple[float, float, float, float]
 
@@ -116,7 +116,7 @@ def classify(pdf_path: str) -> list[ClassifiedBlock]:
 
 
 def main() -> None:
-    pdf_path = sys.argv[1] if len(sys.argv) > 1 else "sample_data/sample.pdf"
+    pdf_path = sys.argv[1] if len(sys.argv) > 1 else "rule_based/sample_data/sample.pdf"
     for block in classify(pdf_path):
         preview = f" text={block.text[:30]!r}" if block.text else ""
         print(f"[{block.kind}] page={block.page} bbox={block.bbox}{preview}")
