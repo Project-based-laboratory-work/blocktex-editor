@@ -44,6 +44,11 @@ python -m math_ocr.synth_data --train 20000 --val 1000   # data/math_synth/ に�
 python -m math_ocr.train --overfit-batch             # 1バッチ過学習チェック
 python -m math_ocr.train --epochs 10                 # 学習 → checkpoints/math_ocr/best.pt
 python -m math_ocr.train --epochs 10 --resume        # 止まった学習を last.pt から再開（他の引数は前回と同じにする）
+
+# 本物のLaTeX（pdflatex）で描いたデータも混ぜる場合
+python -m math_ocr.synth_data --out data/v2_formulas --formulas-only --seed 11 --train 40000   # 数式だけ作る
+python -m math_ocr.render_latex --src data/v2_formulas --out data/v2_latex --split train val   # LaTeXで描画
+python -m math_ocr.train --data data/v2_mathtext data/v2_latex --init-from checkpoints/math_ocr_d192/best.pt
 python -m math_ocr.predict checkpoints/math_ocr/best.pt data/math_synth/images/val_000000.png
 ```
 

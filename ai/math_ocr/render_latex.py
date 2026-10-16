@@ -14,21 +14,27 @@ pdflatex と pdftoppm（poppler-utils）が必要。
 
 import argparse
 import random
-import shutil
 import subprocess
 import tempfile
 from multiprocessing import Pool
 from pathlib import Path
 
+import numpy as np
+from PIL import Image
+
 from math_ocr.dataset import read_labels
 
 CHUNK_SIZE = 500  # 1つの文書に入れる数式の数
+
+# 数式用フォント。標準（Computer Modern）を中心に、Palatino系・Times系も混ぜる
+FONT_PACKAGES = (["", r"\usepackage{mathpazo}", r"\usepackage{mathptmx}"], [60, 20, 20])
 
 # 用紙を横長にして、長い数式がはみ出したり折り返されたりしないようにする。
 # ページ番号が入ると数式と一緒に切り出されてしまうので \pagestyle{empty} で消す。
 TEMPLATE = r"""\documentclass{article}
 \usepackage[paperwidth=50cm,paperheight=8cm,margin=1cm]{geometry}
-\usepackage{amsmath}
+\usepackage{amsmath,amssymb}
+%s
 \pagestyle{empty}
 \begin{document}
 %s
@@ -38,13 +44,19 @@ TEMPLATE = r"""\documentclass{article}
 
 def _render_chunk(args: tuple[int, list[str], Path, str, int]) -> list[tuple[str, str]]:
     chunk_index, formulas, image_dir, split, seed = args
-    # 解像度をチャンクごとに変えて、文字の太さ・にじみ方にばらつきを持たせる
-    dpi = random.Random(seed * 1_000_003 + chunk_index).randint(100, 200)
-    body = "\n\\newpage\n".join(rf"\[ {formula} \]" for formula in formulas)
+    rng = random.Random(seed * 1_000_003 + chunk_index)
+    # 解像度とフォントをチャンクごとに変えて、文字の太さ・にじみ方・字形にばらつきを持たせる
+    dpi = rng.randint(100, 200)
+    font_package = rng.choices(FONT_PACKAGES[0], weights=FONT_PACKAGES[1])[0]
+    # 別行立て（\[ \]）と文中（$ $）では、分数や総和記号の大きさ・添字の位置が変わる。両方を混ぜる
+    pages = [
+        rf"\[ {formula} \]" if rng.random() < 0.65 else rf"\noindent ${formula}$" for formula in formulas
+    ]
+    body = "\n\\newpage\n".join(pages)
 
     with tempfile.TemporaryDirectory() as tmp:
         tmp_dir = Path(tmp)
-        (tmp_dir / "doc.tex").write_text(TEMPLATE % body, encoding="utf-8")
+        (tmp_dir / "doc.tex").write_text(TEMPLATE % (font_package, body), encoding="utf-8")
         subprocess.run(
             ["pdflatex", "-interaction=nonstopmode", "-halt-on-error", "doc.tex"],
             cwd=tmp_dir, check=True, capture_output=True,
@@ -54,16 +66,29 @@ def _render_chunk(args: tuple[int, list[str], Path, str, int]) -> list[tuple[str
             cwd=tmp_dir, check=True, capture_output=True,
         )  # fmt: skip
         # pdftoppm は page-001.png のような連番で出力する。名前順に並べるとページ順になる
-        pages = sorted(tmp_dir.glob("page-*.png"))
-        if len(pages) != len(formulas):
-            raise RuntimeError(f"ページ数 {len(pages)} が数式の数 {len(formulas)} と合わない")
+        page_images = sorted(tmp_dir.glob("page-*.png"))
+        if len(page_images) != len(formulas):
+            raise RuntimeError(f"ページ数 {len(page_images)} が数式の数 {len(formulas)} と合わない")
 
         results = []
-        for offset, (page, formula) in enumerate(zip(pages, formulas)):
+        for offset, (page, formula) in enumerate(zip(page_images, formulas)):
             filename = f"{split}_{chunk_index * CHUNK_SIZE + offset:06d}.png"
-            shutil.move(page, image_dir / filename)
+            _crop_to_ink(Image.open(page)).save(image_dir / filename)
             results.append((filename, formula))
     return results
+
+
+def _crop_to_ink(page: Image.Image, margin: int = 8) -> Image.Image:
+    """ページ画像はほとんどが余白なので、数式の周りだけ切り出して保存する（容量と読み込み時間の節約）"""
+    page = page.convert("L")
+    rows, cols = np.nonzero(np.asarray(page) < 200)
+    if len(rows) == 0:
+        return page
+    box = (
+        max(cols.min() - margin, 0), max(rows.min() - margin, 0),
+        min(cols.max() + margin, page.width), min(rows.max() + margin, page.height),
+    )  # fmt: skip
+    return page.crop(box)
 
 
 def render_dataset(src: Path, out: Path, split: str, limit: int | None, seed: int, workers: int) -> None:
