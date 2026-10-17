@@ -227,6 +227,17 @@ tabPdf.addEventListener('click', () => showTab('pdf'));
 let pdfUrl: string | undefined;
 let pdfAbort: AbortController | undefined;
 
+/** ファイルの中身を base64 の文字列にする（JSON に入れて送るため） */
+function readAsBase64(file: Blob): Promise<string> {
+    return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        // 結果は 'data:image/png;base64,....' の形なので、カンマより後ろだけを取り出す
+        reader.onload = () => resolve(String(reader.result).split(',')[1] ?? '');
+        reader.onerror = () => reject(reader.error);
+        reader.readAsDataURL(file);
+    });
+}
+
 async function refreshPdf(): Promise<void> {
     if (pdfAbort) {
         pdfAbort.abort();
@@ -240,9 +251,24 @@ async function refreshPdf(): Promise<void> {
 
     try {
         const tex = texOutput.textContent ?? '';
+        // \includegraphics で使う画像ファイルも、TeX と一緒に送る
+        const { files, missing } = editor.imagesForPreview();
+        if (missing.length > 0) {
+            pdfError.textContent = `画像ファイルが手元にありません: ${missing.join(', ')}\n`
+                + '保存した文書を開き直したあとは、画像ブロックでファイルを選び直してください。';
+            pdfError.hidden = false;
+            pdfStatus.textContent = 'エラー';
+            return;
+        }
+        const images = await Promise.all(
+            files.map(async ({ name, file }) => ({ name, data: await readAsBase64(file) })),
+        );
+        if (controller.signal.aborted) {
+            return;     // 画像を読んでいる間に、次の更新が始まった
+        }
         const res = await fetch(COMPILE_URL, {
             method: 'POST',
-            body: JSON.stringify({ tex: tex }),
+            body: JSON.stringify({ tex: tex, images: images }),
             signal: controller.signal,
         });
 

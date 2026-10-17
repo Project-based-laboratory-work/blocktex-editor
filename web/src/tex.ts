@@ -228,6 +228,14 @@ const CODE_LANGUAGES: Record<CodeLanguage, CodeLanguageSpec> = {
 /** コード中にあると lstlisting 環境が閉じてしまう文字列 */
 const LSTLISTING_END = '\\end{lstlisting}';
 
+/**
+ * 和文などASCII以外の文字の並び。listings は upLaTeX の和文文字を正しい位置に出せない
+ * （言語なしだと print("こんにちは") が printこんにちは ("") になる）ので、エスケープしてTeXの通常の組版に任せる。
+ */
+const NON_ASCII_RUN = /[^\x00-\x7f]+/g;
+/** listings のエスケープ文字の候補。コード中に現れないものを1つ選ぶ */
+const LST_ESCAPE_CANDIDATES = ['`', '|', '@', '!', '?', ';', ':', '+', '*', '<', '>'];
+
 interface BreakSpec {
   label: string;
   tex: string;
@@ -285,10 +293,17 @@ function blockToTex(block: Block): string {
 function codeToTex(block: CodeBlock): string {
   if (block.code.trim() === '') return '% コードが未入力';
   const lst = CODE_LANGUAGES[block.language].lst;
-  const options = lst ? `[language=${lst}]` : '';
+  const options = lst ? [`language=${lst}`] : [];
   // \end と { の間に空白を入れて崩す。PDF上では空白が1つ増えて見える
-  const code = block.code.split(LSTLISTING_END).join('\\end {lstlisting}');
-  return `\\begin{lstlisting}${options}\n${code}\n\\end{lstlisting}`;
+  let code = block.code.split(LSTLISTING_END).join('\\end {lstlisting}');
+  // 候補を全部使っているコードはまず無いが、その場合はエスケープせずに出す（日本語の位置がずれるだけ）
+  const escape = LST_ESCAPE_CANDIDATES.find((c) => !code.includes(c));
+  if (escape && /[^\x00-\x7f]/.test(code)) {
+    options.push(`escapechar=${escape}`);
+    code = code.replace(NON_ASCII_RUN, (run) => `${escape}${run}${escape}`);
+  }
+  const optionText = options.length ? `[${options.join(',')}]` : '';
+  return `\\begin{lstlisting}${optionText}\n${code}\n\\end{lstlisting}`;
 }
 
 function tableToTex(block: TableBlock): string {
