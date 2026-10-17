@@ -28,6 +28,7 @@ PRを作成（またはreopen、draftからReady for reviewに変更）すると
 
 - `web/` — Webアプリ本体（TypeScript）。`npm install && npm run build` で `web/js/` を生成すれば、`web/index.html` をブラウザで直接開いて動作確認できる。
 - `ai/` — Phase 4の学習コード（Python）。Pythonの仮想環境はこのディレクトリに作る。
+- `server/` — PDFプレビュー用のコンパイルサーバー。起動方法は [README.md](README.md) の「PDFプレビュー（コンパイルサーバー）」を参照。
 - `docker/` — TeXコンパイル確認用のDockerイメージ定義とスクリプト。
 
 ## TeX環境（Dockerを使う方法・推奨）
@@ -56,7 +57,7 @@ docker/compile-tex.sh path/to/your.tex
 
 Dockerを使いたくない場合は各自でTeX Liveを導入する。バージョン差で結果が変わる可能性があるため、その場合も最終確認はDocker側で行うこと。
 
-- **Linux（Debian/Ubuntu系）**: `sudo apt install texlive-lang-japanese texlive-latex-extra`
+- **Linux（Debian/Ubuntu系）**: `sudo apt install texlive-lang-japanese texlive-latex-extra texlive-plain-generic`（下線に使う `ulem` は `texlive-plain-generic` に入っている）
 - **macOS**: [MacTeX](https://www.tug.org/mactex/) をインストール（BasicTeX + `tlmgr install collection-langjapanese` でも可）
 - **Windows**: WSL2を導入してLinuxと同じ手順
 

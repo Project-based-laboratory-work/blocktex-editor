@@ -27,7 +27,20 @@ const COMPILE_URL = 'http://localhost:8080/api/compile';
 
 const editor = new BlockEditor(requireElement('#block-list'), (doc) => {
     texOutput.textContent = documentToTex(doc);
+    schedulePdfRefresh();
 });
+
+const PDF_REFRESH_DELAY_MS = 1500;
+let pdfRefreshTimer: number | undefined;
+
+function schedulePdfRefresh(): void {
+    if (pdfView.hidden || texPane.hidden) {
+        return;
+    }
+
+    window.clearTimeout(pdfRefreshTimer);
+    pdfRefreshTimer = window.setTimeout(refreshPdf, PDF_REFRESH_DELAY_MS);
+}
 
 function showEditor(doc: BlockDocument): void {
     homeView.hidden = true;
@@ -201,12 +214,27 @@ function showTab(tab: 'tex' | 'pdf'): void {
     tabPdf.setAttribute('aria-selected', String(isPdf));
     texOutput.hidden = isPdf;
     pdfView.hidden = !isPdf;
+
+    if (isPdf) {
+        refreshPdf();
+    }
 }
 
 tabTex.addEventListener('click', () => showTab('tex'));
 tabPdf.addEventListener('click', () => showTab('pdf'));
 
+// 表示中のPDFの住所。次の更新で古いものをメモリから解放するために覚えておく
+let pdfUrl: string | undefined;
+let pdfAbort: AbortController | undefined;
+
 async function refreshPdf(): Promise<void> {
+    if (pdfAbort) {
+        pdfAbort.abort();
+    }
+
+    const controller = new AbortController();
+    pdfAbort = controller;
+
     pdfStatus.textContent = '更新中…';
     pdfError.hidden = true;
 
@@ -215,6 +243,7 @@ async function refreshPdf(): Promise<void> {
         const res = await fetch(COMPILE_URL, {
             method: 'POST',
             body: JSON.stringify({ tex: tex }),
+            signal: controller.signal,
         });
 
         if (!res.ok) {
@@ -225,9 +254,18 @@ async function refreshPdf(): Promise<void> {
         }
 
         const blob = await res.blob();
-        pdfFrame.src = URL.createObjectURL(blob);
+
+        if (pdfUrl) {        // 前の PDF があったら
+            URL.revokeObjectURL(pdfUrl);
+        }
+        pdfUrl = URL.createObjectURL(blob);
+        pdfFrame.src = pdfUrl;
+
         pdfStatus.textContent = '';
     } catch (err) {
+        if (controller.signal.aborted) {
+            return;
+        }
         console.error(err);
         pdfStatus.textContent = 'サーバーに接続できません';
     }

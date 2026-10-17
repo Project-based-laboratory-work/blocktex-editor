@@ -8,6 +8,7 @@
 |---|---|
 | `web/` | HTML + CSS + TypeScript のWebアプリ本体（Phase 1〜3） |
 | `ai/` | 自作TransformerによるPDFブロック分類の学習コード（Phase 4、Python） |
+| `server/` | PDFプレビュー用のコンパイルサーバー（Node.js + TypeScript）とそのDockerイメージ |
 | `docker/` | TeX Live（uplatex）入りのコンパイル確認用Dockerイメージ |
 
 チーム向けドキュメント: [CONTRIBUTING.md](CONTRIBUTING.md)（ブランチ運用・TeX環境）、[BACKEND.md](BACKEND.md)（Firebase設計）
@@ -42,7 +43,7 @@
 +---------------------------+--------------------------+
 ```
 
-左ペインでブロックを編集し、右ペインに変換後のTeXをリアルタイム表示する2ペイン構成。
+左ペインでブロックを編集し、右ペインに変換後のTeXをリアルタイム表示する2ペイン構成。右ペインは「TeX」と「PDFプレビュー」をタブで切り替えられる（PDFプレビューには下記のコンパイルサーバーが必要）。
 
 ## 未決事項
 
@@ -69,3 +70,63 @@ npm run build      # web/js/ を生成
 npm run watch      # 変更を監視して自動ビルド
 npm run typecheck  # 型チェックのみ
 ```
+
+## PDFプレビュー（コンパイルサーバー）
+
+ブラウザはTeXをコンパイルできないため、`server/` のコンパイルサーバーにTeXを送ってPDFにしてもらう。サーバーが動いていなくても、エディタとTeX表示はそのまま使える。
+
+```
+ブラウザ（web/）── POST /api/compile {"tex": "..."} ──▶ server/
+                                                       一時ディレクトリで uplatex ×2 → dvipdfmx
+PDFプレビュータブ ◀──────── PDF（失敗時はエラー文）──────┘
+```
+
+### 起動する（Dockerを使う方法・推奨）
+
+本番と同じTeX Live（Debian bookworm = TeX Live 2022）で確認できる。初回のビルドは十数分かかる。
+
+```bash
+docker build -t retex-compile server/
+docker run --rm --init -p 8080:8080 retex-compile
+```
+
+`listening on :8080` と出たら、`web/index.html` を開き、右ペインの「PDFプレビュー」タブを選ぶ。編集が止まってから1.5秒後に自動で更新される。止めるときは `Ctrl + C`。
+
+### 起動する（Dockerを使わない方法）
+
+手元にTeX Live（[CONTRIBUTING.md](CONTRIBUTING.md) の「Dockerを使わない方法」）とNode.js 22.18以上があれば、`.ts` をそのまま動かせる（ビルド不要）。
+
+```bash
+cd server
+npm install
+npm run dev        # ファイルを保存すると自動で再起動する
+```
+
+手元のTeX Liveのバージョンによって結果が変わることがあるため、最終確認はDocker側で行う。
+
+### APIの仕様
+
+`POST /api/compile` に `{"tex": "<TeXソース全体>"}` をJSONで送る。
+
+| ステータス | 意味 | 本文 |
+|---|---|---|
+| 200 | 成功 | PDF（`application/pdf`） |
+| 400 | JSONが壊れている／`tex` が文字列でない | `bad request` など |
+| 413 | 本文が大きすぎる（約1MB超） | `too large` |
+| 422 | TeXのエラー、またはコンパイルが20秒を超えた | ログのエラー部分（3行） |
+| 500 | サーバー側の問題 | `server error` |
+
+### 安全対策
+
+誰でも任意のTeXを送れる前提で動かしている。
+
+- `-no-shell-escape`（`\write18` で外部コマンドを実行させない）。そのため、shell-escapeが必要なパッケージ（minted など）は使えない
+- コンパイルのタイムアウト（20秒）と、本文のサイズ上限（約1MB）
+- リクエストごとに別の一時ディレクトリを作り、終わったら必ず消す
+- Dockerイメージの中では一般ユーザー（`node`）で動かす
+
+### 制限・未決事項
+
+- **画像ブロックは未対応**: `\includegraphics` で参照する画像ファイルをサーバーに送っていないため、画像を含む文書はPDFプレビューでエラーになる
+- **デプロイ先は未定**: いまはローカルで動かす前提。ブラウザから `file://` で開いたページが呼べるよう、CORSを全オリジンに許可している（`Access-Control-Allow-Origin: *`）。公開する場合はこの設定を見直す
+- サーバーのURLは [web/src/script.ts](web/src/script.ts) の `COMPILE_URL`、ポートは環境変数 `PORT`（既定 8080）で変えられる
