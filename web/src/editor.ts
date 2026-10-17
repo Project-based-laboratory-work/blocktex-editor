@@ -63,6 +63,8 @@ class BlockEditor {
   private selectedId: BlockId | null = null;
   /** 画像プレビュー用のURL。保存対象ではないのでモデルには入れない。 */
   private readonly imageUrls = new Map<BlockId, string>();
+  /** 選んだ画像ファイルそのもの。PDFプレビューでサーバーに送る。保存対象ではない。 */
+  private readonly imageFiles = new Map<BlockId, File>();
 
   constructor(
     private readonly listEl: HTMLElement,
@@ -170,6 +172,23 @@ class BlockEditor {
     const url = this.imageUrls.get(id);
     if (url) URL.revokeObjectURL(url);
     this.imageUrls.delete(id);
+    this.imageFiles.delete(id);
+  }
+
+  /**
+   * PDFプレビューでTeXと一緒に送る画像。名前は \includegraphics に書いた src。
+   * 保存した文書を読み込んだ直後など、ファイルを選び直していない画像は手元に無いので missing に入る。
+   */
+  imagesForPreview(): { files: { name: string; file: File }[]; missing: string[] } {
+    const files: { name: string; file: File }[] = [];
+    const missing: string[] = [];
+    for (const block of this.doc.blocks) {
+      if (block.type !== 'image' || !block.src) continue;
+      const file = this.imageFiles.get(block.id);
+      if (file) files.push({ name: block.src, file });
+      else missing.push(block.src);
+    }
+    return { files, missing };
   }
 
   private select(id: BlockId | null): void {
@@ -626,6 +645,7 @@ class BlockEditor {
       if (!file) return;
       this.revokeImageUrl(block.id);
       this.imageUrls.set(block.id, URL.createObjectURL(file));
+      this.imageFiles.set(block.id, file);
       block.src = file.name;
       refresh();
       this.changed();
