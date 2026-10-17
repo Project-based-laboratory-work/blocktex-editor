@@ -11,6 +11,7 @@ const execFileAsync = promisify(execFile);
 // パラメータ
 const MAX_BODY = 1_000_000;   // 文字数制限(約1MB)
 const COMPILE_TIMEOUT_MS = 20_000; // タイムアウト
+const PORT = Number(process.env.PORT ?? 8080);
 
 const server = http.createServer((req, res) => {
     // 開発中は index.html をファイルから開くので、別オリジンからの fetch を許可する。
@@ -103,4 +104,4 @@ const server = http.createServer((req, res) => {
     res.end('not found');
 });
 
-server.listen(8080, () => console.log('listening on :8080'));
+server.listen(PORT, () => console.log(`listening on :${PORT}`));
