@@ -9,7 +9,8 @@
     --toolbar-h: 52px;
 }
 
-html, body {
+html,
+body {
     height: 100%;
 }
 
@@ -232,9 +233,20 @@ button {
     overflow: hidden;
 }
 
-.heading-1 { font-size: 1.8rem; font-weight: 700; }
-.heading-2 { font-size: 1.4rem; font-weight: 700; }
-.heading-3 { font-size: 1.15rem; font-weight: 700; }
+.heading-1 {
+    font-size: 1.8rem;
+    font-weight: 700;
+}
+
+.heading-2 {
+    font-size: 1.4rem;
+    font-weight: 700;
+}
+
+.heading-3 {
+    font-size: 1.15rem;
+    font-weight: 700;
+}
 
 .list-marker-select {
     margin-bottom: 2px;
@@ -284,6 +296,7 @@ button {
 .math-mode {
     display: inline-block;
     margin-top: 4px;
+    margin-right: 12px;
     font-size: .8rem;
     color: var(--muted);
 }
@@ -320,8 +333,13 @@ button {
     padding: 1px 0;
 }
 
-.toc-level-2 { padding-left: 1.5em; }
-.toc-level-3 { padding-left: 3em; }
+.toc-level-2 {
+    padding-left: 1.5em;
+}
+
+.toc-level-3 {
+    padding-left: 3em;
+}
 
 .toc-empty {
     color: var(--muted);
@@ -504,7 +522,13 @@ button {
     pointer-events: none;
 }
 
-.inline-math {
+.rich a {
+    color: var(--accent);
+    text-decoration: underline;
+}
+
+/* 文中に置く部品（数式・脚注）の共通の見た目 */
+.inline-chip {
     display: inline-block;
     padding: 0 4px;
     margin: 0 1px;
@@ -512,9 +536,36 @@ button {
     border-radius: 4px;
     cursor: pointer;
     user-select: none;
+    font-weight: normal;
+    font-style: normal;
+    text-decoration: none;
 }
 
-.inline-math-input {
+.inline-footnote {
+    background: #fff4e0;
+}
+
+.inline-footnote .inline-chip-view {
+    display: inline-flex;
+    align-items: baseline;
+    gap: 4px;
+    max-width: 16em;
+    font-size: .8rem;
+}
+
+.inline-footnote-mark {
+    font-weight: 700;
+    color: #b26a00;
+}
+
+.inline-footnote-text {
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+    color: var(--muted);
+}
+
+.inline-chip-input {
     padding: 0 4px;
     font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
     font-size: .9rem;
@@ -588,6 +639,170 @@ button {
     color: var(--accent);
 }
 
+.format-buttons {
+    display: flex;
+    gap: 4px;
+    margin-bottom: 4px;
+}
+
+.palette-group .format-button {
+    justify-content: center;
+    width: 36px;
+    height: 32px;
+    padding: 0;
+    border-color: var(--border);
+    font-family: 'Merriweather', serif;
+}
+
+.palette-group .format-button[aria-pressed="true"] {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: #fff;
+}
+
+/* ---------- 引用 ---------- */
+.quote-input {
+    padding: 4px 12px;
+    border-left: 4px solid var(--border);
+    color: #3e4c59;
+}
+
+/* ---------- コード ---------- */
+.code-language {
+    margin-bottom: 2px;
+    padding: 0 4px;
+    font-size: .75rem;
+    color: var(--muted);
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+}
+
+.code-input {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: .9rem;
+    line-height: 1.5;
+    padding: 8px 10px;
+    background: #f1f3f6;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    white-space: pre;
+    overflow-x: auto;
+    tab-size: 4;
+}
+
+.code-note {
+    font-size: .75rem;
+    color: #b26a00;
+}
+
+.code-note:empty {
+    display: none;
+}
+
+/* ---------- 改ページ・空白 ---------- */
+.break-wrap {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.break-wrap::before,
+.break-wrap::after {
+    content: "";
+    flex: 1;
+    border-top: 1px dashed var(--border);
+}
+
+.break-wrap.break-page::before,
+.break-wrap.break-page::after {
+    border-top: 2px dashed var(--accent);
+}
+
+.break-select {
+    width: auto;
+    padding: 0 6px;
+    font-size: .8rem;
+    color: var(--muted);
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+}
+
+/* ---------- 文書設定 ---------- */
+.settings-dialog {
+    margin: auto;
+    width: min(360px, calc(100% - 32px));
+    padding: 20px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, .15);
+}
+
+.settings-dialog::backdrop {
+    background: rgba(31, 41, 51, .3);
+}
+
+.settings-title {
+    margin-bottom: 12px;
+    font-size: 1.1rem;
+}
+
+.settings-row {
+    display: grid;
+    grid-template-columns: 6em 1fr;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 8px;
+}
+
+.settings-row select {
+    /* ress が消している ▼ を戻して、入力欄ではなく選択肢だと分かるようにする */
+    appearance: auto;
+}
+
+.settings-row select,
+.settings-row input[type="number"] {
+    padding: 2px 6px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+}
+
+.settings-row input[type="number"] {
+    width: 5em;
+}
+
+.settings-row input:disabled {
+    opacity: .5;
+}
+
+.settings-margin {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.settings-note {
+    font-size: .75rem;
+    color: var(--muted);
+}
+
+.settings-actions {
+    display: flex;
+    justify-content: flex-end;
+    margin-top: 12px;
+}
+
+.settings-close {
+    padding: 4px 16px;
+    color: #fff;
+    background: var(--accent);
+    border: none;
+    border-radius: 6px;
+}
+
 /* ---------- TeXペイン ---------- */
 .side-pane {
     display: flex;
@@ -638,6 +853,35 @@ button {
     font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
     font-size: .85rem;
     line-height: 1.6;
+}
+
+/* PDF プレビュー */
+.pdf-view {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+}
+
+.pdf-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 12px;
+}
+
+.pdf-error {
+    margin: 0 12px;
+    padding: 8px;
+    white-space: pre-wrap;
+    color: #b00020;
+    font-family: ui-monospace, monospace;
+    font-size: .8rem;
+}
+
+.pdf-frame {
+    flex: 1;
+    width: 100%;
+    border: none;
 }
 
 @media (max-width: 720px) {

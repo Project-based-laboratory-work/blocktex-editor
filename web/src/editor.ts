@@ -1,4 +1,17 @@
-type AddKind = 'heading1' | 'heading2' | 'heading3' | 'paragraph' | 'list' | 'math' | 'title' | 'toc' | 'table' | 'image';
+type AddKind =
+  | 'heading1'
+  | 'heading2'
+  | 'heading3'
+  | 'paragraph'
+  | 'list'
+  | 'math'
+  | 'title'
+  | 'toc'
+  | 'table'
+  | 'image'
+  | 'quote'
+  | 'code'
+  | 'break';
 
 function createBlock(kind: AddKind): Block {
   const id = generateId();
@@ -27,6 +40,12 @@ function createBlock(kind: AddKind): Block {
       };
     case 'image':
       return { id, type: 'image', src: '', widthRatio: DEFAULT_IMAGE_WIDTH_RATIO };
+    case 'quote':
+      return { id, type: 'quote', content: [] };
+    case 'code':
+      return { id, type: 'code', language: DEFAULT_CODE_LANGUAGE, code: '' };
+    case 'break':
+      return { id, type: 'break', kind: 'page' };
   }
 }
 
@@ -60,6 +79,20 @@ class BlockEditor {
     this.selectedId = null;
     for (const id of [...this.imageUrls.keys()]) this.revokeImageUrl(id);
     this.render();
+    this.changed();
+  }
+
+  get settings(): DocumentSettings {
+    return this.doc.settings ?? {};
+  }
+
+  /** 文書設定を変える。undefined を渡した項目は消す（既定値に戻す） */
+  updateSettings(patch: Partial<DocumentSettings>): void {
+    const next: DocumentSettings = { ...this.doc.settings, ...patch };
+    for (const key of Object.keys(next) as (keyof DocumentSettings)[]) {
+      if (next[key] === undefined) delete next[key];
+    }
+    this.doc.settings = next;
     this.changed();
   }
 
@@ -256,14 +289,62 @@ class BlockEditor {
         const check = document.createElement('input');
         check.type = 'checkbox';
         check.checked = block.displayMode;
+        label.append(check, ' 別行立て');
+        // 式番号は別行立てのときだけ意味があるので、文中扱いのときは隠す
+        const numberLabel = document.createElement('label');
+        numberLabel.className = 'math-mode';
+        const numberCheck = document.createElement('input');
+        numberCheck.type = 'checkbox';
+        numberCheck.checked = block.numbered ?? false;
+        numberCheck.addEventListener('change', () => {
+          block.numbered = numberCheck.checked;
+          this.changed();
+        });
+        numberLabel.append(numberCheck, ' 式番号');
+        numberLabel.hidden = !block.displayMode;
         check.addEventListener('change', () => {
           block.displayMode = check.checked;
+          numberLabel.hidden = !check.checked;
           update();
           this.changed();
         });
-        label.append(check, ' 別行立て');
-        wrap.append(area, preview, label);
+        wrap.append(area, preview, label, numberLabel);
         update();
+        return wrap;
+      }
+      case 'quote': {
+        const input = createRichTextEditor({
+          content: block.content,
+          singleLine: false,
+          placeholder: '引用する文章を入力',
+          onChange: (content) => {
+            block.content = content;
+            this.changed();
+          },
+        });
+        input.classList.add('quote-input');
+        return input;
+      }
+      case 'code':
+        return this.renderCode(block);
+      case 'break': {
+        const wrap = document.createElement('div');
+        wrap.className = 'break-wrap';
+        const select = document.createElement('select');
+        select.className = 'block-input break-select';
+        select.title = '区切りの種類';
+        for (const [value, spec] of Object.entries(BREAK_KINDS)) {
+          select.append(new Option(spec.label, value));
+        }
+        select.value = block.kind;
+        const sync = () => wrap.classList.toggle('break-page', block.kind === 'page');
+        select.addEventListener('change', () => {
+          block.kind = select.value as BreakKind;
+          sync();
+          this.changed();
+        });
+        sync();
+        wrap.append(select);
         return wrap;
       }
       case 'toc': {
@@ -575,6 +656,57 @@ class BlockEditor {
 
     refresh();
     wrap.append(pick, fileInput, stage, note, controls, caption);
+    return wrap;
+  }
+
+  private renderCode(block: CodeBlock): HTMLElement {
+    const wrap = document.createElement('div');
+    wrap.className = 'code-wrap';
+
+    const select = document.createElement('select');
+    select.className = 'code-language';
+    select.title = 'コードの言語（キーワードの色分けに使う）';
+    for (const [value, spec] of Object.entries(CODE_LANGUAGES)) {
+      select.append(new Option(spec.label, value));
+    }
+    select.value = block.language;
+    select.addEventListener('change', () => {
+      block.language = select.value as CodeLanguage;
+      this.changed();
+    });
+
+    const note = document.createElement('p');
+    note.className = 'code-note';
+    const check = () => {
+      note.textContent = block.code.includes(LSTLISTING_END)
+        ? `⚠ ${LSTLISTING_END} はそのままだとコードが途中で終わるため、\\end と { の間に空白を入れて出力します`
+        : '';
+    };
+
+    const area = this.textarea(block.code, 'コードを入力', (v) => {
+      block.code = v;
+      check();
+    });
+    area.classList.add('code-input');
+    area.spellcheck = false;
+    area.title = 'Tab で字下げ（Esc を押してから Tab で次へ移動）';
+    // Tab で字下げできるようにする。Esc の直後だけは通常どおりフォーカスを移す（キーボードだけで抜け出せるように）
+    let escaped = false;
+    area.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') {
+        escaped = true;
+        return;
+      }
+      if (e.key === 'Tab' && !e.shiftKey && !e.isComposing && !escaped) {
+        e.preventDefault();
+        area.setRangeText('    ', area.selectionStart, area.selectionEnd, 'end');
+        area.dispatchEvent(new Event('input'));
+      }
+      escaped = false;
+    });
+
+    check();
+    wrap.append(select, area, note);
     return wrap;
   }
 
