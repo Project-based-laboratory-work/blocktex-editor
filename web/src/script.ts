@@ -206,6 +206,9 @@ function showTab(tab: 'tex' | 'pdf'): void {
 tabTex.addEventListener('click', () => showTab('tex'));
 tabPdf.addEventListener('click', () => showTab('pdf'));
 
+// 表示中のPDFの住所。次の更新で古いものをメモリから解放するために覚えておく
+let pdfUrl: string | undefined;
+
 async function refreshPdf(): Promise<void> {
     pdfStatus.textContent = '更新中…';
     pdfError.hidden = true;
@@ -225,7 +228,13 @@ async function refreshPdf(): Promise<void> {
         }
 
         const blob = await res.blob();
-        pdfFrame.src = URL.createObjectURL(blob);
+
+        if (pdfUrl) {        // 前の PDF があったら
+            URL.revokeObjectURL(pdfUrl);
+        }
+        pdfUrl = URL.createObjectURL(blob);
+        pdfFrame.src = pdfUrl;
+
         pdfStatus.textContent = '';
     } catch (err) {
         console.error(err);
