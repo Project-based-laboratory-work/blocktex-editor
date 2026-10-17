@@ -142,3 +142,4 @@ npm run dev        # ファイルを保存すると自動で再起動する
 
 - 保存した文書を開き直した直後は、画像ファイルが手元に無い（ブラウザは選んだファイルを保存しない）。PDFプレビューにその旨が出るので、画像ブロックでファイルを選び直す
 - サーバーのURLは [web/src/script.ts](web/src/script.ts) の `COMPILE_URL`、ポートは環境変数 `PORT`（既定 8080）で変えられる
+- うまく動かないときの調べ方は [CONTRIBUTING.md](CONTRIBUTING.md) の「PDFプレビューのデバッグ」
