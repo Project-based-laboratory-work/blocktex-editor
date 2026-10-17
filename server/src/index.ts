@@ -57,8 +57,8 @@ const server = http.createServer((req, res) => {
                         // タイムアウトした際の処理
                         if (err.killed) {
                             res.statusCode = 422;
-                            res.end('コンパイルに時間がかかりすぎたため中断しました');
                             res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+                            res.end('コンパイルに時間がかかりすぎたため中断しました');
                             return;
                         }
 
