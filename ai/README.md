@@ -76,6 +76,7 @@ Transformer（4-3）との精度比較の基準として使う。
 
 | ディレクトリ | 内容 |
 |---|---|
+| [common/](common/README.md) | 全モデル共通のJSON形式（IR・ラベル付きIR・エディタ用JSON）の定義と変換 |
 | [math_ocr/](math_ocr/README.md) | 数式画像 → LaTeX（自作CNN+Transformer） |
 | [tesseract_ocr/](tesseract_ocr/README.md) | Tesseractによる文字認識・サイズ判定（学習なし） |
 | [rule_based/](rule_based/) | PDFブロック分類のルールベースライン（PDF抽出・ラベル定義・サンプルPDF） |
@@ -97,4 +98,5 @@ ai/<モデル名>/
 
 - 実行は `ai/` で `python -m <モデル名>.predict ...` の形に統一する（モデル間のimportも `<モデル名>.xxx` で書く）。
 - 他モデルのフォルダの中身には依存しない。複数モデルで使う処理が出てきたら `ai/common/` に切り出す。
+- PDF・画像を読むモデルは、出力を共通のIR（またはラベル付きIR）に変換するアダプタを書く。形式は [common/README.md](common/README.md) を参照。
 - 学習済みで、アプリから選べるようにするモデルは [models/](models/README.md) に登録する。

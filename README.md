@@ -8,6 +8,7 @@
 |---|---|
 | `web/` | HTML + CSS + TypeScript のWebアプリ本体（Phase 1〜3） |
 | `ai/` | 自作TransformerによるPDFブロック分類の学習コード（Phase 4、Python） |
+| `server/` | PDFプレビュー用のコンパイルサーバー（Node.js + TypeScript）とそのDockerイメージ |
 | `docker/` | TeX Live（uplatex）入りのコンパイル確認用Dockerイメージ |
 
 チーム向けドキュメント: [CONTRIBUTING.md](CONTRIBUTING.md)（ブランチ運用・TeX環境）、[BACKEND.md](BACKEND.md)（Firebase設計）
@@ -42,7 +43,7 @@
 +---------------------------+--------------------------+
 ```
 
-左ペインでブロックを編集し、右ペインに変換後のTeXをリアルタイム表示する2ペイン構成。
+左ペインでブロックを編集し、右ペインに変換後のTeXをリアルタイム表示する2ペイン構成。右ペインは「TeX」と「PDFプレビュー」をタブで切り替えられる（PDFプレビューには下記のコンパイルサーバーが必要）。
 
 ## 未決事項
 
@@ -69,3 +70,76 @@ npm run build      # web/js/ を生成
 npm run watch      # 変更を監視して自動ビルド
 npm run typecheck  # 型チェックのみ
 ```
+
+## PDFプレビュー（コンパイルサーバー）
+
+ブラウザはTeXをコンパイルできないため、`server/` のコンパイルサーバーにTeXを送ってPDFにしてもらう。サーバーは各メンバーが自分のPCで動かす前提で、公開（デプロイ）はしない。サーバーが動いていなくても、エディタとTeX表示はそのまま使える。
+
+```
+ブラウザ（web/）── POST /api/compile {"tex": "...", "images": [...]} ──▶ server/
+                                                     一時ディレクトリで uplatex ×2 → dvipdfmx
+PDFプレビュータブ ◀──────────── PDF（失敗時はエラー文）────────────┘
+```
+
+### 起動する（Dockerを使う方法・推奨）
+
+チーム共通のTeX Live（Debian bookworm = TeX Live 2022）で確認できる。初回のビルドは十数分かかる。`server/` を変更したら、もう一度 `docker build` する。
+
+```bash
+docker build -t retex-compile server/
+docker run --rm --init -p 127.0.0.1:8080:8080 retex-compile
+```
+
+`listening on :8080` と出たら、`web/index.html` を開き、右ペインの「PDFプレビュー」タブを選ぶ。編集が止まってから1.5秒後に自動で更新される。止めるときは `Ctrl + C`。`-p 127.0.0.1:8080:8080` は、同じネットワークのほかのPCから使われないよう、自分のPCからだけ受け付ける指定。
+
+### 起動する（Dockerを使わない方法）
+
+手元にTeX Live（[CONTRIBUTING.md](CONTRIBUTING.md) の「Dockerを使わない方法」）とNode.js 22.18以上があれば、`.ts` をそのまま動かせる（ビルド不要）。
+
+```bash
+cd server
+npm install
+npm run dev        # ファイルを保存すると自動で再起動する
+```
+
+手元のTeX Liveのバージョンによって結果が変わることがあるため、最終確認はDocker側で行う。
+
+### APIの仕様
+
+`POST /api/compile` に、次のJSONを送る。`images` は省略できる。
+
+```json
+{
+  "tex": "<TeXソース全体>",
+  "images": [{ "name": "写真.png", "data": "<ファイルの中身を base64 にしたもの>" }]
+}
+```
+
+画像は `name` の名前で `main.tex` と同じ一時ディレクトリに置かれるので、TeXからは `\includegraphics{写真.png}` で読める。画面からは、画像ブロックで選んだファイルが自動で送られる。
+
+| ステータス | 意味 | 本文 |
+|---|---|---|
+| 200 | 成功 | PDF（`application/pdf`） |
+| 400 | JSONが壊れている／`tex` が文字列でない／画像のファイル名が使えない | `bad request` など |
+| 403 | 許可していない場所（オリジン）からのリクエスト | `forbidden` |
+| 413 | 本文が大きすぎる（約20MB超） | `too large` |
+| 422 | TeXのエラー、コンパイルが20秒を超えた、画像を読めない | ログのエラー部分（3行）など |
+| 500 | サーバー側の問題 | `server error` |
+
+画像のファイル名は、拡張子が png / jpg / jpeg / pdf で、フォルダの区切り（`/` `\`）を含まず、`.` や `main.` で始まらないもの。
+
+### 安全対策
+
+送られてきた任意のTeXを動かす前提で動かしている。
+
+- `-no-shell-escape`（`\write18` で外部コマンドを実行させない）。そのため、shell-escapeが必要なパッケージ（minted など）は使えない。画像の大きさを調べる `extractbb` も TeX からは呼べないので、サーバーが先に実行している
+- コンパイルのタイムアウト（20秒）と、本文のサイズ上限（約20MB）
+- リクエストごとに別の一時ディレクトリを作り、終わったら必ず消す
+- 受け付けるのは、`file://` で開いた画面（オリジン `null`）と `localhost` / `127.0.0.1` からのリクエストだけ。ほかのサイトを開いているときに、そのページから勝手にコンパイルさせられないようにするため（`Origin` を付けない curl などはそのまま使える）
+- Dockerイメージの中では一般ユーザー（`node`）で動かす
+
+### 補足
+
+- 保存した文書を開き直した直後は、画像ファイルが手元に無い（ブラウザは選んだファイルを保存しない）。PDFプレビューにその旨が出るので、画像ブロックでファイルを選び直す
+- サーバーのURLは [web/src/script.ts](web/src/script.ts) の `COMPILE_URL`、ポートは環境変数 `PORT`（既定 8080）で変えられる
+- うまく動かないときの調べ方は [CONTRIBUTING.md](CONTRIBUTING.md) の「PDFプレビューのデバッグ」

@@ -17,12 +17,25 @@ interface HeadingBlock {
 }
 
 /**
- * 文中に数式を混ぜられる文字列。段落本文や箇条書きの項目に使う。
+ * 文字の装飾。true のものだけキーを持たせ、false や undefined は置かない
+ * （Firestore は undefined の値を保存できないため）。normalizeRich がこの形に揃える。
+ */
+interface TextMarks {
+  bold?: true;
+  italic?: true;
+  underline?: true;
+  /** [その他] リンク先のURL。http(s): と mailto: 以外は TeX 出力時にリンクにしない */
+  href?: string;
+}
+
+/**
+ * 文中に数式・脚注を混ぜられる文字列。段落本文・箇条書きの項目・引用に使う。
  * 数式は $...$ の中身だけを持つ（$ 自体は TeX 出力時に付ける）。
  */
 type InlineSegment =
-  | { type: 'text'; text: string } // [平文] 改行は '\n'
-  | { type: 'math'; tex: string }; // [生TeX]
+  | ({ type: 'text'; text: string } & TextMarks) // [平文] 改行は '\n'
+  | { type: 'math'; tex: string } // [生TeX]
+  | { type: 'footnote'; text: string }; // [平文] 脚注の文章（\footnote{} の中身）
 type RichText = InlineSegment[];
 
 interface ParagraphBlock {
@@ -57,6 +70,8 @@ interface MathBlock {
   type: 'math';
   /** true: 別行立て（align環境）。false: 文中扱い（$...$ を単独段落として出力） */
   displayMode: boolean;
+  /** 別行立てのとき式番号を付けるか（align / align*）。未指定は付けない */
+  numbered?: boolean;
   /** [生TeX] 数式本体。エスケープしない */
   tex: string;
 }
@@ -132,6 +147,36 @@ interface ImageBlock {
   offsetY?: number;
 }
 
+interface QuoteBlock {
+  id: BlockId;
+  type: 'quote';
+  /** 引用の本文（段落と同じく平文と文中数式の並び） */
+  content: RichText;
+}
+
+/** コードの言語。TeX出力（listings の language=）は tex.ts の CODE_LANGUAGES で定義する */
+type CodeLanguage = 'plain' | 'python' | 'c' | 'cpp' | 'java' | 'ruby' | 'bash' | 'sql' | 'html' | 'matlab';
+
+interface CodeBlock {
+  id: BlockId;
+  type: 'code';
+  language: CodeLanguage;
+  /**
+   * [その他] コード本体。lstlisting 環境にそのまま書くので、エスケープも生TeX展開もしない。
+   * ただし \end{lstlisting} だけは環境が閉じてしまうため、TeX 出力時に崩して書く。
+   */
+  code: string;
+}
+
+/** 区切りの種類。page は改ページ、それ以外は縦の空白の大きさ */
+type BreakKind = 'page' | 'small' | 'medium' | 'large';
+
+interface BreakBlock {
+  id: BlockId;
+  type: 'break';
+  kind: BreakKind;
+}
+
 type Block =
   | TitleBlock
   | HeadingBlock
@@ -140,7 +185,10 @@ type Block =
   | MathBlock
   | TocBlock
   | TableBlock
-  | ImageBlock;
+  | ImageBlock
+  | QuoteBlock
+  | CodeBlock
+  | BreakBlock;
 
 type BlockType = Block['type'];
 
@@ -156,7 +204,26 @@ interface BlockDocument {
   id: string;
   /** 文書の名前（ファイル名など）。TeXのタイトルは TitleBlock が持つ */
   title: string;
+  /** 用紙サイズなどの文書全体の設定。未指定の項目は DEFAULT_SETTINGS（tex.ts）の値を使う */
+  settings?: DocumentSettings;
   blocks: Block[];
+}
+
+type PaperSize = 'a4' | 'a5' | 'b5' | 'letter';
+/** jsarticle のクラスオプションで指定できる文字サイズ（pt） */
+type FontSize = 10 | 11 | 12 | 14;
+
+/**
+ * 文書全体の設定。ブロックではなく文書が持つ（並び順に意味がなく、1文書に1つだけのため）。
+ * どれも選択肢から選ぶ値で、自由入力の文字列を TeX に流し込まない。
+ */
+interface DocumentSettings {
+  paper?: PaperSize;
+  landscape?: boolean;
+  fontSize?: FontSize;
+  twoColumn?: boolean;
+  /** 上下左右の余白（mm）。未指定なら jsarticle の既定の余白（geometry を読み込まない） */
+  marginMm?: number;
 }
 
 /**
@@ -171,6 +238,7 @@ interface CloudProject {
   id: string;
   name: string;
   schemaVersion: number;
+  settings?: DocumentSettings;
   blocks: Block[];
   createdAt: Date;
   updatedAt: Date;
@@ -180,8 +248,10 @@ interface CloudProject {
  * 現行のスキーマ版数。ブロックの形を変えたらインクリメントし、移行処理を書く。
  * v2: 段落の text → content、箇条書きの items: string[] → ListItem[]（文中数式のため）。
  *     保存機能が未実装で旧形式のデータは存在しないため、v1 からの移行処理は書いていない。
+ * v3: 文字の装飾（TextMarks）・脚注・引用・コード・区切りブロック・式番号・文書設定を追加。
+ *     どれも追加のみ（新しい項目は optional）なので、v2 の文書は schemaVersion を書き換えるだけで読める。
  */
-const SCHEMA_VERSION = 2;
+const SCHEMA_VERSION = 3;
 
 /** 読み込んだ文書が現行スキーマかどうか。false なら移行処理が必要。 */
 function isCurrentSchema(doc: BlockDocument): boolean {
