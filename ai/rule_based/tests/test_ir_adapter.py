@@ -1,9 +1,10 @@
+import sys
 from typing import get_args
 
 import pytest
 
 from common import ir
-from rule_based import labels
+from rule_based import labels, pdf_extract
 from rule_based.ir_adapter import classify_ir, extract_ir, labels_to_ir
 from rule_based.labels import LabeledBlock, save_labels
 from rule_based.sample_data import generate_sample_pdf
@@ -33,6 +34,14 @@ def test_extract_ir_is_valid(sample_pdf):
     table = next(el for el in page.elements if el.kind == "table")
     assert table.cells == [["項目", "値"], ["工数", "15時間"], ["担当", "加茂大地"]]
     assert all(el.label is None for el in page.elements)
+
+
+def test_pdf_extract_cli_writes_valid_ir(sample_pdf, tmp_path, monkeypatch):
+    out = tmp_path / "sample.ir.json"
+    monkeypatch.setattr(sys, "argv", ["pdf_extract", sample_pdf, "-o", str(out)])
+    pdf_extract.main()
+    doc = ir.load_ir(str(out), check=True)
+    assert doc.extractor == "rule_based" and doc.pages[0].page == 1
 
 
 def test_classify_ir_is_valid_and_labeled(sample_pdf):

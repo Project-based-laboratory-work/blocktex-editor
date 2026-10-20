@@ -44,7 +44,7 @@ pip install -r requirements.txt
 cd ai
 source .venv/bin/activate
 python rule_based/sample_data/generate_sample_pdf.py   # rule_based/sample_data/sample.pdf を生成
-python -m rule_based.pdf_extract rule_based/sample_data/sample.pdf
+python -m rule_based.pdf_extract rule_based/sample_data/sample.pdf   # 共通のIR形式（common/README.md の①）で出力
 ```
 
 **既知の制限:** 表のヘッダー行の背景色塗りつぶしがPyMuPDFの`get_drawings()`でベクター図形として検出され、同じ領域が「表」と「図」の両方に該当することがある。4-1-2のルールベース分類では表bboxとの重なりを優先しているため実害はないが、4-1-4のラベリング方針やTransformer学習時の前処理では考慮が必要。

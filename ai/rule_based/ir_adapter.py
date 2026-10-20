@@ -1,7 +1,7 @@
 """
-rule_based の抽出結果・分類結果・学習ラベルを、共通のIR形式（common/ir.py）に変換するアダプタ（パイプライン PDF-A）。
-pdf_extract.py / rule_based_classifier.py / labels.py の出力形式は変えず、違い（0始まりのページ、
-ptの座標、表・図が別リスト）はここで吸収する。
+rule_based の分類結果・学習ラベルを、共通のIR形式（common/ir.py）に変換するアダプタ（パイプライン PDF-A）。
+抽出結果のIR化は pdf_extract.extract_ir が行う。rule_based_classifier.py / labels.py の出力形式は変えず、
+違い（0始まりのページ、ptの座標、表・図が別リスト）はここで吸収する。
 
 使い方（ai/ で）:
     python -m rule_based.ir_adapter rule_based/sample_data/sample.pdf -o out/
@@ -14,16 +14,13 @@ import argparse
 import json
 import os
 
-import pdfplumber
 import pymupdf
 
 from common.blocks import ir_to_document
 from common.ir import Element, IRDocument, Page, normalize_bbox, save_ir, validate
 from rule_based.labels import load_labels
-from rule_based.pdf_extract import extract
+from rule_based.pdf_extract import NAME, extract, extract_ir
 from rule_based.rule_based_classifier import classify_page
-
-NAME = "rule_based"
 
 
 def _empty_pages(pdf_path: str) -> list[Page]:
@@ -31,47 +28,19 @@ def _empty_pages(pdf_path: str) -> list[Page]:
         return [Page(page=i + 1, width=p.rect.width, height=p.rect.height, unit="pt") for i, p in enumerate(doc)]
 
 
-def _table_cells(pdf_path: str) -> dict[tuple[int, tuple], list[list[str]]]:
-    """表の中身を {(ページ, bbox): 行×列の文字列} で返す。pdf_extract は bbox しか持たないため、ここで読み直す。"""
-    cells = {}
-    with pdfplumber.open(pdf_path) as pdf:
-        for page_no, page in enumerate(pdf.pages):
-            for table in page.find_tables():
-                cells[(page_no, table.bbox)] = [[c or "" for c in row] for row in table.extract()]
-    return cells
-
-
-def extract_ir(pdf_path: str) -> IRDocument:
-    """pdf_extract.extract の結果をIRにする。要素の順は 文字 → 表 → 図（読み順ではない）。"""
-    pages = _empty_pages(pdf_path)
-    cells = _table_cells(pdf_path)
-    for page_blocks in extract(pdf_path):
-        page = pages[page_blocks.page]
-        w, h = page.width, page.height
-        page.elements += [
-            Element(kind="text", bbox=normalize_bbox(b.bbox, w, h), text=b.text, font_size=b.font_size, bold=b.bold)
-            for b in page_blocks.text_blocks
-        ]
-        page.elements += [
-            Element(kind="table", bbox=normalize_bbox(b.bbox, w, h), cells=cells.get((page_blocks.page, b.bbox)))
-            for b in page_blocks.table_blocks
-        ]
-        page.elements += [Element(kind="figure", bbox=normalize_bbox(b.bbox, w, h)) for b in page_blocks.figure_blocks]
-    return IRDocument(source=os.path.basename(pdf_path), extractor=NAME, pages=pages)
-
-
 def classify_ir(pdf_path: str) -> IRDocument:
     """rule_based_classifier の分類結果をラベル付きIRにする。要素は分類器が並べた読み順。"""
-    pages = _empty_pages(pdf_path)
-    cells = _table_cells(pdf_path)
+    pages = []
     for page_blocks in extract(pdf_path):
-        page = pages[page_blocks.page]
+        page = Page(page=page_blocks.page + 1, width=page_blocks.width, height=page_blocks.height, unit="pt")
+        pages.append(page)
+        cells_by_bbox = {t.bbox: t.cells for t in page_blocks.table_blocks}
         # 分類結果には文字サイズ・太字が無いので、同じbboxの抽出結果から引く（見出しレベルの推定に使う）
         text_by_bbox = {b.bbox: b for b in page_blocks.text_blocks}
         for cb in classify_page(page_blocks):
             bbox = normalize_bbox(cb.bbox, page.width, page.height)
             if cb.kind in ("table", "figure"):
-                table_cells = cells.get((page_blocks.page, cb.bbox)) if cb.kind == "table" else None
+                table_cells = cells_by_bbox.get(cb.bbox) if cb.kind == "table" else None
                 page.elements.append(Element(kind=cb.kind, bbox=bbox, cells=table_cells, label=cb.kind))
                 continue
             source = text_by_bbox.get(cb.bbox)
