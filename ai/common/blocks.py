@@ -164,6 +164,16 @@ def ir_to_document(ir: IRDocument, title: str | None = None) -> dict[str, Any]:
             blocks.append({"id": _new_id(), "type": "list", "marker": marker, "items": list_items})
             continue
 
+        if label == "code":
+            # コードはPDFで1行ずつ別の要素になりやすいので、連続した code 要素を1つにまとめる。
+            # 改行や字下げに意味があるので、段落のように行をつながない
+            lines = []
+            while i < len(items) and items[i][2] == "code":
+                lines.append((items[i][1].text or "").rstrip("\n"))
+                i += 1
+            blocks.append({"id": _new_id(), "type": "code", "language": "plain", "code": "\n".join(lines)})
+            continue
+
         if label == "heading":
             blocks.append({"id": _new_id(), "type": "heading", "level": levels[id(el)], "text": _join_lines(el.text or "")})
         elif label == "math":

@@ -95,3 +95,9 @@ def test_math_uses_tex_if_available_and_other_is_dropped():
     blocks = convert(text("math", "x2", tex="x^2"), text("math", "a + b"), text("other", "- 1 -"))
     assert [b["tex"] for b in blocks] == ["x^2", "a + b"]
     assert all(b["type"] == "math" and b["displayMode"] is True for b in blocks)
+
+
+def test_consecutive_code_elements_become_one_code_block():
+    blocks = convert(text("code", "int main(void) {"), text("code", "    return 0;\n}"), text("paragraph", "説明"))
+    assert blocks[0] == {"id": blocks[0]["id"], "type": "code", "language": "plain", "code": "int main(void) {\n    return 0;\n}"}
+    assert blocks[1]["type"] == "paragraph"
