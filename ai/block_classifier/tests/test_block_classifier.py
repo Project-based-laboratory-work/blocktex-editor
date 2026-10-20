@@ -121,3 +121,13 @@ def test_join_lines_builds_paragraphs():
     ]
     paragraphs = join_lines(lines)
     assert [p.text for p in paragraphs] == ["　段落の1行目\n2行目\n最後の行。", "　次の段落"]
+
+
+def test_balance_braces_makes_ocr_output_compilable():
+    from block_classifier.ir_adapter import balance_braces
+
+    assert balance_braces(r"5.45}\geq x") == r"5.45\geq x"  # 対応しない } は捨てる
+    assert balance_braces(r"\frac{n}{n_{2") == r"\frac{n}{n_{2}}"  # 閉じていない { は閉じる
+    assert balance_braces(r"\left(\frac{a}{b}") == r"\left(\frac{a}{b} \right."
+    assert balance_braces(r"x^{2}") == r"x^{2}"  # 正しいものはそのまま
+    assert balance_braces(r"(n_{n}-\bar") == r"(n_{n}-"  # 末尾の書きかけの命令は取り除く

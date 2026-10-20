@@ -153,6 +153,34 @@ def split_heading(text: str) -> tuple[str, int | None]:
     return SECTION_NUMBER.sub("", text.strip(), count=1).strip(), min(number.count(".") + 1, 3)
 
 
+NEEDS_ARGUMENT = {r"\frac", r"\sqrt", r"\bar", r"\hat", r"\vec", r"\tilde", r"\dot", r"\mathbf", r"\mathbb", r"\binom", r"\left", r"\right"}
+
+
+def balance_braces(tex: str) -> str:
+    """数式OCRの出力の { } と \\left \\right の数をそろえる。
+
+    長い数式などで読み取りが崩れると、括弧の数が合わないLaTeXが出ることがある。そのまま
+    エディタに渡すと、その数式から後ろのコンパイルが全部壊れるので、対応しない } は捨て、
+    閉じていない { と \\left は末尾で閉じる。
+    """
+    tokens = re.findall(r"\\[a-zA-Z]+|\\.|.", tex)
+    # 末尾の書きかけ（引数の無い ^ _ \\frac \\bar など）は、閉じ括弧を足しても通らないので取り除く
+    while tokens and (tokens[-1] in ("^", "_", "{") or tokens[-1] in NEEDS_ARGUMENT):
+        tokens.pop()
+    out, depth = [], 0
+    for token in tokens:
+        if token == "{":
+            depth += 1
+        elif token == "}":
+            if depth == 0:
+                continue
+            depth -= 1
+        out.append(token)
+    result = "".join(out) + "}" * depth
+    lefts, rights = result.count("\\left"), result.count("\\right")
+    return result + " \\right." * max(0, lefts - rights)
+
+
 @torch.no_grad()
 def _read_math(page: pymupdf.Page, bbox: tuple, math_model, math_vocab) -> str:
     """PDFの数式の範囲を画像として切り抜き、数式OCRで LaTeX にする"""
@@ -160,7 +188,7 @@ def _read_math(page: pymupdf.Page, bbox: tuple, math_model, math_vocab) -> str:
     pixmap = page.get_pixmap(clip=clip, dpi=MATH_DPI, colorspace=pymupdf.csGRAY)
     image = Image.frombytes("L", (pixmap.width, pixmap.height), pixmap.samples)
     ids = math_model.generate(preprocess(image).unsqueeze(0))[0]
-    return math_vocab.decode(ids.tolist()[1:])
+    return balance_braces(math_vocab.decode(ids.tolist()[1:]))
 
 
 def classify_ir(pdf_path: str, checkpoint: Path, math_checkpoint: Path | None = None) -> IRDocument:
