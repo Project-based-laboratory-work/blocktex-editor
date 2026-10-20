@@ -12,6 +12,9 @@ const execFileAsync = promisify(execFile);
 const MAX_BODY = 20_000_000;   // 文字数制限(約20MB)。画像を base64 で一緒に送るため大きめ
 const COMPILE_TIMEOUT_MS = 20_000; // タイムアウト
 const PORT = Number(process.env.PORT ?? 8080);
+// server/src/index.ts → ../../ai が ai/ フォルダ
+const AI_DIR = path.resolve(import.meta.dirname, '../../ai');
+const PYTHON = path.join(AI_DIR, '.venv/bin/python');
 
 // 各自のPCで動かす前提なので、画面を開く場所（file:// で開くと 'null'、または localhost）からだけ受け付ける。
 // ほかのサイトを開いているときに、そのページから勝手にコンパイルさせられないようにするため。
@@ -157,6 +160,51 @@ const server = http.createServer((req, res) => {
 
         return;
     }
+
+    if (req.method === 'POST' && req.url === '/api/extract') {
+        const chunks: Buffer[] = [];
+        let size = 0;
+
+        req.on('data', (chunk: Buffer) => {
+            chunks.push(chunk);
+            size += chunk.length;
+            if (size > MAX_BODY) {
+                res.statusCode = 413;
+                res.end('too large');
+                req.destroy();
+            }
+        });
+
+        req.on('end', async () => {
+            try {
+                const pdf = Buffer.concat(chunks);
+                const dir = await mkdtemp(path.join(os.tmpdir(), 'extract-'));
+
+                try {
+                    const pdfPath = path.join(dir, 'input.pdf');
+                    await writeFile(pdfPath, pdf);
+
+                    const { stdout } = await execFileAsync(
+                        PYTHON,
+                        ['-m', 'rule_based.pdf_extract', pdfPath],
+                        { cwd: AI_DIR, timeout: COMPILE_TIMEOUT_MS, maxBuffer: MAX_BODY },
+                    );
+
+                    res.setHeader('Content-Type', 'application/json; charset=utf-8');
+                    res.end(stdout);
+                } finally {
+                    await rm(dir, { recursive: true, force: true });
+                }
+            } catch (err) {
+                console.error(err);
+                res.statusCode = 500;
+                res.end('server error');
+            }
+        });
+
+        return;
+    }
+
     res.statusCode = 404;
     res.end('not found');
 });
