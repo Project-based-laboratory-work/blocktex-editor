@@ -8,6 +8,8 @@ rule_based の分類結果・学習ラベルを、共通のIR形式（common/ir.
       → out/sample.ir.json       抽出結果（IR）
         out/sample.labeled.json  分類結果（ラベル付きIR）
         out/sample.blocks.json   エディタ用JSON
+    python -m rule_based.ir_adapter rule_based/sample_data/sample.pdf --stdout
+      → {"labeled": ラベル付きIR, "document": エディタ用JSON} を標準出力に出す（server/ の /api/extract が使う）
 """
 
 import argparse
@@ -17,7 +19,7 @@ import os
 import pymupdf
 
 from common.blocks import ir_to_document
-from common.ir import Element, IRDocument, Page, normalize_bbox, save_ir, validate
+from common.ir import Element, IRDocument, Page, normalize_bbox, save_ir, to_dict, validate
 from rule_based.labels import load_labels
 from rule_based.pdf_extract import NAME, extract, extract_ir
 from rule_based.rule_based_classifier import classify_page
@@ -80,7 +82,21 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="PDF → IR・ラベル付きIR・エディタ用JSON（ルールベース）")
     parser.add_argument("pdf", help="入力PDF")
     parser.add_argument("-o", "--out-dir", default=".", help="出力先のディレクトリ")
+    parser.add_argument(
+        "--stdout",
+        action="store_true",
+        help='ファイルに書かず、{"labeled": ラベル付きIR, "document": エディタ用JSON} を標準出力に出す（server/ の /api/extract 用）',
+    )
+    parser.add_argument("--title", help="エディタ用JSONの文書名（省略時は入力ファイル名）")
     args = parser.parse_args()
+
+    if args.stdout:
+        labeled = classify_ir(args.pdf)
+        problems = validate(labeled)
+        if problems:
+            raise SystemExit("labeled の形式に問題があります:\n" + "\n".join(problems))
+        print(json.dumps({"labeled": to_dict(labeled), "document": ir_to_document(labeled, args.title)}, ensure_ascii=False))
+        return
 
     os.makedirs(args.out_dir, exist_ok=True)
     stem = os.path.join(args.out_dir, os.path.splitext(os.path.basename(args.pdf))[0])
@@ -93,7 +109,7 @@ def main() -> None:
         save_ir(doc, f"{stem}.{suffix}.json")
         print(f"{stem}.{suffix}.json")
 
-    document = ir_to_document(labeled)
+    document = ir_to_document(labeled, args.title)
     with open(f"{stem}.blocks.json", "w", encoding="utf-8") as f:
         json.dump(document, f, ensure_ascii=False, indent=2)
     print(f"{stem}.blocks.json（{len(document['blocks'])}ブロック）")

@@ -1,10 +1,11 @@
+import json
 import sys
 from typing import get_args
 
 import pytest
 
 from common import ir
-from rule_based import labels, pdf_extract
+from rule_based import ir_adapter, labels, pdf_extract
 from rule_based.ir_adapter import classify_ir, extract_ir, labels_to_ir
 from rule_based.labels import LabeledBlock, save_labels
 from rule_based.sample_data import generate_sample_pdf
@@ -67,3 +68,12 @@ def test_labels_to_ir(sample_pdf, tmp_path):
     assert heading.label == "heading" and heading.label_source == "manual" and heading.kind == "text"
     assert table.kind == "table" and table.text is None
     assert heading.bbox == ir.normalize_bbox(blocks[0].bbox, doc.pages[0].width, doc.pages[0].height)
+
+
+def test_ir_adapter_stdout(sample_pdf, monkeypatch, capsys):
+    monkeypatch.setattr(sys, "argv", ["ir_adapter", sample_pdf, "--stdout", "--title", "サンプル"])
+    ir_adapter.main()
+    out = json.loads(capsys.readouterr().out)
+    assert ir.validate(ir.from_dict(out["labeled"])) == []
+    assert out["document"]["title"] == "サンプル"
+    assert out["document"]["blocks"][0]["type"] == "heading"
