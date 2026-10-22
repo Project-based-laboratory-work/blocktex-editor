@@ -77,3 +77,16 @@ def char_errors(pred: str, gt: str) -> tuple[int, int]:
     p = normalize_text(pred)
     g = normalize_text(gt)
     return edit_distance(g, p), len(g)
+
+def split_by_script(text: str) -> tuple[str, str]:
+    """文字列を (ASCII以外の文字だけ, ASCIIの文字だけ) に分ける。並び順はそのまま。"""
+    ja = "".join(c for c in text if not c.isascii())
+    en = "".join(c for c in text if c.isascii())
+    return ja, en
+
+
+def char_errors_by_script(pred: str, gt: str) -> dict[str, tuple[int, int]]:
+    """日本語の文字と英語の文字に分けて char_errors を計算する。「英語に強い」などを見るため。"""
+    pred_ja, pred_en = split_by_script(pred)
+    gt_ja, gt_en = split_by_script(gt)
+    return {"ja": char_errors(pred_ja, gt_ja), "en": char_errors(pred_en, gt_en)}

@@ -1,6 +1,16 @@
 import pytest
 
-from evaluation.metrics import char_errors, confusion_matrix, detection_scores, iou, label_accuracy, match, normalize_text
+from evaluation.metrics import (
+    char_errors,
+    char_errors_by_script,
+    confusion_matrix,
+    detection_scores,
+    iou,
+    label_accuracy,
+    match,
+    normalize_text,
+    split_by_script,
+)
 
 def test_iou_same_box_is_1():
     assert iou((0.1, 0.1, 0.5, 0.5), (0.1, 0.1, 0.5, 0.5)) == 1.0
@@ -71,3 +81,13 @@ def test_char_errors():
     assert char_errors("見出しA", "見出しB") == (1, 4)    # 1文字の置換
     assert char_errors("段落\nです", "段落です") == (0, 4)  # 改行の違いは数えない
     assert char_errors("", "abc") == (3, 3)               # 何も読めなければ全部誤り
+
+def test_split_by_script():
+    assert split_by_script("PDFの読み込み") == ("の読み込み", "PDF")
+
+
+def test_char_errors_by_script():
+    gt = "PDFの読み込み"  # 日本語5文字、英語3文字
+    assert char_errors_by_script(gt, gt) == {"ja": (0, 5), "en": (0, 3)}
+    assert char_errors_by_script("PBFの読み込み", gt) == {"ja": (0, 5), "en": (1, 3)}  # 英語だけ間違えた
+    assert char_errors_by_script("PDFの読み込ろ", gt) == {"ja": (1, 5), "en": (0, 3)}  # 日本語だけ間違えた
