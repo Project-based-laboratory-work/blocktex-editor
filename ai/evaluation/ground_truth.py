@@ -5,6 +5,7 @@ TeXで作ったPDFから、正解のラベル付きIRを作る。
 その範囲にある文字の枠を全部包む枠を、そのブロックの正解の枠にする。
 """
 from dataclasses import dataclass
+import pymupdf
 
 # 上付き・下付きの文字は行のベースラインから少しずれるので、その分だけ範囲を広げる（pt）。
 # 行と行の間は16pt前後あるので、5ptなら隣の行の文字は入らない
@@ -32,3 +33,17 @@ def block_bbox(glyphs: list[Glyph], page: int, top: float, bottom: float) -> PtB
     if not boxes:
         return None
     return union_bbox(boxes)
+
+def read_glyphs(pdf_path: str) -> list[Glyph]:
+    """PDFに印刷された文字を1文字ずつ読む。空白は枠を広げてしまうので入れない。"""
+    glyphs = []
+    with pymupdf.open(pdf_path) as doc:
+        for page_index, page in enumerate(doc):
+            for block in page.get_text("rawdict")["blocks"]:
+                for line in block.get("lines", []):  # 画像のブロックには lines が無い
+                    for span in line["spans"]:
+                        for char in span["chars"]:
+                            if char["c"].isspace():
+                                continue
+                            glyphs.append(Glyph(page=page_index + 1, bbox=tuple(char["bbox"]), baseline=char["origin"][1]))
+    return glyphs
