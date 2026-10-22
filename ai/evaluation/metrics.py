@@ -15,3 +15,26 @@ def iou(a: Bbox, b: Bbox) -> float:
     inter_area = area(inter)
     union_area = area(a) + area(b) - inter_area
     return inter_area / union_area if union_area > 0 else 0.0
+
+IOU_THRESHOLD = 0.5  # これ以上重なっていれば同じブロックとみなす
+
+def match(preds: list[Bbox], gts: list[Bbox], threshold: float = IOU_THRESHOLD) -> list[tuple[int, int]]:
+    """IoUが大きい組から順に、予測と正解を1対1で対応させる。(予測の番号, 正解の番号) のリストを返す。"""
+    candidates = []
+    for i, p in enumerate(preds):
+        for j, g in enumerate(gts):
+            score = iou(p, g)
+            if score >= threshold:
+                candidates.append((score, i, j))
+    candidates.sort(reverse=True)
+
+    used_preds = set()
+    used_gts = set()
+    pairs = []
+    for score, i, j in candidates:
+        if i in used_preds or j in used_gts:
+            continue
+        pairs.append((i, j))
+        used_preds.add(i)
+        used_gts.add(j)
+    return pairs
