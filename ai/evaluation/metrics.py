@@ -38,3 +38,17 @@ def match(preds: list[Bbox], gts: list[Bbox], threshold: float = IOU_THRESHOLD) 
         used_preds.add(i)
         used_gts.add(j)
     return pairs
+
+def safe_div(a: float, b: float) -> float:
+    """a / b。b が 0 のときは 0.0（予測や正解が1つも無いページで止まらないように）。"""
+    return a / b if b != 0 else 0
+
+def detection_scores(n_pairs: int, n_preds: int, n_gts: int) -> dict[str, float]:
+    """マッチングの結果から、検出の Precision / Recall / F1 を計算する。"""
+    tp = n_pairs
+    fp = n_preds - n_pairs
+    fn = n_gts - n_pairs
+    precision = safe_div(tp, tp + fp)
+    recall = safe_div(tp, tp + fn)
+    f1 = safe_div(2 * precision * recall, (precision + recall))
+    return {"precision": precision, "recall": recall, "f1": f1}
