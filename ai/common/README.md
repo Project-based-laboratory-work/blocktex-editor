@@ -122,6 +122,6 @@ save_ir(doc, "out/input.ir.json")
 
 | モデル | 対応 |
 |---|---|
-| rule_based（抽出・分類・学習ラベル） | [ir_adapter.py](../rule_based/ir_adapter.py) で①②③に変換できる |
+| rule_based（抽出・分類・学習ラベル） | 抽出は [pdf_extract.py](../rule_based/pdf_extract.py) が①を直接出す。②③は [ir_adapter.py](../rule_based/ir_adapter.py) で変換する。`--stdout` で②③をまとめて出せて、エディタの「PDF・画像を読み込む」（server/ の `/api/extract`）はこれを使う |
 | tesseract_ocr | 未対応。`pytesseract.image_to_data` の `left` / `top` / `width` / `height` と行番号を使えば、行ごとの `text` 要素（`unit: "px"`）にできる |
 | math_ocr | ページ全体は扱わないので①は出さない。②の `label="math"` の要素を切り出して読み、結果を `tex` に入れる使い方を想定 |

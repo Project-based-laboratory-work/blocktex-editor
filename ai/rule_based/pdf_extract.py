@@ -5,17 +5,27 @@
 - 表: pdfplumber の find_tables() でbboxを取得（罫線・列位置の検出精度がPyMuPDFより高いため）
 - 図: PyMuPDF の get_images() / get_drawings() でbboxを取得し、罫線・ページ枠・表内の図形を除いたうえで近接するものを1つにまとめる
 
+extract() は分類器向けの内部形式（PageBlocks。0始まりのページ・ptの座標）を返す。
+外に出すときは extract_ir() で共通のIR形式（common/ir.py、仕様は common/README.md）にする。
+
 選定理由・比較結果は README.md の「4-1-1 調査結果」を参照。
 
-使い方:
-    python -m rule_based.pdf_extract rule_based/sample_data/sample.pdf
+使い方（ai/ で）:
+    python -m rule_based.pdf_extract rule_based/sample_data/sample.pdf               # IRを標準出力に出す
+    python -m rule_based.pdf_extract rule_based/sample_data/sample.pdf -o out/sample.ir.json
 """
 
-import sys
+import argparse
+import json
+import os
 from dataclasses import dataclass, field
 
 import pdfplumber
 import pymupdf
+
+from common.ir import Element, IRDocument, Page, normalize_bbox, save_ir, to_dict, validate
+
+NAME = "rule_based"
 
 
 @dataclass
@@ -32,6 +42,7 @@ class TextBlock:
 class TableBlock:
     page: int
     bbox: tuple[float, float, float, float]
+    cells: list[list[str]] = field(default_factory=list)  # 行 × 列の文字列。空のセルは ""
 
 
 @dataclass
@@ -43,8 +54,9 @@ class FigureBlock:
 
 @dataclass
 class PageBlocks:
-    page: int
-    width: float
+    page: int  # 0始まり（IRにするときに+1する）
+    width: float  # pt
+    height: float
     text_blocks: list[TextBlock] = field(default_factory=list)
     table_blocks: list[TableBlock] = field(default_factory=list)
     figure_blocks: list[FigureBlock] = field(default_factory=list)
@@ -122,7 +134,8 @@ def _is_inside(inner: tuple, outer: tuple, tol: float = 2.0) -> bool:
 def _extract_table_blocks(page: pdfplumber.page.Page, page_no: int) -> list[TableBlock]:
     result = []
     for table in page.find_tables():
-        result.append(TableBlock(page=page_no, bbox=table.bbox))
+        cells = [[cell or "" for cell in row] for row in table.extract()]
+        result.append(TableBlock(page=page_no, bbox=table.bbox, cells=cells))
     return result
 
 def _extract_figure_blocks(
@@ -217,6 +230,7 @@ def extract(pdf_path: str) -> list[PageBlocks]:
                 PageBlocks(
                     page=page_no,
                     width=mu_page.rect.width,
+                    height=mu_page.rect.height,
                     text_blocks=text_blocks,
                     table_blocks=table_blocks,
                     figure_blocks=_merge_figure_blocks(figure_blocks),
@@ -225,17 +239,44 @@ def extract(pdf_path: str) -> list[PageBlocks]:
     return pages
 
 
+def to_ir(pages: list[PageBlocks], source: str) -> IRDocument:
+    """extract() の結果をIRにする。要素の順は 文字 → 表 → 図（読み順ではない）。"""
+    ir_pages = []
+    for page_blocks in pages:
+        w, h = page_blocks.width, page_blocks.height
+        page = Page(page=page_blocks.page + 1, width=w, height=h, unit="pt")
+        page.elements += [
+            Element(kind="text", bbox=normalize_bbox(b.bbox, w, h), text=b.text, font_size=b.font_size, bold=b.bold)
+            for b in page_blocks.text_blocks
+        ]
+        page.elements += [
+            Element(kind="table", bbox=normalize_bbox(b.bbox, w, h), cells=b.cells) for b in page_blocks.table_blocks
+        ]
+        page.elements += [Element(kind="figure", bbox=normalize_bbox(b.bbox, w, h)) for b in page_blocks.figure_blocks]
+        ir_pages.append(page)
+    return IRDocument(source=source, extractor=NAME, pages=ir_pages)
+
+
+def extract_ir(pdf_path: str) -> IRDocument:
+    return to_ir(extract(pdf_path), os.path.basename(pdf_path))
+
 
 def main() -> None:
-    pdf_path = sys.argv[1] if len(sys.argv) > 1 else "rule_based/sample_data/sample.pdf"
-    for page in extract(pdf_path):
-        print(f"=== page {page.page} ===")
-        for block in page.text_blocks:
-            print(f"[text] size={block.font_size} bold={block.bold} font={block.font_name!r} text={block.text[:40]!r}")
-        for block in page.table_blocks:
-            print(f"[table] bbox={block.bbox}")
-        for block in page.figure_blocks:
-            print(f"[figure:{block.source}] bbox={block.bbox}")
+    parser = argparse.ArgumentParser(description="PDF → IR（ルールベースの抽出）")
+    parser.add_argument("pdf", nargs="?", default="rule_based/sample_data/sample.pdf", help="入力PDF")
+    parser.add_argument("-o", "--out", help="出力するIRのJSON。省略すると標準出力に出す")
+    args = parser.parse_args()
+
+    doc = extract_ir(args.pdf)
+    problems = validate(doc)
+    if problems:
+        raise SystemExit("IRの形式に問題があります:\n" + "\n".join(problems))
+
+    if args.out:
+        save_ir(doc, args.out)
+        print(args.out)
+    else:
+        print(json.dumps(to_dict(doc), ensure_ascii=False, indent=2))
 
 
 if __name__ == "__main__":

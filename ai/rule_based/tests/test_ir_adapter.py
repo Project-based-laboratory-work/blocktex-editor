@@ -1,9 +1,11 @@
+import json
+import sys
 from typing import get_args
 
 import pytest
 
 from common import ir
-from rule_based import labels
+from rule_based import ir_adapter, labels, pdf_extract
 from rule_based.ir_adapter import classify_ir, extract_ir, labels_to_ir
 from rule_based.labels import LabeledBlock, save_labels
 from rule_based.sample_data import generate_sample_pdf
@@ -35,6 +37,14 @@ def test_extract_ir_is_valid(sample_pdf):
     assert all(el.label is None for el in page.elements)
 
 
+def test_pdf_extract_cli_writes_valid_ir(sample_pdf, tmp_path, monkeypatch):
+    out = tmp_path / "sample.ir.json"
+    monkeypatch.setattr(sys, "argv", ["pdf_extract", sample_pdf, "-o", str(out)])
+    pdf_extract.main()
+    doc = ir.load_ir(str(out), check=True)
+    assert doc.extractor == "rule_based" and doc.pages[0].page == 1
+
+
 def test_classify_ir_is_valid_and_labeled(sample_pdf):
     doc = classify_ir(sample_pdf)
     assert ir.validate(doc) == []
@@ -58,3 +68,12 @@ def test_labels_to_ir(sample_pdf, tmp_path):
     assert heading.label == "heading" and heading.label_source == "manual" and heading.kind == "text"
     assert table.kind == "table" and table.text is None
     assert heading.bbox == ir.normalize_bbox(blocks[0].bbox, doc.pages[0].width, doc.pages[0].height)
+
+
+def test_ir_adapter_stdout(sample_pdf, monkeypatch, capsys):
+    monkeypatch.setattr(sys, "argv", ["ir_adapter", sample_pdf, "--stdout", "--title", "サンプル"])
+    ir_adapter.main()
+    out = json.loads(capsys.readouterr().out)
+    assert ir.validate(ir.from_dict(out["labeled"])) == []
+    assert out["document"]["title"] == "サンプル"
+    assert out["document"]["blocks"][0]["type"] == "heading"

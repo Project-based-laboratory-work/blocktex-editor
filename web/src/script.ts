@@ -24,6 +24,7 @@ const pdfFrame = requireElement<HTMLIFrameElement>('#pdf-frame');
 const TEX_PANE_KEY = 'retex.texPaneOpen';
 const PALETTE_KEY = 'retex.paletteOpen';
 const COMPILE_URL = 'http://localhost:8080/api/compile';
+const EXTRACT_URL = 'http://localhost:8080/api/extract';
 
 const editor = new BlockEditor(requireElement('#block-list'), (doc) => {
     texOutput.textContent = documentToTex(doc);
@@ -69,14 +70,51 @@ const setPalette = (open: boolean) => setPane(palette, togglePaletteButton, PALE
 requireElement('#new-doc').addEventListener('click', () => showEditor(createEmptyDocument()));
 requireElement('#back-home').addEventListener('click', showHome);
 
-fileInput.addEventListener('change', () => {
+/** PDFをコンパイルサーバーの /api/extract に送り、エディタ用の文書にしてもらう。失敗したら理由を投げる */
+async function extractPdf(file: File): Promise<BlockDocument> {
+    let res: Response;
+    try {
+        // file をそのまま送ると Content-Type: application/pdf が付き、プリフライト（下見）で止められるため、バイト列で送る
+        res = await fetch(EXTRACT_URL, { method: 'POST', body: await file.arrayBuffer() });
+    } catch {
+        throw new Error('サーバーに接続できませんでした。server/ で npm run dev を起動しているか確認してください。');
+    }
+    if (!res.ok) {
+        throw new Error(await res.text());
+    }
+
+    // サーバーは {"labeled": ラベル付きIR, "document": エディタ用JSON} を返す
+    const doc: BlockDocument = (await res.json()).document;
+    if (!isCurrentSchema(doc)) {
+        throw new Error(`サーバーが返した文書の形式（schemaVersion ${doc.schemaVersion}）がエディタと合いません。ai/common/blocks.py を確認してください。`);
+    }
+    // サーバーは一時ファイル名（input.pdf）で読むので、文書名は選んだファイル名にする
+    doc.title = file.name;
+    return doc;
+}
+
+fileInput.addEventListener('change', async () => {
     const file = fileInput.files?.[0];
     if (!file) return;
-    fileName.textContent = file.name;
-    // PDF・画像からのブロック変換は未実装。空のドキュメントで編集を始める。
-    showEditor(createEmptyDocument(file.name));
-    alert('PDF・画像の自動変換は準備中です。空のドキュメントから編集を始めます。');
     fileInput.value = '';
+
+    // 画像からのブロック変換は未実装。空のドキュメントで編集を始める。
+    if (file.type !== 'application/pdf') {
+        fileName.textContent = file.name;
+        showEditor(createEmptyDocument(file.name));
+        alert('画像の自動変換は準備中です。空のドキュメントから編集を始めます。');
+        return;
+    }
+
+    fileName.textContent = `${file.name} を読み込み中…`;
+    try {
+        showEditor(await extractPdf(file));
+        fileName.textContent = file.name;
+    } catch (err) {
+        console.error(err);
+        fileName.textContent = 'ファイルを選択して編集を始める';
+        alert(`PDFを読み込めませんでした。\n${err instanceof Error ? err.message : String(err)}`);
+    }
 });
 
 for (const button of document.querySelectorAll<HTMLElement>('[data-add]')) {
