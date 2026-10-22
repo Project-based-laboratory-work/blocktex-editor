@@ -1,11 +1,14 @@
 import random
+import shutil
 
+import pytest
 import torch
 from torch import nn
 
 from math_ocr.dataset import IMAGE_HEIGHT, IMAGE_WIDTH, Collator, preprocess
 from math_ocr.metrics import edit_distance, evaluate
 from math_ocr.model import MathOCRModel, ModelConfig
+from math_ocr.render_latex import _render_chunk
 from math_ocr.synth_data import random_formula, render
 from math_ocr.tokenizer import Vocab, detokenize, tokenize
 from math_ocr.train import compute_loss
@@ -41,6 +44,15 @@ def test_generated_formulas_are_renderable():
     rng = random.Random(0)
     for _ in range(50):
         render(random_formula(rng))  # mathtext が描画できない書き方を生成していれば ValueError になる
+
+
+@pytest.mark.skipif(shutil.which("pdflatex") is None, reason="pdflatex が無い環境ではスキップ")
+def test_generated_formulas_compile_with_latex(tmp_path):
+    rng = random.Random(1)
+    formulas = [random_formula(rng) for _ in range(40)]
+    results = _render_chunk((0, formulas, tmp_path, "val", 0))  # LaTeXでエラーになる数式があれば例外が出る
+    assert [latex for _, latex in results] == formulas
+    assert all((tmp_path / filename).exists() for filename, _ in results)
 
 
 def test_preprocess_shape_and_range():

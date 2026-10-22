@@ -45,6 +45,12 @@ python -m math_ocr.train --overfit-batch             # 1バッチ過学習チェ
 python -m math_ocr.train --epochs 10                 # 学習 → math_ocr/checkpoints/math_ocr/best.pt
 python -m math_ocr.train --epochs 10 --resume        # 止まった学習を last.pt から再開（他の引数は前回と同じにする）
 python -m math_ocr.predict math_ocr/checkpoints/math_ocr/best.pt math_ocr/data/math_synth/images/val_000000.png
+
+# 本物のLaTeX（pdflatex）で描いたデータも混ぜる場合
+python -m math_ocr.synth_data --out math_ocr/data/v2_formulas --formulas-only --seed 11 --train 40000   # 数式だけ作る
+python -m math_ocr.render_latex --src math_ocr/data/v2_formulas --out math_ocr/data/v2_latex --split train val   # LaTeXで描画
+python -m math_ocr.train --data math_ocr/data/v2_mathtext math_ocr/data/v2_latex \
+    --init-from math_ocr/checkpoints/math_ocr_d192/best.pt
 ```
 
 CPU版のtorchは `pip install torch --index-url https://download.pytorch.org/whl/cpu` で入る。
@@ -91,6 +97,28 @@ LaTeXの画像は学習で一度も見せていないが、精度の低下は約
 **注意:** どちらも「`synth_data.py` が生成する種類の数式」に限った成績。語彙は105トークンで、
 実際の文書に出てくる `,` `\bar` `\chi` `\{` `\to` `\dots` や文字 `l` `o`、行列・場合分けなどは
 生成していないので読めない。実文書の数式での評価は未実施。
+
+## 学習結果 v2（2026-10-06）
+
+生成する数式の種類を増やし（105→166トークン）、本物のLaTeXで描いた画像も混ぜて学習し直した。
+上のモデル（`math_ocr_d192`）の重みを初期値にしている（転移学習）。
+
+- データ: matplotlibで描画4万件 + pdflatexで描画4万件（数式フォント3種、別行立て/文中の両方）
+- d_model=192（約310万パラメータ）、6エポック、CPUで約6時間
+
+```bash
+# 学習は上の「本物のLaTeXで描いたデータも混ぜる場合」の手順（--d-model 192 --epochs 6）
+python -m math_ocr.evaluate math_ocr/checkpoints/math_ocr_v2/best.pt --data math_ocr/data/v2_mathtext
+python -m math_ocr.evaluate math_ocr/checkpoints/math_ocr_v2/best.pt --data math_ocr/data/v2_latex
+```
+
+| 検証データ（各1000件、v2の数式） | 完全一致率 | トークン誤り率 | 推論時間（CPU） |
+|---|---|---|---|
+| matplotlibで描画 | 92.2% | 0.010 | 95 ms/件 |
+| pdflatexで描画 | 93.3% | 0.009 | 106 ms/件 |
+
+残っている誤りの多くは、`v` と `\nu`、`o` と `0`、`\mathbb{R}` と `\mathbf{R}` のような形の似た文字の読み違い。
+行列・場合分けなど複数行の数式は、まだ生成していないので読めない。
 
 ## 押さえておきたい概念
 

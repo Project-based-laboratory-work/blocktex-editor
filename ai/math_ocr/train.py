@@ -4,6 +4,7 @@
     python -m math_ocr.train --data math_ocr/data/math_synth --epochs 10
     python -m math_ocr.train --data math_ocr/data/math_synth --overfit-batch   # 学習ループが正しいかの確認
     python -m math_ocr.train --data math_ocr/data/math_synth --epochs 10 --resume   # 中断した学習を last.pt から再開
+    python -m math_ocr.train --data math_ocr/data/a math_ocr/data/b --init-from old/best.pt   # 複数データを混ぜ、別モデルの重みから始める
 
 学習1ステップの流れ（PyTorchの学習ループはほぼ必ずこの形になる）:
   1. 順伝播 (forward):   logits = model(入力)
@@ -29,7 +30,7 @@ from pathlib import Path
 
 import torch
 from torch import nn
-from torch.utils.data import DataLoader
+from torch.utils.data import ConcatDataset, DataLoader, Subset
 
 from math_ocr.dataset import Collator, MathFormulaDataset, read_labels
 from math_ocr.metrics import evaluate
@@ -39,7 +40,9 @@ from math_ocr.tokenizer import Vocab
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--data", type=Path, default=Path("math_ocr/data/math_synth"))
+    parser.add_argument(
+        "--data", type=Path, nargs="+", default=[Path("math_ocr/data/math_synth")], help="複数指定すると混ぜて学習する"
+    )
     parser.add_argument("--out", type=Path, default=Path("math_ocr/checkpoints/math_ocr"))
     parser.add_argument("--epochs", type=int, default=10)
     parser.add_argument("--batch-size", type=int, default=64)
@@ -53,6 +56,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--threads", type=int, default=None, help="CPUで使うスレッド数（多すぎると逆に遅くなることがある）")
     parser.add_argument("--save-every", type=int, default=200, help="何ステップごとに last.pt を保存するか")
     parser.add_argument("--resume", action="store_true", help="out/last.pt から学習を再開する")
+    parser.add_argument("--init-from", type=Path, default=None, help="別の学習済みモデル（best.pt）の重みを初期値に使う")
     return parser.parse_args()
 
 
@@ -125,11 +129,15 @@ def main() -> None:
     args.out.mkdir(parents=True, exist_ok=True)
 
     # 語彙は学習データだけから作る（検証データを覗かないため）
-    vocab = Vocab.build([latex for _, latex in read_labels(args.data, "train")])
+    vocab = Vocab.build([latex for data_dir in args.data for _, latex in read_labels(data_dir, "train")])
     vocab.save(args.out / "vocab.json")
 
-    train_ds = MathFormulaDataset(args.data, "train", vocab, limit=args.limit_train)
-    val_ds = MathFormulaDataset(args.data, "val", vocab)
+    train_ds = ConcatDataset([MathFormulaDataset(d, "train", vocab, limit=args.limit_train) for d in args.data])
+    val_ds = ConcatDataset([MathFormulaDataset(d, "val", vocab) for d in args.data])
+    # 検証データは固定の順番に混ぜておく。毎エポック先頭の一部だけを生成して評価するので、
+    # 混ぜないと最初のデータセットの分しか評価されない
+    order = torch.randperm(len(val_ds), generator=torch.Generator().manual_seed(0)).tolist()
+    val_ds = Subset(val_ds, order)
     collate = Collator(vocab.pad_id)
     train_loader = DataLoader(
         train_ds, batch_size=args.batch_size, shuffle=True, collate_fn=collate, num_workers=args.workers
@@ -141,6 +149,8 @@ def main() -> None:
         d_model=args.d_model, dim_feedforward=4 * args.d_model,  # FFNの中間層は d_model の4倍にするのが定番
     )  # fmt: skip
     model = MathOCRModel(config).to(device)
+    if args.init_from and not args.resume:
+        init_from_checkpoint(model, args.init_from, vocab)
     print(f"device={device}  語彙数={len(vocab)}  パラメータ数={count_parameters(model):,}  学習データ={len(train_ds)}件")
 
     # ignore_index: <pad> の位置は損失に含めない（埋め草を当てても意味が無い）
@@ -216,6 +226,31 @@ def main() -> None:
             )
             print(f"  → best.pt を保存（TER {best_ter:.3f}）")
         save_last()
+
+
+def init_from_checkpoint(model: MathOCRModel, path: Path, vocab: Vocab) -> None:
+    """別の学習済みモデルの重みを初期値として読み込む（転移学習）。
+
+    CNNやTransformerの層は「画像から形を読み取る」「数式の文法を追う」といった語彙に依らない能力を
+    すでに持っているので、それを引き継ぐとゼロから学習するより速く収束する。
+
+    語彙が増えると、トークン埋め込みと出力層は行数（=語彙数）が変わるので、そのままでは読み込めない。
+    これらは「1行が1トークンに対応する表」なので、両方の語彙にあるトークンの行だけをコピーし、
+    新しく増えたトークンの行は初期値から学習させる。
+    """
+    checkpoint = torch.load(path, map_location="cpu")
+    source, target = checkpoint["model"], model.state_dict()
+    matched = {k: v for k, v in source.items() if k in target and v.shape == target[k].shape}
+    model.load_state_dict(matched, strict=False)
+
+    old_ids = {token: i for i, token in enumerate(checkpoint["vocab"])}
+    shared = [(new_id, old_ids[token]) for new_id, token in enumerate(vocab.itos) if token in old_ids]
+    new_rows, old_rows = (torch.tensor(ids) for ids in zip(*shared))
+    with torch.no_grad():
+        for table in ["token_embed.weight", "output.weight", "output.bias"]:
+            if table not in matched and source[table].shape[1:] == target[table].shape[1:]:
+                model.get_parameter(table)[new_rows] = source[table][old_rows]
+    print(f"{path} から重みを引き継ぎ（語彙 {len(vocab)} 個のうち {len(shared)} 個は学習済み）")
 
 
 def overfit_one_batch(model, criterion, optimizer, loader, vocab, device, steps: int = 300) -> None:
