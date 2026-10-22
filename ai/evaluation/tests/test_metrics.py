@@ -11,9 +11,11 @@ from evaluation.metrics import (
     normalize_text,
     split_by_script,
     Counts,
-    count_page
+    count_page,
+    count_document,
+    summarize
 )
-from common.ir import Element, Page
+from common.ir import Element, IRDocument, Page
 
 def test_iou_same_box_is_1():
     assert iou((0.1, 0.1, 0.5, 0.5), (0.1, 0.1, 0.5, 0.5)) == 1.0
@@ -129,3 +131,38 @@ def test_count_page_adds_up():
     count_page(page, page, counts)
     count_page(page, page, counts)  # 2ページ目も同じ入れ物に足す
     assert (counts.n_pairs, counts.n_preds, counts.n_gts) == (2, 2, 2)
+
+def test_summarize():
+    counts = Counts(
+        n_pairs=2, n_preds=3, n_gts=3, iou_sum=1.8,
+        label_pairs=[("heading", "heading"), ("paragraph", "heading")],
+        text_errors=1, text_chars=10, ja_errors=1, ja_chars=8, en_errors=0, en_chars=2,
+    )
+    scores = summarize(counts)
+    assert scores["precision"] == pytest.approx(2 / 3)
+    assert scores["recall"] == pytest.approx(2 / 3)
+    assert scores["miou"] == pytest.approx(0.9)      # 1.8 ÷ 2組
+    assert scores["label_acc"] == pytest.approx(0.5)
+    assert scores["cer"] == pytest.approx(0.1)       # 1 ÷ 10文字
+    assert scores["cer_ja"] == pytest.approx(0.125)  # 1 ÷ 8文字
+    assert scores["cer_en"] == 0.0                   # 英語は誤りなし（対象外ではなく満点）
+
+
+def test_summarize_marks_missing_as_none():
+    scores = summarize(Counts())  # 何も数えていない
+    assert scores["precision"] == 0.0  # 検出は「1つも見つけていない」ので0点
+    assert scores["miou"] is None      # 以下は比べるものが無いので対象外
+    assert scores["label_acc"] is None
+    assert scores["cer"] is None
+
+
+def test_count_document_counts_missing_pages_as_missed():
+    figure = Element(kind="figure", bbox=C)
+    def page(n: int) -> Page:
+        return Page(page=n, width=595, height=842, unit="pt", elements=[figure])
+
+    gt = IRDocument(source="a.pdf", extractor="gt", pages=[page(1), page(2)])
+    pred = IRDocument(source="a.pdf", extractor="test", pages=[page(1)])  # 2ページ目を返さなかった
+    counts = Counts()
+    count_document(pred, gt, counts)
+    assert (counts.n_pairs, counts.n_preds, counts.n_gts) == (1, 1, 2)  # 2ページ目の図は見逃し扱い

@@ -3,7 +3,7 @@
 """
 from dataclasses import dataclass, field
 
-from common.ir import Bbox, Page
+from common.ir import Bbox, IRDocument, Page
 from common.text import edit_distance
 
 def area(bbox: Bbox) -> float:
@@ -133,3 +133,26 @@ def count_page(pred: Page, gt: Page, counts: Counts) -> None:
             counts.ja_chars += by_script["ja"][1]
             counts.en_errors += by_script["en"][0]
             counts.en_chars += by_script["en"][1]
+
+def ratio_or_none(a: float, b: float) -> float | None:
+    """a / b。b が 0 のときは None（比べるものが無かった＝対象外）。0.0 だと CER では「満点」に見えてしまうため。"""
+    return a / b if b > 0 else None
+
+def summarize(counts: Counts) -> dict[str, float | None]:
+    """Counts から成績を計算する。数えるものが無かった指標は None。"""
+    scores: dict[str, float | None] = detection_scores(counts.n_pairs, counts.n_preds, counts.n_gts)
+    scores["miou"] = ratio_or_none(counts.iou_sum, counts.n_pairs)
+    scores["label_acc"] = label_accuracy(counts.label_pairs) if counts.label_pairs else None
+    scores["cer"] = ratio_or_none(counts.text_errors, counts.text_chars)
+    scores["cer_ja"] = ratio_or_none(counts.ja_errors, counts.ja_chars)
+    scores["cer_en"] = ratio_or_none(counts.en_errors, counts.en_chars)
+    return scores
+
+
+def count_document(pred: IRDocument, gt: IRDocument, counts: Counts) -> None:
+    """文書1つ分を、正解のページごとに比べて counts に足し込む。予測に無いページは空のページとして比べる。"""
+    pred_pages = {p.page:p for p in pred.pages}
+    for gt_page in gt.pages:
+        empty = Page(page=gt_page.page, width=gt_page.width, height=gt_page.height, unit=gt_page.unit)
+        pred_page = pred_pages.get(gt_page.page, empty)
+        count_page(pred_page, gt_page, counts)
