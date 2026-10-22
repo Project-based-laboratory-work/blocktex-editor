@@ -10,7 +10,10 @@ from evaluation.metrics import (
     match,
     normalize_text,
     split_by_script,
+    Counts,
+    count_page
 )
+from common.ir import Element, Page
 
 def test_iou_same_box_is_1():
     assert iou((0.1, 0.1, 0.5, 0.5), (0.1, 0.1, 0.5, 0.5)) == 1.0
@@ -91,3 +94,38 @@ def test_char_errors_by_script():
     assert char_errors_by_script(gt, gt) == {"ja": (0, 5), "en": (0, 3)}
     assert char_errors_by_script("PBFの読み込み", gt) == {"ja": (0, 5), "en": (1, 3)}  # 英語だけ間違えた
     assert char_errors_by_script("PDFの読み込ろ", gt) == {"ja": (1, 5), "en": (0, 3)}  # 日本語だけ間違えた
+
+A = (0.1, 0.1, 0.5, 0.15)
+B = (0.1, 0.2, 0.9, 0.4)
+C = (0.2, 0.5, 0.8, 0.8)
+D = (0.1, 0.9, 0.3, 0.95)
+
+
+def test_count_page():
+    gt = Page(page=1, width=595, height=842, unit="pt", elements=[
+        Element(kind="text", bbox=A, text="1. はじめに", label="heading"),
+        Element(kind="text", bbox=B, text="本文です", label="paragraph"),
+        Element(kind="figure", bbox=C, label="figure"),
+    ])
+    pred = Page(page=1, width=595, height=842, unit="pt", elements=[
+        Element(kind="text", bbox=A, text="1. はじめに", label="heading"),
+        Element(kind="text", bbox=B, text="本文でず", label="heading"),  # ラベルも1文字も間違えた
+        Element(kind="text", bbox=D, text="3", label="other"),           # 正解に無い（ページ番号を拾った）
+    ])
+    counts = Counts()
+    count_page(pred, gt, counts)
+
+    assert (counts.n_pairs, counts.n_preds, counts.n_gts) == (2, 3, 3)  # 図は見逃し、ページ番号は誤検出
+    assert counts.iou_sum == pytest.approx(2.0)                          # 2組とも位置はぴったり
+    assert sorted(counts.label_pairs) == [("heading", "heading"), ("paragraph", "heading")]
+    assert (counts.text_errors, counts.text_chars) == (1, 10)  # 「1.はじめに」6文字 +「本文です」4文字
+    assert (counts.ja_errors, counts.ja_chars) == (1, 8)
+    assert (counts.en_errors, counts.en_chars) == (0, 2)       # 「1.」の2文字
+
+
+def test_count_page_adds_up():
+    page = Page(page=1, width=595, height=842, unit="pt", elements=[Element(kind="figure", bbox=C)])
+    counts = Counts()
+    count_page(page, page, counts)
+    count_page(page, page, counts)  # 2ページ目も同じ入れ物に足す
+    assert (counts.n_pairs, counts.n_preds, counts.n_gts) == (2, 2, 2)

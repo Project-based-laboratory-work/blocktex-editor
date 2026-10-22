@@ -1,7 +1,9 @@
 """
 予測したラベル付きIRと正解のラベル付きIRを比べる評価指標。
 """
-from common.ir import Bbox
+from dataclasses import dataclass, field
+
+from common.ir import Bbox, Page
 from common.text import edit_distance
 
 def area(bbox: Bbox) -> float:
@@ -90,3 +92,44 @@ def char_errors_by_script(pred: str, gt: str) -> dict[str, tuple[int, int]]:
     pred_ja, pred_en = split_by_script(pred)
     gt_ja, gt_en = split_by_script(gt)
     return {"ja": char_errors(pred_ja, gt_ja), "en": char_errors(pred_en, gt_en)}
+
+@dataclass
+class Counts:
+    """足し合わせてから割る数。ページ・文書・データセット全体のどれでも、同じ形で足していける。"""
+    n_pairs: int = 0
+    n_preds: int = 0
+    n_gts: int = 0
+    iou_sum: float = 0.0  # ペアのIoUの合計。mIoU = iou_sum ÷ n_pairs
+    label_pairs: list[tuple[str, str]] = field(default_factory=list)  # (正解, 予測)。ラベルを出すモデルのときだけ入る
+    text_errors: int = 0
+    text_chars: int = 0
+    ja_errors: int = 0
+    ja_chars: int = 0
+    en_errors: int = 0
+    en_chars: int = 0
+
+
+def count_page(pred: Page, gt: Page, counts: Counts) -> None:
+    """1ページ分の予測と正解を比べて、counts に足し込む。"""
+    pairs = match([el.bbox for el in pred.elements], [el.bbox for el in gt.elements])
+    counts.n_pairs += len(pairs)
+    counts.n_preds += len(pred.elements)
+    counts.n_gts += len(gt.elements)
+
+    for i, j in pairs:
+        p = pred.elements[i]
+        g = gt.elements[j]
+        counts.iou_sum += iou(p.bbox, g.bbox)
+
+        if p.label is not None and g.label is not None:
+            counts.label_pairs.append((g.label, p.label))
+        if g.text is not None:
+            pred_text = p.text or ""
+            errors, n = char_errors(pred_text, g.text)
+            counts.text_errors += errors
+            counts.text_chars += n
+            by_script = char_errors_by_script(pred_text, g.text)
+            counts.ja_errors += by_script["ja"][0]
+            counts.ja_chars += by_script["ja"][1]
+            counts.en_errors += by_script["en"][0]
+            counts.en_chars += by_script["en"][1]
