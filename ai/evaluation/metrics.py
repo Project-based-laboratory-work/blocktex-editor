@@ -52,3 +52,17 @@ def detection_scores(n_pairs: int, n_preds: int, n_gts: int) -> dict[str, float]
     recall = safe_div(tp, tp + fn)
     f1 = safe_div(2 * precision * recall, (precision + recall))
     return {"precision": precision, "recall": recall, "f1": f1}
+
+def label_accuracy(label_pairs: list[tuple[str, str]]) -> float:
+    """ペアになった組のうち、ラベルが一致した割合。"""
+    correct = sum(1 for gt, pred in label_pairs if gt == pred)
+    return safe_div(correct, len(label_pairs))
+
+
+def confusion_matrix(label_pairs: list[tuple[str, str]], labels: list[str]) -> list[list[int]]:
+    """混同行列。matrix[正解の番号][予測の番号] に件数を数える。番号は labels の並び順。"""
+    index = {label: i for i, label in enumerate(labels)}
+    matrix = [[0] * len(labels) for _ in labels]
+    for gt, pred in label_pairs:
+        matrix[index[gt]][index[pred]] += 1
+    return matrix

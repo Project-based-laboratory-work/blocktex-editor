@@ -1,6 +1,6 @@
 import pytest
 
-from evaluation.metrics import iou, match, detection_scores
+from evaluation.metrics import confusion_matrix, detection_scores, iou, label_accuracy, match
 
 
 def test_iou_same_box_is_1():
@@ -41,3 +41,24 @@ def test_detection_scores():
 def test_detection_scores_with_no_preds():
     # 予測が1つも無くても止まらない
     assert detection_scores(n_pairs=0, n_preds=0, n_gts=3) == {"precision": 0.0, "recall": 0.0, "f1": 0.0}
+
+LABEL_PAIRS = [  # (正解, 予測)
+    ("heading", "heading"),
+    ("heading", "paragraph"),   # 見出しを段落と間違えた
+    ("paragraph", "paragraph"),
+    ("paragraph", "paragraph"),
+]
+
+
+def test_label_accuracy():
+    assert label_accuracy(LABEL_PAIRS) == pytest.approx(3 / 4)  # 4組のうち3組が一致
+    assert label_accuracy([]) == 0.0                             # ペアが無くても止まらない
+
+
+def test_confusion_matrix():
+    matrix = confusion_matrix(LABEL_PAIRS, ["heading", "paragraph", "caption"])
+    assert matrix == [
+        [1, 1, 0],  # 正解 heading: heading と1回、paragraph と1回答えた
+        [0, 2, 0],  # 正解 paragraph: 2回とも paragraph
+        [0, 0, 0],  # caption は出てこないので全部0
+    ]
