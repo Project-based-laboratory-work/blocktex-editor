@@ -2,7 +2,7 @@
 予測したラベル付きIRと正解のラベル付きIRを比べる評価指標。
 """
 from common.ir import Bbox
-
+from common.text import edit_distance
 
 def area(bbox: Bbox) -> float:
     x0, y0, x1, y1 = bbox
@@ -66,3 +66,14 @@ def confusion_matrix(label_pairs: list[tuple[str, str]], labels: list[str]) -> l
     for gt, pred in label_pairs:
         matrix[index[gt]][index[pred]] += 1
     return matrix
+
+def normalize_text(text: str) -> str:
+    """空白と改行を取り除く。PDFの折り返しや空白の入り方の違いを、文字の誤りとして数えないため。"""
+    return "".join(text.split())
+
+
+def char_errors(pred: str, gt: str) -> tuple[int, int]:
+    """(誤りの数, 正解の文字数)。CER は、全部の組で足し合わせてから 誤りの数 ÷ 正解の文字数 で出す。"""
+    p = normalize_text(pred)
+    g = normalize_text(gt)
+    return edit_distance(g, p), len(g)

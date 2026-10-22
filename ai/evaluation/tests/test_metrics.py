@@ -1,7 +1,6 @@
 import pytest
 
-from evaluation.metrics import confusion_matrix, detection_scores, iou, label_accuracy, match
-
+from evaluation.metrics import char_errors, confusion_matrix, detection_scores, iou, label_accuracy, match, normalize_text
 
 def test_iou_same_box_is_1():
     assert iou((0.1, 0.1, 0.5, 0.5), (0.1, 0.1, 0.5, 0.5)) == 1.0
@@ -62,3 +61,13 @@ def test_confusion_matrix():
         [0, 2, 0],  # 正解 paragraph: 2回とも paragraph
         [0, 0, 0],  # caption は出てこないので全部0
     ]
+
+def test_normalize_text_removes_spaces_and_newlines():
+    assert normalize_text("これは\nテスト です") == "これはテストです"
+    assert normalize_text("Hello\u3000World") == "HelloWorld"  # \u3000 は全角空白
+
+
+def test_char_errors():
+    assert char_errors("見出しA", "見出しB") == (1, 4)    # 1文字の置換
+    assert char_errors("段落\nです", "段落です") == (0, 4)  # 改行の違いは数えない
+    assert char_errors("", "abc") == (3, 3)               # 何も読めなければ全部誤り
