@@ -143,3 +143,70 @@ npm run dev        # ファイルを保存すると自動で再起動する
 - 保存した文書を開き直した直後は、画像ファイルが手元に無い（ブラウザは選んだファイルを保存しない）。PDFプレビューにその旨が出るので、画像ブロックでファイルを選び直す
 - サーバーのURLは [web/src/script.ts](web/src/script.ts) の `COMPILE_URL`、ポートは環境変数 `PORT`（既定 8080）で変えられる
 - うまく動かないときの調べ方は [CONTRIBUTING.md](CONTRIBUTING.md) の「PDFプレビューのデバッグ」
+
+## PDFの読み込み（抽出サーバー）
+
+トップ画面の「PDF・画像を読み込む」でPDFを選ぶと、コンパイルサーバーの `/api/extract` にPDFを送り、ルールベースの抽出・分類（`ai/rule_based/`）で見出し・段落・表・図のブロックにしてからエディタで開く。画像からの変換は未対応（空の文書で開く）。
+
+```
+ブラウザ（web/）── POST /api/extract（PDFのバイト列）──▶ server/
+                                     一時ディレクトリに保存 → ai/.venv の Python で
+                                     python -m rule_based.ir_adapter <PDF> --stdout
+エディタ ◀── {"labeled": ラベル付きIR, "document": エディタ用JSON} ──┘
+```
+
+JSONの形（IR・ラベル付きIR・エディタ用JSON）は [ai/common/README.md](ai/common/README.md) を参照。
+
+### 起動する
+
+**今はDockerでは動かない**（`server/Dockerfile` に Python が入っていない）ので、Dockerを使わない方法で起動する。PDFの読み込みにTeX Liveは要らない。
+
+1. `ai/` に Python の仮想環境を作り、抽出に使うライブラリだけを入れる（`requirements.txt` には学習用の torch も入っていて重いため）
+
+   ```bash
+   cd ai
+   python3 -m venv .venv
+   source .venv/bin/activate
+   pip install pymupdf pdfplumber reportlab pytest
+   python rule_based/sample_data/generate_sample_pdf.py   # 試し用の rule_based/sample_data/sample.pdf を作る
+   ```
+
+2. サーバーを起動する（[PDFプレビューの「Dockerを使わない方法」](#起動するdockerを使わない方法) と同じ）
+
+   ```bash
+   cd server
+   npm run dev
+   ```
+
+サーバーは `ai/.venv/bin/python` を直接呼ぶので、`activate` しておく必要はない。
+
+### APIの仕様
+
+`POST /api/extract` に、PDFファイルの中身を**そのまま**（JSONやbase64にせず）送る。
+
+```bash
+curl -X POST --data-binary @ai/rule_based/sample_data/sample.pdf http://localhost:8080/api/extract
+```
+
+| ステータス | 意味 | 本文 |
+|---|---|---|
+| 200 | 成功 | `{"labeled": ラベル付きIR, "document": エディタ用JSON}`（`application/json`） |
+| 403 | 許可していない場所（オリジン）からのリクエスト | `forbidden` |
+| 413 | 本文が大きすぎる（約20MB超） | `too large` |
+| 422 | PDFではない（先頭が `%PDF-` でない）／壊れていて読めない／抽出が20秒を超えた | `PDFファイルではありません` など |
+| 500 | `ai/.venv` が無い、サーバー側の問題 | `抽出機のPythonが見つかりません（ai/.venv を作ってください）` など |
+
+ブラウザから送るときは `file` ではなく `await file.arrayBuffer()` を `body` にする。`file` のままだと `Content-Type: application/pdf` が付いてプリフライト（OPTIONS）が飛び、このサーバーはそれに答えないため止められる。
+
+### デバッグ用ページ
+
+[web/ir_debug.html](web/ir_debug.html) を開くと、抽出・分類の結果をエディタを通さずに確認できる。
+
+- 「PDF」のボタン: `/api/extract` に送り、要素ごとに `[heading] 第1章 …` の形で1行ずつ並べる。その下に、ラベル付きIRとエディタ用JSONをそのまま表示する
+- 「JSON」のボタン: `python -m rule_based.pdf_extract` などで保存したIRのJSONファイルを選んで、同じ形で表示する（サーバー不要）
+
+### 補足
+
+- 見出しのレベルは文字サイズの大きい順に決める。サンプルPDFは「第1章」も「1.1」も同じ18ptなので、全部 `\section` になる
+- 図は画像ファイルを取り出していないので、画像ブロックで選び直す
+- 8080番を別のアプリ（ほかのプロジェクトのDockerコンテナなど）が使っていると、`npm run dev` が `EADDRINUSE` で起動できない。`docker ps` で確認して止める

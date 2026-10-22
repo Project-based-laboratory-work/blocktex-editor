@@ -178,17 +178,49 @@ const server = http.createServer((req, res) => {
         req.on('end', async () => {
             try {
                 const pdf = Buffer.concat(chunks);
+                // PDFファイルは必ず "%PDF-" で始まる。違うものは抽出機に渡す前に断る
+                if (pdf.subarray(0, 5).toString('latin1') !== '%PDF-') {
+                    res.statusCode = 422;
+                    res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+                    res.end('PDFファイルではありません');
+                    return;
+                }
+
                 const dir = await mkdtemp(path.join(os.tmpdir(), 'extract-'));
 
                 try {
                     const pdfPath = path.join(dir, 'input.pdf');
                     await writeFile(pdfPath, pdf);
 
-                    const { stdout } = await execFileAsync(
-                        PYTHON,
-                        ['-m', 'rule_based.pdf_extract', pdfPath],
-                        { cwd: AI_DIR, timeout: COMPILE_TIMEOUT_MS, maxBuffer: MAX_BODY },
-                    );
+                    let stdout: string;
+                    try {
+                        ({ stdout } = await execFileAsync(
+                            PYTHON,
+                            // 抽出 → 分類 → エディタ用JSON への変換までをまとめて行い、
+                            // {"labeled": ラベル付きIR, "document": エディタ用JSON} を標準出力に出す
+                            ['-m', 'rule_based.ir_adapter', pdfPath, '--stdout'],
+                            { cwd: AI_DIR, timeout: COMPILE_TIMEOUT_MS, maxBuffer: MAX_BODY },
+                        ));
+                    } catch (err: any) {
+                        res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+                        // ai/.venv を作っていないと、Python 自体が見つからない
+                        if (err.code === 'ENOENT') {
+                            console.error(err);
+                            res.statusCode = 500;
+                            res.end('抽出機のPythonが見つかりません（ai/.venv を作ってください）');
+                            return;
+                        }
+                        if (err.killed) {
+                            res.statusCode = 422;
+                            res.end('抽出に時間がかかりすぎたため中断しました');
+                            return;
+                        }
+                        // 壊れたPDFなど。詳しい経緯（Traceback）はサーバーの端末に出す
+                        console.error(err.stderr);
+                        res.statusCode = 422;
+                        res.end('PDFを読み込めませんでした');
+                        return;
+                    }
 
                     res.setHeader('Content-Type', 'application/json; charset=utf-8');
                     res.end(stdout);

@@ -28,7 +28,7 @@ PRを作成（またはreopen、draftからReady for reviewに変更）すると
 
 - `web/` — Webアプリ本体（TypeScript）。`npm install && npm run build` で `web/js/` を生成すれば、`web/index.html` をブラウザで直接開いて動作確認できる。
 - `ai/` — Phase 4の学習コード（Python）。Pythonの仮想環境はこのディレクトリに作る。
-- `server/` — PDFプレビュー用のコンパイルサーバー。起動方法は [README.md](README.md) の「PDFプレビュー（コンパイルサーバー）」を参照。
+- `server/` — PDFプレビュー用のコンパイルサーバー。PDFの読み込み（`ai/rule_based/` の抽出・分類を呼ぶ）も受け持つ。起動方法は [README.md](README.md) の「PDFプレビュー（コンパイルサーバー）」「PDFの読み込み（抽出サーバー）」を参照。
 - `docker/` — TeXコンパイル確認用のDockerイメージ定義とスクリプト。
 
 ## TeX環境（Dockerを使う方法・推奨）
