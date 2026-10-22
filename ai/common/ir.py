@@ -26,7 +26,7 @@ Bbox = tuple[float, float, float, float]
 # 抽出器が見つけた領域の種類。意味（見出し・段落など）は含めない
 Kind = Literal["text", "table", "figure"]
 # 構造化器が付ける意味ラベル。rule_based/labels.py の FINE_LABELS と同じ
-Label = Literal["heading", "paragraph", "list", "math", "caption", "table", "figure", "other"]
+Label = Literal["heading", "paragraph", "list", "math", "caption", "table", "figure", "other", "code"]
 # 正解ラベルの出どころ。rule_based/labels.py の Source と同じ
 LabelSource = Literal["auto", "manual", "prelabel"]
 # ページの幅・高さ・文字サイズの単位。PDFはpt、画像はpx

@@ -63,7 +63,7 @@ PDF・画像の読み込みで、どのモデルも同じ形のJSONを出すた�
 
 | 項目 | 内容 |
 |---|---|
-| `label` | `heading` / `paragraph` / `list` / `math` / `caption` / `table` / `figure` / `other`（[rule_based/labels.py](../rule_based/labels.py) の `FINE_LABELS` と同じ） |
+| `label` | `heading` / `paragraph` / `list` / `math` / `caption` / `table` / `figure` / `other` / `code`（[rule_based/labels.py](../rule_based/labels.py) の `FINE_LABELS` と同じ） |
 | `level` | `label="heading"` の見出しレベル（1〜3）。分からなければ書かない（③で文字サイズの大きい順に決める） |
 | `tex` | `label="math"` のLaTeX。数式OCR（math_ocr）で読めたときに入れる |
 | `label_source` | 正解ラベルのときだけ。`auto`（色付きTeXから自動）/ `manual`（人手）/ `prelabel`（ルールベースの下書き） |
@@ -86,6 +86,7 @@ PDF・画像の読み込みで、どのモデルも同じ形のJSONを出すた�
 | `figure` | `image` | 画像ファイルは無いので `src` は空（エディタで選び直す）。幅は本文の幅に対する比率 |
 | `caption` | 隣の表・図の `caption` | 同じページの隣に表・図が無ければ段落として残す |
 | `other` | なし | ページ番号・ヘッダーなどは捨てる |
+| `code` | `code` | 連続した `code` 要素は1つにまとめ、行は改行でつなぐ（段落と違い、折り返しをつながない）。`language` は `plain` |
 | （label なし） | `kind` から | `text` は段落、`table` / `figure` はそのまま |
 
 `model.ts` の `SCHEMA_VERSION` を上げたら、`blocks.py` の `EDITOR_SCHEMA_VERSION` と変換も直すこと（`tests/test_blocks.py` が食い違いを検出する）。
