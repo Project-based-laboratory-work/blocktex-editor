@@ -20,6 +20,7 @@ class Glyph:
     page: int        # 1始まり
     bbox: PtBox
     baseline: float  # 文字が乗っている線の、上からの距離（pt）
+    c: str = ""      # その文字。空白も入る
 
 
 def union_bbox(boxes: list[PtBox]) -> PtBox:
@@ -27,9 +28,13 @@ def union_bbox(boxes: list[PtBox]) -> PtBox:
     return (min(b[0] for b in boxes), min(b[1] for b in boxes), max(b[2] for b in boxes), max(b[3] for b in boxes))
 
 
+def glyphs_in_block(glyphs: list[Glyph], page: int, top: float, bottom: float) -> list[Glyph]:
+    """page の、ベースラインが top〜bottom（前後に BASELINE_TOLERANCE の余裕）にある文字"""
+    return [g for g in glyphs if top - BASELINE_TOLERANCE <= g.baseline <= bottom + BASELINE_TOLERANCE and g.page == page]
+
 def block_bbox(glyphs: list[Glyph], page: int, top: float, bottom: float) -> PtBox | None:
-    """page の、ベースラインが top〜bottom（前後に BASELINE_TOLERANCE の余裕）にある文字を包む枠。文字が無ければ None"""
-    boxes = [g.bbox for g in glyphs if top - BASELINE_TOLERANCE <= g.baseline <= bottom + BASELINE_TOLERANCE and g.page == page]
+    """ブロックの文字を包む枠。空白は枠を広げてしまうので使わない。文字が無ければ None"""
+    boxes = [g.bbox for g in glyphs_in_block(glyphs, page, top, bottom) if not g.c.isspace()]
     if not boxes:
         return None
     return union_bbox(boxes)
@@ -43,7 +48,16 @@ def read_glyphs(pdf_path: str) -> list[Glyph]:
                 for line in block.get("lines", []):  # 画像のブロックには lines が無い
                     for span in line["spans"]:
                         for char in span["chars"]:
-                            if char["c"].isspace():
-                                continue
-                            glyphs.append(Glyph(page=page_index + 1, bbox=tuple(char["bbox"]), baseline=char["origin"][1]))
+                            glyphs.append(Glyph(page=page_index + 1, bbox=tuple(char["bbox"]), baseline=char["origin"][1], c=char["c"]))
     return glyphs
+
+def block_text(glyphs: list[Glyph], page: int, top: float, bottom: float) -> str:
+    """ブロックの文字列。ベースラインが変わったところで改行（\\n）を入れ、各行の前後の空白は取る"""
+    text = ""
+    prev_baseline = None
+    for g in glyphs_in_block(glyphs, page, top, bottom):
+        if prev_baseline is not None and abs(g.baseline - prev_baseline) > BASELINE_TOLERANCE:
+            text += "\n"
+        text += g.c
+        prev_baseline = g.baseline
+    return "\n".join(line.strip() for line in text.split("\n"))

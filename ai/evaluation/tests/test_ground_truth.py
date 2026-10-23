@@ -1,6 +1,6 @@
 import pytest
 
-from evaluation.ground_truth import Glyph, block_bbox, read_glyphs, union_bbox
+from evaluation.ground_truth import Glyph, block_bbox, block_text, read_glyphs, union_bbox
 from evaluation.marks import read_marks
 
 # サンプルPDF（sample_data/mark_test.tex）から取った実際の値
@@ -35,13 +35,6 @@ def test_block_bbox_allows_superscript():
 def test_block_bbox_other_page_is_none():
     assert block_bbox(GLYPHS, page=2, top=145.98, bottom=145.98) is None
 
-def test_read_glyphs_skips_spaces(sample_pdf):
-    glyphs = read_glyphs(sample_pdf)
-    assert len(glyphs) == 81                      # 見出し5文字 + 段落 + ページ番号（空白は入らない）
-    assert all(g.page == 1 for g in glyphs)
-    assert isinstance(glyphs[0].baseline, float)  # (x, y) のタプルではなく、y の数だけ
-
-
 def test_block_boxes_from_real_pdf(sample_pdf):
     glyphs = read_glyphs(sample_pdf)
     marks = read_marks(sample_pdf)
@@ -49,3 +42,38 @@ def test_block_boxes_from_real_pdf(sample_pdf):
     paragraph = block_bbox(glyphs, 1, marks["b1s"].y, marks["b1e"].y)
     assert heading == pytest.approx((75.71, 133.2, 156.89, 149.03), abs=0.01)     # 「1 はじめに」
     assert paragraph == pytest.approx((75.71, 163.28, 519.56, 191.73), abs=0.01)  # 2行の段落。ページ番号は入らない
+
+def test_read_glyphs_keeps_spaces(sample_pdf):
+    glyphs = read_glyphs(sample_pdf)
+    assert len(glyphs) == 83                         # 3-d の81文字 + 段落の中の空白2つ（「PDF の」「2 行」）
+    assert any(g.c == " " for g in glyphs)
+    assert all(g.page == 1 for g in glyphs)
+
+
+def test_block_bbox_ignores_spaces():
+    glyphs = [
+        Glyph(page=1, bbox=(0, 0, 10, 10), baseline=8.0, c="A"),
+        Glyph(page=1, bbox=(10, 0, 50, 10), baseline=8.0, c=" "),  # 行末の幅の広い空白
+    ]
+    assert block_bbox(glyphs, page=1, top=8.0, bottom=8.0) == (0, 0, 10, 10)  # 空白で右に広がらない
+
+
+def test_block_text_breaks_lines_and_keeps_superscript():
+    glyphs = [
+        Glyph(page=1, bbox=(0, 0, 1, 1), baseline=10.0, c="A"),
+        Glyph(page=1, bbox=(1, 0, 2, 1), baseline=10.0, c=" "),
+        Glyph(page=1, bbox=(2, 0, 3, 1), baseline=10.0, c="b"),
+        Glyph(page=1, bbox=(3, 0, 4, 1), baseline=10.0, c=" "),   # 行末の空白（strip で消える）
+        Glyph(page=1, bbox=(0, 2, 1, 3), baseline=26.0, c="c"),   # 16pt 下 → 次の行
+        Glyph(page=1, bbox=(1, 1, 2, 2), baseline=23.0, c="2"),   # 3pt 上の上付き文字 → 同じ行
+    ]
+    assert block_text(glyphs, page=1, top=10.0, bottom=26.0) == "A b\nc2"
+
+
+def test_block_text_from_real_pdf(sample_pdf):
+    glyphs = read_glyphs(sample_pdf)
+    marks = read_marks(sample_pdf)
+    assert block_text(glyphs, 1, marks["b0s"].y, marks["b0e"].y) == "1はじめに"  # 番号と題の間は空白の文字ではなく、すき間
+    paragraph = block_text(glyphs, 1, marks["b1s"].y, marks["b1e"].y)
+    assert paragraph.startswith("これは目印の動作を確かめるための段落です。PDF の中で")
+    assert paragraph.count("\n") == 1  # 2行の段落なので、改行は1つ
