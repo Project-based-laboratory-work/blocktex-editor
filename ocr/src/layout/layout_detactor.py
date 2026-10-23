@@ -56,6 +56,8 @@ def detect_layout(image_path: str) -> dict:
 
     # 4. 二値化
     # 文字を白、背景を黒にする
+    #THRESH_BINARY_INV:通常の二値化とは白黒を反転させる指定
+    #THRESH_OTSU:画像の明るさの分布から二値化のしきい値を自動的に決める
     _, binary = cv2.threshold(
         gray,
         0,
@@ -65,6 +67,7 @@ def detect_layout(image_path: str) -> dict:
 
     # 5. 文字を横方向につなげて、領域の候補を作る
     # 横書きの文章や数式などを、まとまりとして検出するための処理
+    #一旦横に繋げている
     kernel_width = max(15, image_width // 40)
 
     kernel = cv2.getStructuringElement(
@@ -89,9 +92,9 @@ def detect_layout(image_path: str) -> dict:
 
     # 7. 領域ごとの位置と特徴を取得
     for contour in contours:
-
+        #検出した領域を囲む長方形の位置と大きさを取得
         x, y, width, height = cv2.boundingRect(contour)
-
+        
         # 小さすぎる領域は除外
         if width < 10 or height < 5:
             continue
@@ -127,10 +130,13 @@ def detect_layout(image_path: str) -> dict:
                     "height": int(height)
                 },
                 "features": {
+                    #領域の面積；領域の大きさを比較していく、、？
                     "area": int(width * height),
+                    #幅➗高さ；横長の数式などを見つける手がかりにする
                     "aspect_ratio": round(
                         float(aspect_ratio), 4
                     ),
+                    #領域内で白い画素が占める割合；文字や記号の密集度を調べる？
                     "density": round(
                         float(density), 4
                     )

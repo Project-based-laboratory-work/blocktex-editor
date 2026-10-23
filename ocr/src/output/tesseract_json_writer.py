@@ -44,3 +44,30 @@ def save_json(data: dict, output_path: str) -> Path:
         )
 
     return path
+
+if __name__ == "__main__":
+    from src.layout_detector import detect_layout
+
+    # リポジトリのルートディレクトリを取得
+    project_root = Path(__file__).resolve().parents[2]
+
+    # 入力画像
+    image_path = project_root / "sample" / "jphorizontal_001.jpg"
+
+    # JSONの保存先
+    output_path = (
+        project_root
+        / "data"
+        / "layout"
+        / "layout_results.json"
+    )
+
+    # レイアウト検出
+
+    layout_result = detect_layout(str(image_path))
+
+    # JSON保存
+
+    save_json(layout_result, str(output_path))
+
+    print(f"レイアウト検出結果を保存しました: {output_path}")
