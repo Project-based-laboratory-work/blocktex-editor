@@ -1,7 +1,11 @@
+import random
+
 import pytest
 
-from evaluation.ground_truth import Glyph, block_bbox, block_text, read_glyphs, union_bbox
+from common.ir import validate
+from evaluation.ground_truth import Glyph, block_bbox, block_text, build_ground_truth, compile_tex, read_glyphs, union_bbox
 from evaluation.marks import read_marks
+from evaluation.synth_doc import PREAMBLE, SourceBlock, mark, random_document
 
 # サンプルPDF（sample_data/mark_test.tex）から取った実際の値
 GLYPHS = [
@@ -77,3 +81,26 @@ def test_block_text_from_real_pdf(sample_pdf):
     paragraph = block_text(glyphs, 1, marks["b1s"].y, marks["b1e"].y)
     assert paragraph.startswith("これは目印の動作を確かめるための段落です。PDF の中で")
     assert paragraph.count("\n") == 1  # 2行の段落なので、改行は1つ
+
+def test_build_ground_truth_follows_blocks(has_tex, tmp_path):
+    tex, blocks = random_document(random.Random(0), "en")
+    doc = build_ground_truth(str(compile_tex(tex, tmp_path)), blocks, source="doc.pdf")
+    assert validate(doc) == []  # common/ir.py の形式チェックに通る
+    elements = [el for page in doc.pages for el in page.elements]
+    assert [(el.label, el.level) for el in elements] == [(b.label, b.level) for b in blocks]  # 置いた順（読み順）
+    assert all(el.label_source == "auto" for el in elements)
+    assert all(el.text for el in elements)  # どの要素にも文字が入っている
+
+
+def test_build_ground_truth_splits_block_across_pages(has_tex, tmp_path):
+    long_text = " ".join(["This sentence makes the paragraph long enough to cross a page."] * 40)
+    blocks = [
+        SourceBlock(0, "heading", 1, rf"\section{{{mark('b0s')}Long{mark('b0e')}}}"),
+        SourceBlock(1, "paragraph", None, r"\vspace*{15cm}" + "\n\n" + f"{mark('b1s')}{long_text}{mark('b1e')}"),
+    ]
+    tex = PREAMBLE % {"size": "11pt"} + "\n\n".join(b.tex for b in blocks) + "\n\\end{document}\n"
+    doc = build_ground_truth(str(compile_tex(tex, tmp_path)), blocks, source="long.pdf")
+    assert [len(p.elements) for p in doc.pages] == [2, 1]  # 1ページ目: 見出し + 段落の前半、2ページ目: 段落の後半
+    first_half = doc.pages[0].elements[1]
+    assert first_half.label == "paragraph"
+    assert first_half.bbox[3] < 0.9  # ページの下の端（ページ番号の位置）まで伸びていない

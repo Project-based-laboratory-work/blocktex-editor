@@ -9,6 +9,7 @@ from dataclasses import dataclass
 
 PREAMBLE = r"""\documentclass[uplatex,a4paper,%(size)s]{jsarticle}
 \newcommand{\mk}[1]{\leavevmode\special{pdf:dest (#1) [@thispage /XYZ @xpos @ypos null]}}
+\pagestyle{empty}
 \begin{document}
 """
 
