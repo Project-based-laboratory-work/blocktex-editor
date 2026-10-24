@@ -1,5 +1,7 @@
+# 1番シンプル、グレースケール、2値化等なし
 import time
 import easyocr
+from pathlib import Path
 from PIL import Image
 from src.ocr_result import save_ocr_result
 
@@ -44,8 +46,9 @@ def run_easyocr(image_path, image_id):
 
 
 if __name__ == "__main__":
+    image_path = Path("data/images/doc001.jpg")
     saved_path = run_easyocr(
-        image_path="data/images/doc001.jpg",
-        image_id="doc001",
+        image_path=image_path,
+        image_id=image_path.stem,
     )
     print(f"保存先: {saved_path}")
