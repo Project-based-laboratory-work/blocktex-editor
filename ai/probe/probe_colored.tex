@@ -1,0 +1,45 @@
+% ステップ0 検証用: 色付き版（ラベルの正解に相当）
+% probe_plain.tex と本文はまったく同じ。色の指定だけを足してある。
+\documentclass[uplatex,dvipdfmx]{jsarticle}
+\usepackage{xcolor}
+
+% ラベルごとの色。ai/auto_label.py の COLOR_TO_LABEL と値を一致させること。
+\definecolor{labelheading}{HTML}{FF0000}  % heading
+\definecolor{labelcaption}{HTML}{00AA00}  % caption
+\definecolor{labelother}{HTML}{888888}    % other
+
+\renewcommand{\thepage}{\textcolor{labelother}{\arabic{page}}}
+\begin{document}
+
+\section{\color{labelheading}はじめに}
+
+本研究では、ブロックエディタで編集した内容をコンパイル可能なTeXコードとして
+出力するツールを開発する。本節ではその背景と目的について述べる。
+既存のツールでは、TeXの文法を習得していない利用者が文書を作成することが難しい。
+
+\subsection{\color{labelheading}目的}
+
+PDFを読み込み、自作Transformerによるブロック分類を行い、
+ブロックエディタ上で編集可能な形に変換することを目的とする。
+
+\begin{figure}[h]
+\centering
+\fbox{\rule{0pt}{3cm}\rule{5cm}{0pt}}
+\caption{\color{labelcaption}システム全体の構成}
+\end{figure}
+
+\begin{table}[h]
+\centering
+\caption{\color{labelcaption}対応ブロック種別}
+\begin{tabular}{|l|l|}
+\hline
+種別 & 対応フェーズ \\
+\hline
+見出し & Phase 1 \\
+段落 & Phase 1 \\
+表 & Phase 2 \\
+\hline
+\end{tabular}
+\end{table}
+
+\end{document}

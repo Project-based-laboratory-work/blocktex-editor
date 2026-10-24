@@ -7,3 +7,12 @@ onnx
 pymupdf
 pdfplumber
 reportlab  # 動作確認用サンプルPDFの生成にのみ使用
+
+# 数式OCR（math_ocr/）
+matplotlib  # 学習用の数式画像の描画（mathtext）
+pillow
+pytest
+
+# Tesseract OCR（tesseract_ocr/）
+pytesseract
+pdf2image
