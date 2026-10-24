@@ -16,3 +16,6 @@ pytest
 # Tesseract OCR（tesseract_ocr/）
 pytesseract
 pdf2image
+
+# EasyOCR（easyocr_ocr/）
+easyocr
