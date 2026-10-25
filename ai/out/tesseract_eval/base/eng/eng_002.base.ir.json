@@ -1,0 +1,134 @@
+{
+  "source": "eng_002.jpg",
+  "extractor": "tesseract",
+  "pages": [
+    {
+      "page": 1,
+      "width": 1240,
+      "height": 1755,
+      "unit": "px",
+      "elements": [
+        {
+          "kind": "text",
+          "bbox": [
+            0.22097,
+            0.09573,
+            0.77984,
+            0.11339
+          ],
+          "text": "LETTER FROM WENDELL PHILLIPS, ESQ.",
+          "font_size": 31.0,
+          "confidence": 0.94
+        },
+        {
+          "kind": "text",
+          "bbox": [
+            0.6371,
+            0.14245,
+            0.85,
+            0.15499
+          ],
+          "text": "BOSTON, April 22, 1845.",
+          "font_size": 22.0,
+          "confidence": 0.955
+        },
+        {
+          "kind": "text",
+          "bbox": [
+            0.08065,
+            0.17493,
+            0.22339,
+            0.18746
+          ],
+          "text": "My Dear Friend:",
+          "font_size": 22.0,
+          "confidence": 0.96
+        },
+        {
+          "kind": "text",
+          "bbox": [
+            0.0621,
+            0.19772,
+            0.93871,
+            0.2302
+          ],
+          "text": "You remember the old fable of“The Man and the Lion,”where the lion complained that he\nshould not be so misrepresented“when the lions wrote history.”",
+          "font_size": 23.0,
+          "confidence": 0.9596
+        },
+        {
+          "kind": "text",
+          "bbox": [
+            0.06129,
+            0.23989,
+            0.93871,
+            0.46724
+          ],
+          "text": "| am glad the time has come when the“lions write history.”We have been left long enough to\ngather the character of slavery from the involuntary evidence of the masters. One might,\nindeed, rest sufficiently satisfied with what, it is evident, must be, in general, the results of such\na relation, without seeking farther to find whether they have followed in every instance. Indeed,\nthose who stare at the half-peck of corn a week, and love to count the lashes on the slave’s\nback, are seldom the“stuff”out of which reformers and abolitionists are to be made. |\nremember that, in 1838, many were waiting for the results of the West India experiment, before\nthey could come into our ranks. Those“results”have come long ago; but, alas! few of that\nnumber have come with them, as converts. A man must be disposed to judge of emancipation\nby other tests than whether it has increased the produce of sugar,—and to hate slavery for\nother reasons than because it starves men and whips women,—before he is ready to lay the\nfirst stone of his anti-slavery life.",
+          "font_size": 23.0,
+          "confidence": 0.9427
+        },
+        {
+          "kind": "text",
+          "bbox": [
+            0.0621,
+            0.47692,
+            0.93871,
+            0.56809
+          ],
+          "text": "| was glad to learn, in your story, how early the most neglected of God's children waken to a\nsense of their rights, and of the injustice done them. Experience is a keen teacher; and long\nbefore you had mastered your A B C, or knew where the“white sails”of the Chesapeake were\nbound, you began, | see, to gauge the wretchedness of the slave, not by his hunger and want,\nnot by his lashes and toil, but by the cruel and blighting death which gathers over his soul.",
+          "font_size": 23.0,
+          "confidence": 0.946
+        },
+        {
+          "kind": "text",
+          "bbox": [
+            0.06129,
+            0.57778,
+            0.93871,
+            0.68832
+          ],
+          "text": "In connection with this, there is one circumstance which makes your recollections peculiarly\nvaluable, and renders your early insight the more remarkable. You come from that part of the\ncountry where we are told slavery appears with its fairest features. Let us hear, then, what it is\nat its best estate—gaze on its bright side, if it has one; and then imagination may task her\npowers to add dark lines to the picture, as she travels southward to that (for the colored man)\nValley of the Shadow of Death, where the Mississippi sweeps along.",
+          "font_size": 23.0,
+          "confidence": 0.9576
+        },
+        {
+          "kind": "text",
+          "bbox": [
+            0.06129,
+            0.69801,
+            0.93871,
+            0.86724
+          ],
+          "text": "Again, we have known you long, and can put the most entire confidence in your truth, candor,\nand sincerity. Every one who has heard you speak has felt, and, | am confident, every one who\nreads your book will feel, persuaded that you give them a fair specimen of the whole truth. No\none-sided portrait—no wholesale complaints——but strict justice done, whenever individual\nkindliness has neutralized, for a moment, the deadly system with which it was strangely allied.\nYou have been with us, too, some years, and can fairly compare the twilight of rights, which\nyour race enjoy at the North, with that“noon of night”under which they labor south of Mason\nand Dixon's line. Tell us whether, after all, the half-free colored man of Massachusetts is worse\noff than the pampered slave of the rice swamps!",
+          "font_size": 23.0,
+          "confidence": 0.9466
+        },
+        {
+          "kind": "text",
+          "bbox": [
+            0.0621,
+            0.87692,
+            0.93871,
+            0.9094
+          ],
+          "text": "In reading your life, no one can say that we have unfairly picked out some rare specimens of\ncruelty. We know that the bitter drops, which even you have drained from the cup, are no",
+          "font_size": 23.0,
+          "confidence": 0.9583
+        }
+      ]
+    }
+  ],
+  "params": {
+    "preset": "base",
+    "preprocess": [],
+    "tesseract": {},
+    "direction": "horizontal",
+    "chosen_direction": "horizontal",
+    "lang": "eng",
+    "psm": 3,
+    "oem": 1,
+    "tesseract_version": "5.5.3"
+  },
+  "ir_version": 1
+}
