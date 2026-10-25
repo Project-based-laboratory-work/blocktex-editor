@@ -1,0 +1,83 @@
+[
+  {
+    "preset": "base",
+    "dataset": "eng",
+    "images": 2,
+    "cer": 0.0112,
+    "cer_ja": 7.6,
+    "cer_en": 0.0108,
+    "mean_sec": 0.935
+  },
+  {
+    "preset": "base",
+    "dataset": "jphorizon",
+    "images": 2,
+    "cer": 0.0157,
+    "cer_ja": 0.0153,
+    "cer_en": null,
+    "mean_sec": 2.651
+  },
+  {
+    "preset": "base",
+    "dataset": "jpvertical",
+    "images": 2,
+    "cer": 0.0568,
+    "cer_ja": 0.0557,
+    "cer_en": null,
+    "mean_sec": 3.871
+  },
+  {
+    "preset": "up2",
+    "dataset": "eng",
+    "images": 2,
+    "cer": 0.0106,
+    "cer_ja": 7.8,
+    "cer_en": 0.0103,
+    "mean_sec": 1.53
+  },
+  {
+    "preset": "up2",
+    "dataset": "jphorizon",
+    "images": 2,
+    "cer": 0.0218,
+    "cer_ja": 0.0214,
+    "cer_en": null,
+    "mean_sec": 4.178
+  },
+  {
+    "preset": "up2",
+    "dataset": "jpvertical",
+    "images": 2,
+    "cer": 0.0233,
+    "cer_ja": 0.0211,
+    "cer_en": null,
+    "mean_sec": 5.792
+  },
+  {
+    "preset": "otsu",
+    "dataset": "eng",
+    "images": 2,
+    "cer": 0.0135,
+    "cer_ja": 7.6,
+    "cer_en": 0.0132,
+    "mean_sec": 0.948
+  },
+  {
+    "preset": "otsu",
+    "dataset": "jphorizon",
+    "images": 2,
+    "cer": 0.019,
+    "cer_ja": 0.019,
+    "cer_en": null,
+    "mean_sec": 2.66
+  },
+  {
+    "preset": "otsu",
+    "dataset": "jpvertical",
+    "images": 2,
+    "cer": 0.0848,
+    "cer_ja": 0.083,
+    "cer_en": null,
+    "mean_sec": 3.861
+  }
+]
