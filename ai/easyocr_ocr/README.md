@@ -25,9 +25,30 @@ python -m common.ir out/easy1.base.ir.json   # 形式チェック
 | [ir_adapter.py](ir_adapter.py) | 解析の流れ：画像を開く → 前処理 → EasyOCR → IRに変換 |
 | [presets.py](presets.py) | 設定の組（プリセット）。実験はここに名前を付けて足す |
 | [preprocess.py](preprocess.py) | 前処理の部品（拡大・グレースケール・反転・二値化など）。EasyOCRに依存しない |
+| [compare.py](compare.py) | プリセットごとの文字誤り率（CER）を、正解テキストのある画像で比べる |
 
 使ったプリセットの中身はIRの `params` に記録されるので、出力を見ればどの設定の結果か分かる。
 前処理で拡大した場合も、`bbox`・`font_size` は元の画像の大きさに戻してから書く。
+
+## プリセットの比較
+
+`ocr/sample/<カテゴリ>/` の中で、画像と同じ名前の `.txt`（正解テキスト）がある画像だけを対象に、全プリセットで読み取ってCERを出す。
+
+```bash
+cd ai
+python -m easyocr_ocr.compare                       # 全プリセット × 全画像（CPUだと1時間以上かかる）
+python -m easyocr_ocr.compare --presets base up2    # プリセットを絞る
+python -m easyocr_ocr.compare --category jphorizon  # カテゴリを絞る
+```
+
+| 出力（`easyocr_ocr/data/compare/`、git管理外） | 内容 |
+|---|---|
+| `summary.csv` | プリセットごとの、カテゴリ別・全体・日本語・英語のCERと、1枚あたりの平均時間。全体のCERが小さい順 |
+| `details.csv` | 画像1枚ごとの結果 |
+| `ir/<カテゴリ>/<画像名>.<プリセット>.ir.json` | 読み取った結果。次回はこれを再利用する（読み直すときは `--force`） |
+
+- 位置（bbox）は見ず、要素を読む順（横書きは上の行から、縦書きは右の列から）につなげた文字列を比べる。縦書きかどうかは箱の形で判定する
+- CERの計算は `evaluation/metrics.py` と同じ（空白・改行は取り除く）。カテゴリごとのCERは、画像ごとのCERの平均ではなく「誤りの合計 ÷ 文字数の合計」
 
 ## 現状の制限
 

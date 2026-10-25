@@ -55,3 +55,18 @@ def test_adaptive_keeps_text_on_colored_band(step):
     assert result[5, 5] == 255 and result[5, 110] == 255
     # ただし帯の端（背景の色が変わる境目）には、黒い線が出る（mean の方が太い）
     assert result[5, 61] == 0
+
+
+def test_wider_block_keeps_thick_strokes_filled():
+    # 背景の上に、範囲31pxより太い線（40×40の黒い四角）がある。拡大後の太い文字を想定
+    pytest.importorskip("cv2")
+    array = np.full((120, 120), 230, dtype=np.uint8)
+    array[40:80, 40:80] = 50
+    image = Image.fromarray(array).convert("RGB")
+
+    narrow = np.asarray(apply_preprocess(image, ["adaptive"])[0].convert("L"))
+    wide = np.asarray(apply_preprocess(image, ["adaptive61"])[0].convert("L"))
+
+    # 31pxだと四角の中心では「周り」が全部黒くなり、内側が白く抜ける。61pxなら背景が入るので黒のまま
+    assert narrow[60, 60] == 255
+    assert wide[60, 60] == 0
