@@ -1,0 +1,14 @@
+# Phase 4 で使用予定。バージョンはIS計算機サーバのCUDA環境に合わせて着手時に確定する。
+torch
+numpy
+onnx
+
+# 4-1: PDF解析・ルールベース分類（着手時点で導入）
+pymupdf
+pdfplumber
+reportlab  # 動作確認用サンプルPDFの生成にのみ使用
+
+# 数式OCR（math_ocr/）
+matplotlib  # 学習用の数式画像の描画（mathtext）
+pillow
+pytest
