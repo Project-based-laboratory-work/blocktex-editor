@@ -24,5 +24,5 @@ def read_marks(pdf_path: str) -> dict[str, Mark]:
             page_index = dest["page"]
             x, y = dest["to"]
             height = doc[page_index].rect.height
-            marks[name] = Mark(page=page_index + 1, x=x, y= height - y)
+            marks[name] = Mark(page=page_index + 1, x=x, y=height - y)
     return marks

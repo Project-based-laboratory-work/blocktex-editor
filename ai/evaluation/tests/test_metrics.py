@@ -1,21 +1,22 @@
 import pytest
 
+from common.ir import Element, IRDocument, Page
 from evaluation.metrics import (
+    Counts,
     char_errors,
     char_errors_by_script,
     confusion_matrix,
+    count_document,
+    count_page,
     detection_scores,
     iou,
     label_accuracy,
     match,
     normalize_text,
     split_by_script,
-    Counts,
-    count_page,
-    count_document,
-    summarize
+    summarize,
 )
-from common.ir import Element, IRDocument, Page
+
 
 def test_iou_same_box_is_1():
     assert iou((0.1, 0.1, 0.5, 0.5), (0.1, 0.1, 0.5, 0.5)) == 1.0
@@ -28,6 +29,7 @@ def test_iou_no_overlap_is_0():
 def test_iou_partial_overlap():
     # a と b は右下に 0.2 ずつずれている
     assert iou((0.0, 0.0, 0.4, 0.4), (0.2, 0.2, 0.6, 0.6)) == pytest.approx(0.04 / 0.28)
+
 
 def test_match_pairs_each_pred_with_nearest_gt():
     gts = [(0.1, 0.1, 0.9, 0.15), (0.1, 0.2, 0.9, 0.4)]  # 0: 見出し、1: 段落
@@ -44,6 +46,7 @@ def test_match_is_one_to_one():
     preds = [(0.0, 0.0, 0.4, 0.4)]                         # 予測は1つだけ
     assert match(preds, gts) == [(0, 0)]
 
+
 def test_detection_scores():
     # 2-b の1つ目のテストと同じ状況: 予測3つ、正解2つ、ペア2つ
     scores = detection_scores(n_pairs=2, n_preds=3, n_gts=2)
@@ -55,6 +58,7 @@ def test_detection_scores():
 def test_detection_scores_with_no_preds():
     # 予測が1つも無くても止まらない
     assert detection_scores(n_pairs=0, n_preds=0, n_gts=3) == {"precision": 0.0, "recall": 0.0, "f1": 0.0}
+
 
 LABEL_PAIRS = [  # (正解, 予測)
     ("heading", "heading"),
@@ -77,6 +81,7 @@ def test_confusion_matrix():
         [0, 0, 0],  # caption は出てこないので全部0
     ]
 
+
 def test_normalize_text_removes_spaces_and_newlines():
     assert normalize_text("これは\nテスト です") == "これはテストです"
     assert normalize_text("Hello\u3000World") == "HelloWorld"  # \u3000 は全角空白
@@ -87,6 +92,7 @@ def test_char_errors():
     assert char_errors("段落\nです", "段落です") == (0, 4)  # 改行の違いは数えない
     assert char_errors("", "abc") == (3, 3)               # 何も読めなければ全部誤り
 
+
 def test_split_by_script():
     assert split_by_script("PDFの読み込み") == ("の読み込み", "PDF")
 
@@ -96,6 +102,7 @@ def test_char_errors_by_script():
     assert char_errors_by_script(gt, gt) == {"ja": (0, 5), "en": (0, 3)}
     assert char_errors_by_script("PBFの読み込み", gt) == {"ja": (0, 5), "en": (1, 3)}  # 英語だけ間違えた
     assert char_errors_by_script("PDFの読み込ろ", gt) == {"ja": (1, 5), "en": (0, 3)}  # 日本語だけ間違えた
+
 
 A = (0.1, 0.1, 0.5, 0.15)
 B = (0.1, 0.2, 0.9, 0.4)
@@ -131,6 +138,7 @@ def test_count_page_adds_up():
     count_page(page, page, counts)
     count_page(page, page, counts)  # 2ページ目も同じ入れ物に足す
     assert (counts.n_pairs, counts.n_preds, counts.n_gts) == (2, 2, 2)
+
 
 def test_summarize():
     counts = Counts(

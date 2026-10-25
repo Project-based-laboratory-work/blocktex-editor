@@ -32,7 +32,7 @@ def make_case(rng: random.Random, lang: str, case_dir: Path) -> dict:
         doc = build_ground_truth(str(pdf), blocks, source="input.pdf")
         shutil.copy(pdf, case_dir / "input.pdf")
     (case_dir / "source.tex").write_text(tex, encoding="utf-8")
-    save_ir(doc, case_dir/"gt.labeled.json")
+    save_ir(doc, str(case_dir / "gt.labeled.json"))
     labels = {el.label for page in doc.pages for el in page.elements}
     return {"lang": lang, "pages": len(doc.pages), "has_list": "list" in labels}
 

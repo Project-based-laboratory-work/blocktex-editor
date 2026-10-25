@@ -37,7 +37,8 @@ def union_bbox(boxes: list[PtBox]) -> PtBox:
 
 def glyphs_in_block(glyphs: list[Glyph], page: int, top: float, bottom: float) -> list[Glyph]:
     """page の、ベースラインが top〜bottom（前後に BASELINE_TOLERANCE の余裕）にある文字"""
-    return [g for g in glyphs if top - BASELINE_TOLERANCE <= g.baseline <= bottom + BASELINE_TOLERANCE and g.page == page]
+    return [g for g in glyphs if g.page == page and top - BASELINE_TOLERANCE <= g.baseline <= bottom + BASELINE_TOLERANCE]
+
 
 def block_bbox(glyphs: list[Glyph], page: int, top: float, bottom: float) -> PtBox | None:
     """ブロックの文字を包む枠。空白は枠を広げてしまうので使わない。文字が無ければ None"""
@@ -46,8 +47,9 @@ def block_bbox(glyphs: list[Glyph], page: int, top: float, bottom: float) -> PtB
         return None
     return union_bbox(boxes)
 
+
 def read_glyphs(pdf_path: str) -> list[Glyph]:
-    """PDFに印刷された文字を1文字ずつ読む。空白は枠を広げてしまうので入れない。"""
+    """PDFに印刷された文字を1文字ずつ読む。空白も含める（枠を作るときは block_bbox が空白を使わない）。"""
     glyphs = []
     with pymupdf.open(pdf_path) as doc:
         for page_index, page in enumerate(doc):
@@ -57,6 +59,7 @@ def read_glyphs(pdf_path: str) -> list[Glyph]:
                         for char in span["chars"]:
                             glyphs.append(Glyph(page=page_index + 1, bbox=tuple(char["bbox"]), baseline=char["origin"][1], c=char["c"]))
     return glyphs
+
 
 def block_text(glyphs: list[Glyph], page: int, top: float, bottom: float) -> str:
     """ブロックの文字列。ベースラインが変わったところで改行（\\n）を入れ、各行の前後の空白は取る"""
@@ -68,6 +71,7 @@ def block_text(glyphs: list[Glyph], page: int, top: float, bottom: float) -> str
         text += g.c
         prev_baseline = g.baseline
     return "\n".join(line.strip() for line in text.split("\n"))
+
 
 # 目印（pdf:dest）を消さずに残すため、dvipdfmx に -C 0x0010 を付ける
 COMPILE_COMMANDS = [
@@ -105,7 +109,7 @@ def build_ground_truth(pdf_path: str, blocks: list[SourceBlock], source: str) ->
                 continue
             page.elements.append(Element(
                 kind="text",
-                bbox=normalize_bbox(box, page.width,page.height),
+                bbox=normalize_bbox(box, page.width, page.height),
                 text=block_text(glyphs, page_no, top, bottom),
                 label=block.label,
                 level=block.level,

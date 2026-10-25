@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from common.ir import Bbox, IRDocument, Page
 from common.text import edit_distance
 
+
 def area(bbox: Bbox) -> float:
     x0, y0, x1, y1 = bbox
     return max(x1 - x0, 0) * max(y1 - y0, 0)
@@ -18,7 +19,9 @@ def iou(a: Bbox, b: Bbox) -> float:
     union_area = area(a) + area(b) - inter_area
     return inter_area / union_area if union_area > 0 else 0.0
 
+
 IOU_THRESHOLD = 0.5  # これ以上重なっていれば同じブロックとみなす
+
 
 def match(preds: list[Bbox], gts: list[Bbox], threshold: float = IOU_THRESHOLD) -> list[tuple[int, int]]:
     """IoUが大きい組から順に、予測と正解を1対1で対応させる。(予測の番号, 正解の番号) のリストを返す。"""
@@ -41,9 +44,11 @@ def match(preds: list[Bbox], gts: list[Bbox], threshold: float = IOU_THRESHOLD) 
         used_gts.add(j)
     return pairs
 
+
 def safe_div(a: float, b: float) -> float:
     """a / b。b が 0 のときは 0.0（予測や正解が1つも無いページで止まらないように）。"""
-    return a / b if b != 0 else 0
+    return a / b if b != 0 else 0.0
+
 
 def detection_scores(n_pairs: int, n_preds: int, n_gts: int) -> dict[str, float]:
     """マッチングの結果から、検出の Precision / Recall / F1 を計算する。"""
@@ -54,6 +59,7 @@ def detection_scores(n_pairs: int, n_preds: int, n_gts: int) -> dict[str, float]
     recall = safe_div(tp, tp + fn)
     f1 = safe_div(2 * precision * recall, (precision + recall))
     return {"precision": precision, "recall": recall, "f1": f1}
+
 
 def label_accuracy(label_pairs: list[tuple[str, str]]) -> float:
     """ペアになった組のうち、ラベルが一致した割合。"""
@@ -69,6 +75,7 @@ def confusion_matrix(label_pairs: list[tuple[str, str]], labels: list[str]) -> l
         matrix[index[gt]][index[pred]] += 1
     return matrix
 
+
 def normalize_text(text: str) -> str:
     """空白と改行を取り除く。PDFの折り返しや空白の入り方の違いを、文字の誤りとして数えないため。"""
     return "".join(text.split())
@@ -79,6 +86,7 @@ def char_errors(pred: str, gt: str) -> tuple[int, int]:
     p = normalize_text(pred)
     g = normalize_text(gt)
     return edit_distance(g, p), len(g)
+
 
 def split_by_script(text: str) -> tuple[str, str]:
     """文字列を (ASCII以外の文字だけ, ASCIIの文字だけ) に分ける。並び順はそのまま。"""
@@ -92,6 +100,7 @@ def char_errors_by_script(pred: str, gt: str) -> dict[str, tuple[int, int]]:
     pred_ja, pred_en = split_by_script(pred)
     gt_ja, gt_en = split_by_script(gt)
     return {"ja": char_errors(pred_ja, gt_ja), "en": char_errors(pred_en, gt_en)}
+
 
 @dataclass
 class Counts:
@@ -134,9 +143,11 @@ def count_page(pred: Page, gt: Page, counts: Counts) -> None:
             counts.en_errors += by_script["en"][0]
             counts.en_chars += by_script["en"][1]
 
+
 def ratio_or_none(a: float, b: float) -> float | None:
     """a / b。b が 0 のときは None（比べるものが無かった＝対象外）。0.0 だと CER では「満点」に見えてしまうため。"""
     return a / b if b > 0 else None
+
 
 def summarize(counts: Counts) -> dict[str, float | None]:
     """Counts から成績を計算する。数えるものが無かった指標は None。"""

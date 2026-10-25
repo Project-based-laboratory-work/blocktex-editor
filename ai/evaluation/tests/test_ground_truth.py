@@ -39,6 +39,7 @@ def test_block_bbox_allows_superscript():
 def test_block_bbox_other_page_is_none():
     assert block_bbox(GLYPHS, page=2, top=145.98, bottom=145.98) is None
 
+
 def test_block_boxes_from_real_pdf(sample_pdf):
     glyphs = read_glyphs(sample_pdf)
     marks = read_marks(sample_pdf)
@@ -46,6 +47,7 @@ def test_block_boxes_from_real_pdf(sample_pdf):
     paragraph = block_bbox(glyphs, 1, marks["b1s"].y, marks["b1e"].y)
     assert heading == pytest.approx((75.71, 133.2, 156.89, 149.03), abs=0.01)     # 「1 はじめに」
     assert paragraph == pytest.approx((75.71, 163.28, 519.56, 191.73), abs=0.01)  # 2行の段落。ページ番号は入らない
+
 
 def test_read_glyphs_keeps_spaces(sample_pdf):
     glyphs = read_glyphs(sample_pdf)
@@ -81,6 +83,7 @@ def test_block_text_from_real_pdf(sample_pdf):
     paragraph = block_text(glyphs, 1, marks["b1s"].y, marks["b1e"].y)
     assert paragraph.startswith("これは目印の動作を確かめるための段落です。PDF の中で")
     assert paragraph.count("\n") == 1  # 2行の段落なので、改行は1つ
+
 
 def test_build_ground_truth_follows_blocks(has_tex, tmp_path):
     tex, blocks = random_document(random.Random(0), "en")
