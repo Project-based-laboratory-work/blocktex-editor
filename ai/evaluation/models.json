@@ -1,0 +1,14 @@
+[
+    {
+        "id": "rule_based",
+        "name": "ルールベース（ベースライン）",
+        "entry": "rule_based.ir_adapter:classify_ir",
+        "input": "pdf",
+        "outputs": [
+            "bbox",
+            "text",
+            "label"
+        ],
+        "params": {}
+    }
+]
