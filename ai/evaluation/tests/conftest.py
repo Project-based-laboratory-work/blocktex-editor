@@ -20,3 +20,12 @@ def has_tex() -> None:
 def sample_pdf(has_tex, tmp_path_factory) -> str:
     """mark_test.tex をPDFにする。PDFはgitに入れない決まり（.gitignore）なので、テストのたびに作る。"""
     return str(compile_tex(SAMPLE_TEX.read_text(encoding="utf-8"), tmp_path_factory.mktemp("sample")))
+
+@pytest.fixture(scope="session")
+def small_dataset(has_tex, tmp_path_factory) -> Path:
+    """日本語1件・英語1件の小さなデータセット（評価の実行のテスト用）"""
+    from evaluation.make_dataset import main  # この fixture を使うテストのときだけ読み込む
+
+    out = tmp_path_factory.mktemp("datasets") / "small"
+    main(["--out", str(out), "--docs", "2"])
+    return out
