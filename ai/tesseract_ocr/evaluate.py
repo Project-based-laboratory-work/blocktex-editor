@@ -10,11 +10,13 @@ Tesseract の認識結果を正解テキストと比べて CER（文字誤り率
     python -m tesseract_ocr.evaluate
     # プリセットを比べる（presets.py の名前を並べる）
     python -m tesseract_ocr.evaluate --presets base gray otsu up2
-    # データセットを絞る・向きの自動判定を試す
-    python -m tesseract_ocr.evaluate --datasets jpvertical --direction auto
+    # データセットを絞る・向きを決め打ちする
+    python -m tesseract_ocr.evaluate --datasets jpvertical --direction vertical
 
-向きと言語は、--direction / --lang を省略するとフォルダ名から決める:
-    eng* → horizontal・eng / *vert* → vertical・jpn_vert+eng / それ以外 → horizontal・jpn+eng
+向きは、--direction を省略すると auto（ir_adapter が横書き・縦書きの両方で読み、「文字数 × 信頼度」が
+大きい方を採る）。言語は、--lang を省略すると向きごとの既定値（横 jpn+eng / 縦 jpn_vert+eng）。
+フォルダ名は結果をまとめる単位に使うだけで、読み方の判断には使わない。
+画像ごとに選ばれた向きと、横・縦それぞれの点数は results.csv に残す。
 
 出力（-o の下）:
     <プリセット>/<データセット>/<画像名>.<プリセット>.ir.json  … 共通IR ①
@@ -41,16 +43,6 @@ from tesseract_ocr.presets import PRESETS
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".tif", ".tiff", ".bmp"}
 
 
-def default_setting(dataset: str) -> tuple[str, str | None]:
-    """フォルダ名から (向き, 言語) の既定値を決める。言語 None は ir_adapter の既定値を使う。"""
-    name = dataset.lower()
-    if "vert" in name:
-        return "vertical", None
-    if name.startswith("eng"):
-        return "horizontal", "eng"
-    return "horizontal", None
-
-
 def find_pairs(folder: Path) -> list[tuple[Path, Path]]:
     """画像と、同じ名前の正解 .txt の組"""
     images = sorted(p for p in folder.iterdir() if p.suffix.lower() in IMAGE_EXTS)
@@ -72,9 +64,9 @@ def main() -> None:
     parser.add_argument("--sample-root", type=Path, default=Path("../ocr/sample"), help="データセットのフォルダが並ぶ場所")
     parser.add_argument("--datasets", nargs="+", default=None, help="評価するフォルダ名（省略時は正解 .txt がある全フォルダ）")
     parser.add_argument("--presets", nargs="+", default=["base"], choices=list(PRESETS), help="比べるプリセット")
-    parser.add_argument("--direction", default=None, choices=["horizontal", "vertical", "auto", "mixed"],
-                        help="全データセットの向き（省略時はフォルダ名から）")
-    parser.add_argument("--lang", default=None, help="全データセットの言語（省略時はフォルダ名から）")
+    parser.add_argument("--direction", default="auto", choices=["horizontal", "vertical", "auto", "mixed"],
+                        help="全画像の向き（既定の auto は画像ごとに横・縦の両方で読んで選ぶ）")
+    parser.add_argument("--lang", default=None, help="全画像の言語（省略時は向きごとの既定値）")
     parser.add_argument("-o", "--out-dir", type=Path, default=Path("out/tesseract_eval"), help="出力先")
     args = parser.parse_args()
 
@@ -84,21 +76,19 @@ def main() -> None:
     if not datasets:
         raise SystemExit(f"正解 .txt のある画像が {args.sample_root} に見つかりません。")
 
+    check_langs(args.direction, args.lang)
     rows = []
     for ds in datasets:
-        direction, lang = default_setting(ds)
-        direction, lang = args.direction or direction, args.lang or lang
-        check_langs(direction, lang)
         pairs = find_pairs(args.sample_root / ds)
 
         for preset in args.presets:
             out_dir = args.out_dir / preset / ds
             out_dir.mkdir(parents=True, exist_ok=True)
-            print(f"[{preset}] {ds}（{direction}, lang={lang or '既定'}, {len(pairs)}枚）")
+            print(f"[{preset}] {ds}（{args.direction}, lang={args.lang or '既定'}, {len(pairs)}枚）")
 
             for img, txt in pairs:
                 t0 = time.perf_counter()
-                doc = extract_ir(str(img), preset, direction, lang)
+                doc = extract_ir(str(img), preset, args.direction, args.lang)
                 sec = time.perf_counter() - t0
 
                 pred, gt = ir_text(doc), txt.read_text(encoding="utf-8")
@@ -107,11 +97,15 @@ def main() -> None:
 
                 errors, chars = char_errors(pred, gt)
                 by_script = char_errors_by_script(pred, gt)
+                # auto のときだけある、横・縦それぞれの点数（向きを選んだ根拠）
+                scores = doc.params.get("direction_scores", {})
                 row = {
                     "preset": preset,
                     "dataset": ds,
                     "image": img.name,
                     "direction": doc.params["chosen_direction"],
+                    "score_horizontal": scores.get("horizontal"),
+                    "score_vertical": scores.get("vertical"),
                     "lang": doc.params["lang"],
                     "psm": doc.params["psm"],
                     "cer": rate(errors, chars),
@@ -124,7 +118,8 @@ def main() -> None:
                     "sec": round(sec, 3),
                 }
                 rows.append(row)
-                print(f"  {img.name}: CER {row['cer']:.2%}（誤り {errors} / {chars} 文字）, {sec:.2f}秒")
+                print(f"  {img.name}: {row['direction']}・{row['lang']} CER {row['cer']:.2%}"
+                      f"（誤り {errors} / {chars} 文字）, {sec:.2f}秒")
 
     args.out_dir.mkdir(parents=True, exist_ok=True)
     with open(args.out_dir / "results.csv", "w", newline="", encoding="utf-8-sig") as f:  # Excel で開けるよう BOM 付き

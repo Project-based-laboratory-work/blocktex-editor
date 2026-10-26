@@ -4,7 +4,6 @@ from PIL import Image
 from common import ir
 from easyocr_ocr.preprocess import STEPS
 from tesseract_ocr import ir_adapter
-from tesseract_ocr.evaluate import default_setting
 from tesseract_ocr.ir_adapter import OcrRun, extract_ir, is_vertical, join_words, to_elements
 from tesseract_ocr.presets import PRESETS
 
@@ -79,15 +78,6 @@ def test_presets_use_known_steps():
     for name, settings in PRESETS.items():
         assert set(settings) == {"preprocess", "tesseract"}, name
         assert all(step in STEPS for step in settings["preprocess"]), name
-
-
-@pytest.mark.parametrize("dataset, expected", [
-    ("eng", ("horizontal", "eng")),
-    ("jphorizon", ("horizontal", None)),
-    ("jpvertical", ("vertical", None)),
-])
-def test_default_setting_from_folder_name(dataset, expected):
-    assert default_setting(dataset) == expected
 
 
 def fake_tesseract(calls: list):

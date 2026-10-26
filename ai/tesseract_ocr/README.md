@@ -35,8 +35,11 @@ python -m common.ir out/jphorizontal_001.base.ir.json   # 形式チェック
 python -m tesseract_ocr.evaluate --presets base up2 otsu
 ```
 
-`evaluate` は `ocr/sample/<データセット>/` の画像と同じ名前の `.txt` を正解とする。向き・言語はフォルダ名から決める（`eng*` → 横・`eng`、`*vert*` → 縦・`jpn_vert+eng`、それ以外 → 横・`jpn+eng`）。
-出力は `out/tesseract_eval/` に、IR・認識した全文（`.ocr.txt`）・画像ごとの `results.csv`・集計の `summary.json`。
+`evaluate` は `ocr/sample/<データセット>/` の画像と同じ名前の `.txt` を正解とする。フォルダ名は結果をまとめる単位に使うだけで、読み方の判断には使わない。
+- 向き：`--direction` の既定は `auto`。画像ごとに横書き・縦書きの両方で読み、「文字数 × 信頼度」が大きい方を採る（1枚につき2回読むので、時間は約2〜3倍）。`--direction vertical` などで決め打ちもできる
+- 言語：`--lang` を省略すると向きごとの既定値（横 `jpn+eng` / 縦 `jpn_vert+eng`）。英語の画像も `jpn+eng` で読む
+
+出力は `out/tesseract_eval/` に、IR・認識した全文（`.ocr.txt`）・画像ごとの `results.csv`・集計の `summary.json`。`results.csv` の `score_horizontal` / `score_vertical` は、`auto` で向きを選んだときの横・縦それぞれの点数。
 
 ## ファイル
 
@@ -64,5 +67,6 @@ CER は空白・改行を除いた編集距離 ÷ 正解の文字数（データ
 | otsu | 1.35% | 1.90% | 8.48% |
 
 - 縦書きは拡大（up2）で大きく改善し、二値化（otsu）では悪化した。
-- `--direction auto` でも、横書き・縦書きの全4枚で正しい向きを選んだ（CERは向きを指定した場合と同じ）。
+- 上の表は、向き・言語をフォルダ名から決めていたとき（英語は `eng`）の結果。
+- フォルダ名を使わない `--direction auto` にしても（2026-10-26）、6枚すべてで正しい向きを選んだ。`base` の CER は英語 1.14%（`jpn+eng` で読むため 1.12% からわずかに変化）、横書き 1.57%、縦書き 5.68% で、日本語は変わらなかった。6枚の評価時間は約15秒 → 約44秒。
 - 英語の `CER_ja` が数百%になるのは、正解に非ASCII文字が数個（“ ” だけ）しかなく、Tesseract が出した `—` などで割合が大きく見えるため。英語のデータセットでは `CER_ja` は見なくてよい。
