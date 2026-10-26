@@ -46,12 +46,13 @@ def otsu(image: Image.Image) -> Image.Image:
 ADAPTIVE_BLOCK_SIZE = 31
 ADAPTIVE_C = 10
 
-# 適応的2値化(method:gassianとmean)
+# 適応的2値化(method:gaussianとmean)
+# 「周りより暗い画素を黒」にするので、白背景に黒文字が前提。暗い背景だと文字も背景も白になって消えるため、先に反転する
 def adaptive(image: Image.Image, method: str = "gaussian", block_size: int = ADAPTIVE_BLOCK_SIZE) -> Image.Image:
     import cv2
 
     methods = {"gaussian": cv2.ADAPTIVE_THRESH_GAUSSIAN_C, "mean": cv2.ADAPTIVE_THRESH_MEAN_C}
-    gray = np.asarray(image.convert("L"))
+    gray = np.asarray(invert_if_dark(image).convert("L"))
     binary = cv2.adaptiveThreshold(gray, 255, methods[method], cv2.THRESH_BINARY, block_size, ADAPTIVE_C)
     return Image.fromarray(binary).convert("RGB")
 

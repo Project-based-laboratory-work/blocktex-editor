@@ -70,3 +70,16 @@ def test_wider_block_keeps_thick_strokes_filled():
     # 31pxだと四角の中心では「周り」が全部黒くなり、内側が白く抜ける。61pxなら背景が入るので黒のまま
     assert narrow[60, 60] == 255
     assert wide[60, 60] == 0
+
+
+@pytest.mark.parametrize("step", ["adaptive", "adaptive_mean", "adaptive61"])
+def test_adaptive_keeps_text_on_dark_background(step):
+    # ダークモード：濃い灰色の背景（30）に薄い灰色の文字（220）。反転しないと文字も背景も白になって消える
+    pytest.importorskip("cv2")
+    array = np.full((80, 120), 30, dtype=np.uint8)
+    array[35:45, 20:100] = 220
+    out, _ = apply_preprocess(Image.fromarray(array).convert("RGB"), [step])
+    result = np.asarray(out.convert("L"))
+
+    assert result[40, 60] == 0  # 文字は黒で残る
+    assert result[5, 5] == 255 and result[70, 110] == 255  # 背景は白
