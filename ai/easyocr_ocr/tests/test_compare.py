@@ -122,3 +122,18 @@ def test_run_reuses_saved_results_and_writes_csv(tmp_path, monkeypatch):
         records = list(csv.DictReader(f))
     assert records[0]["preset"] == "base" and float(records[0]["全体"]) == pytest.approx(1 / 3)
     assert (out / "summary.csv").read_bytes().startswith(b"\xef\xbb\xbf")  # Excel 用のBOM
+
+
+def test_run_with_group_writes_grouped_text(tmp_path, monkeypatch):
+    sample_dir = tmp_path / "sample" / "eng"
+    sample_dir.mkdir(parents=True)
+    Image.new("RGB", (10, 10), "white").save(sample_dir / "a.png")
+    (sample_dir / "a.txt").write_text("abc", encoding="utf-8")
+    monkeypatch.setattr(compare, "extract_ir", CountingExtract())
+    out = tmp_path / "out"
+
+    rows = compare.run(["base"], find_samples(tmp_path / "sample"), out, group=True)
+    assert rows[0].errors == 0
+    assert (out / "text" / "eng" / "a.base.group.txt").is_file()
+    # 保存するIRはまとめる前のもの（--group の有無で読み直さずに比べられるように）
+    assert "group" not in (out / "ir" / "eng" / "a.base.ir.json").read_text(encoding="utf-8")

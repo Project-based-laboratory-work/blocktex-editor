@@ -18,6 +18,7 @@ import numpy as np
 from PIL import Image
 
 from common.ir import Element, IRDocument, Page, normalize_bbox, save_ir, validate
+from easyocr_ocr.grouping import group_document
 from easyocr_ocr.preprocess import apply_preprocess
 from easyocr_ocr.presets import PRESETS
 
@@ -98,18 +99,22 @@ def main() -> None:
     parser.add_argument("-o", "--out-dir", default=".", help="出力先のディレクトリ")
     parser.add_argument("--preset", default=DEFAULT_PRESET, choices=list(PRESETS), help="設定の組（presets.py）")
     parser.add_argument("--lang", nargs="+", default=list(DEFAULT_LANGS), help="EasyOCRの言語（例: --lang ja en）")
+    parser.add_argument("--group", action="store_true", help="行を段落（ブロック）にまとめる（grouping.py）")
     args = parser.parse_args()
 
     if not os.path.isfile(args.image):
         raise SystemExit(f"エラー: {args.image} が見つかりません。")
 
     doc = extract_ir(args.image, args.preset, tuple(args.lang))
+    if args.group:
+        doc = group_document(doc)
     problems = validate(doc)
     if problems:
         raise SystemExit("IR の形式に問題があります:\n" + "\n".join(problems))
 
     os.makedirs(args.out_dir, exist_ok=True)
-    out_path = os.path.join(args.out_dir, f"{Path(args.image).stem}.{args.preset}.ir.json")
+    suffix = ".group" if args.group else ""
+    out_path = os.path.join(args.out_dir, f"{Path(args.image).stem}.{args.preset}{suffix}.ir.json")
     save_ir(doc, out_path)
     print(f"{out_path}（要素 {len(doc.pages[0].elements)} 個）")
 

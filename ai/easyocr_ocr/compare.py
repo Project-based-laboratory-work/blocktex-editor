@@ -24,6 +24,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 
 from common.ir import Element, load_ir, save_ir
+from easyocr_ocr.grouping import group_document
 from easyocr_ocr.ir_adapter import extract_ir
 from easyocr_ocr.presets import PRESETS
 from evaluation.metrics import char_errors, char_errors_by_script, ratio_or_none
@@ -144,8 +145,9 @@ def score(preset: str, sample: Sample, elements: list[Element], seconds: float |
     )
 
 
-def run(presets: list[str], samples: list[Sample], out_dir: Path, force: bool = False) -> list[Row]:
-    """プリセット × 画像を全部読み、採点する。読み取り結果（IR）と時間は out_dir に残し、次回は再利用する。"""
+def run(presets: list[str], samples: list[Sample], out_dir: Path, force: bool = False, group: bool = False) -> list[Row]:
+    """プリセット × 画像を全部読み、採点する。読み取り結果（IR）と時間は out_dir に残し、次回は再利用する。
+    group=True なら、採点の前に行を段落にまとめる（保存するIRはまとめる前のもの。読み直さずに比べられる）。"""
     times_path = out_dir / "times.json"
     times = json.loads(times_path.read_text(encoding="utf-8")) if times_path.is_file() else {}
     rows = []
@@ -164,8 +166,11 @@ def run(presets: list[str], samples: list[Sample], out_dir: Path, force: bool = 
             save_ir(doc, str(ir_path))
             times_path.write_text(json.dumps(times, ensure_ascii=False, indent=2), encoding="utf-8")
             note = f"{times[key]}秒"
+        if group:
+            doc = group_document(doc)
         # 比べた文字列を残しておく（正解テキストと並べて、どこを間違えたかを見るため）
-        text_path = out_dir / "text" / sample.category / f"{sample.image.stem}.{preset}.txt"
+        suffix = ".group" if group else ""
+        text_path = out_dir / "text" / sample.category / f"{sample.image.stem}.{preset}{suffix}.txt"
         text_path.parent.mkdir(parents=True, exist_ok=True)
         text_path.write_text(page_text(doc.pages[0].elements), encoding="utf-8")
         row = score(preset, sample, doc.pages[0].elements, times.get(key))
@@ -222,6 +227,7 @@ def main() -> None:
     parser.add_argument("--samples", type=Path, default=DEFAULT_SAMPLES, help="画像と正解テキストのフォルダ")
     parser.add_argument("-o", "--out-dir", type=Path, default=DEFAULT_OUT, help="出力先")
     parser.add_argument("--force", action="store_true", help="保存済みの読み取り結果を使わず、読み直す")
+    parser.add_argument("--group", action="store_true", help="採点の前に行を段落にまとめる（grouping.py）")
     args = parser.parse_args()
 
     samples = find_samples(args.samples, args.category)
@@ -229,7 +235,7 @@ def main() -> None:
         raise SystemExit(f"エラー: {args.samples} に、正解テキスト（.txt）のある画像がありません。")
     print(f"画像 {len(samples)} 枚 × プリセット {len(args.presets)} 個", flush=True)
 
-    rows = run(args.presets, samples, args.out_dir, args.force)
+    rows = run(args.presets, samples, args.out_dir, args.force, args.group)
     categories = list(dict.fromkeys(s.category for s in samples))
     summary = summarize(rows, categories)
 

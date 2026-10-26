@@ -15,6 +15,7 @@ cd ai
 pip install easyocr   # 初回はモデルのダウンロードがある
 python -m easyocr_ocr.ir_adapter ../ocr/data/easy1.jpg -o out/               # → out/easy1.base.ir.json
 python -m easyocr_ocr.ir_adapter ../ocr/data/easy1.jpg --preset up2 -o out/  # → out/easy1.up2.ir.json
+python -m easyocr_ocr.ir_adapter ../ocr/data/easy1.jpg --group -o out/      # → out/easy1.base.group.ir.json（段落にまとめる）
 python -m common.ir out/easy1.base.ir.json   # 形式チェック
 ```
 
@@ -26,6 +27,7 @@ python -m common.ir out/easy1.base.ir.json   # 形式チェック
 | [presets.py](presets.py) | 設定の組（プリセット）。実験はここに名前を付けて足す |
 | [preprocess.py](preprocess.py) | 前処理の部品（拡大・グレースケール・反転・二値化など）。EasyOCRに依存しない |
 | [compare.py](compare.py) | プリセットごとの文字誤り率（CER）を、正解テキストのある画像で比べる |
+| [grouping.py](grouping.py) | 行（EasyOCRの箱）を段落（ブロック）にまとめる。`--group` で使う。EasyOCRに依存しない |
 
 使ったプリセットの中身はIRの `params` に記録されるので、出力を見ればどの設定の結果か分かる。
 前処理で拡大した場合も、`bbox`・`font_size` は元の画像の大きさに戻してから書く。
@@ -53,6 +55,6 @@ python -m easyocr_ocr.compare --category jphorizon  # カテゴリを絞る
 
 ## 現状の制限
 
-- 要素はEasyOCRが返した行（または単語）単位のまま。正解データはブロック（段落）単位なので、評価の前に行をブロックにまとめる処理が必要。
+- 要素は既定ではEasyOCRが返した行（または行の一部）単位。`--group` を付けると段落にまとめる（同じ行の箱をつなぎ、字下げ・短い行・行間で段落を区切る）。
 - `font_size` は箱の短い辺（横書きなら高さ、縦書きなら幅）から推定している。`paragraph=True` では箱が段落全体になるため書かない。
 - 縦書き・数式・表の中身（`cells`）には対応していない。
