@@ -31,7 +31,9 @@ python -m tesseract_ocr.ir_adapter ../ocr/sample/jpvertical/jpvertical_001.jpg -
 python -m tesseract_ocr.ir_adapter ../ocr/sample/eng/eng_001.jpg --lang eng -o out/
 python -m common.ir out/jphorizontal_001.base.ir.json   # 形式チェック
 
-# 正解 .txt がある画像すべてで CER を出す（プリセットを並べると比較できる）
+# 正解 .txt がある画像すべてで、全プリセットの CER を比べる（6枚で15分ほど）
+python -m tesseract_ocr.evaluate
+# プリセットを絞る
 python -m tesseract_ocr.evaluate --presets base up2 otsu
 ```
 
@@ -39,7 +41,9 @@ python -m tesseract_ocr.evaluate --presets base up2 otsu
 - 向き：`--direction` の既定は `auto`。画像ごとに横書き・縦書きの両方で読み、「文字数 × 信頼度」が大きい方を採る（1枚につき2回読むので、時間は約2〜3倍）。`--direction vertical` などで決め打ちもできる
 - 言語：`--lang` を省略すると向きごとの既定値（横 `jpn+eng` / 縦 `jpn_vert+eng`）。英語の画像も `jpn+eng` で読む
 
-出力は `out/tesseract_eval/` に、IR・認識した全文（`.ocr.txt`）・画像ごとの `results.csv`・集計の `summary.json`。`results.csv` の `score_horizontal` / `score_vertical` は、`auto` で向きを選んだときの横・縦それぞれの点数。
+- プリセット：`--presets` の既定は `all`（[presets.py](presets.py) の全部）。最後に、データセットごとに CER が一番小さかったプリセットを表示する
+
+出力は `out/tesseract_eval/` に、IR・認識した全文（`.ocr.txt`）・画像ごとの `results.csv`・集計の `summary.json`・比較表の `compare.csv`（行＝プリセット、列＝データセットごとの CER と全体の CER・秒/枚。全体の CER が小さい順）。`results.csv` の `score_horizontal` / `score_vertical` は、`auto` で向きを選んだときの横・縦それぞれの点数。
 
 ## ファイル
 

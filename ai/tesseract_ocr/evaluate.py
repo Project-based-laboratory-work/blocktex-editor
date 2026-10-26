@@ -7,8 +7,9 @@ Tesseract の認識結果を正解テキストと比べて CER（文字誤り率
     ocr/sample/jpvertical/jpvertical_001.jpg, jpvertical_001.txt, ...
 
 使い方（ai/ で）:
+    # 全プリセットを比べる（既定。15個 × 画像の数だけ読むので、6枚で15分ほどかかる）
     python -m tesseract_ocr.evaluate
-    # プリセットを比べる（presets.py の名前を並べる）
+    # プリセットを絞る（presets.py の名前を並べる）
     python -m tesseract_ocr.evaluate --presets base gray otsu up2
     # データセットを絞る・向きを決め打ちする
     python -m tesseract_ocr.evaluate --datasets jpvertical --direction vertical
@@ -23,6 +24,8 @@ Tesseract の認識結果を正解テキストと比べて CER（文字誤り率
     <プリセット>/<データセット>/<画像名>.ocr.txt                … 認識した全文（正解と見比べる用）
     results.csv   … 画像ごとの CER・処理時間
     summary.json  … プリセット × データセットごとの集計
+    compare.csv   … 比較表（行＝プリセット、列＝データセットごとの CER と全体の CER・秒/枚。全体の CER が小さい順）
+最後に、データセットごとに CER が一番小さかったプリセットも表示する。
 
 CER は evaluation/metrics.py の char_errors（空白・改行を除いて編集距離）を使い、
 EasyOCR などほかのモデルと同じ数え方にする。データセットの CER は「誤りの合計 ÷ 正解の文字数の合計」。
@@ -59,16 +62,46 @@ def rate(errors: int, chars: int) -> float | None:
     return None if r is None else round(r, 4)
 
 
+def compare_table(rows: list[dict], presets: list[str], datasets: list[str]) -> list[dict]:
+    """プリセットごとに、データセット別の CER・全体の CER・1枚あたりの秒数を1行にまとめる。全体の CER が小さい順。
+    CER はどれも「誤りの合計 ÷ 正解の文字数の合計」（画像ごとの CER の平均ではない）。"""
+    table = []
+    for preset in presets:
+        mine = [r for r in rows if r["preset"] == preset]
+        entry: dict = {"preset": preset}
+        for ds in datasets:
+            group = [r for r in mine if r["dataset"] == ds]
+            entry[ds] = rate(sum(r["errors"] for r in group), sum(r["gt_chars"] for r in group))
+        entry["全体"] = rate(sum(r["errors"] for r in mine), sum(r["gt_chars"] for r in mine))
+        entry["秒/枚"] = round(sum(r["sec"] for r in mine) / len(mine), 2) if mine else None
+        table.append(entry)
+    return sorted(table, key=lambda e: (e["全体"] is None, e["全体"] or 0))
+
+
+def best_presets(table: list[dict], datasets: list[str]) -> dict[str, tuple[str, float]]:
+    """データセットごとに、CER が一番小さかったプリセットとその CER。同じ CER なら表で上（全体の CER が小さい方）を採る。"""
+    best = {}
+    for ds in [*datasets, "全体"]:
+        scored = [(e[ds], e["preset"]) for e in table if e[ds] is not None]
+        if scored:
+            cer, preset = min(scored, key=lambda s: s[0])
+            best[ds] = (preset, cer)
+    return best
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Tesseract の CER 評価")
     parser.add_argument("--sample-root", type=Path, default=Path("../ocr/sample"), help="データセットのフォルダが並ぶ場所")
     parser.add_argument("--datasets", nargs="+", default=None, help="評価するフォルダ名（省略時は正解 .txt がある全フォルダ）")
-    parser.add_argument("--presets", nargs="+", default=["base"], choices=list(PRESETS), help="比べるプリセット")
+    parser.add_argument("--presets", nargs="+", default=["all"], choices=[*PRESETS, "all"],
+                        help="比べるプリセット（既定の all は presets.py の全部）")
     parser.add_argument("--direction", default="auto", choices=["horizontal", "vertical", "auto", "mixed"],
                         help="全画像の向き（既定の auto は画像ごとに横・縦の両方で読んで選ぶ）")
     parser.add_argument("--lang", default=None, help="全画像の言語（省略時は向きごとの既定値）")
     parser.add_argument("-o", "--out-dir", type=Path, default=Path("out/tesseract_eval"), help="出力先")
     args = parser.parse_args()
+    if "all" in args.presets:
+        args.presets = list(PRESETS)
 
     datasets = args.datasets or sorted(
         p.name for p in args.sample_root.iterdir() if p.is_dir() and find_pairs(p)
@@ -149,7 +182,22 @@ def main() -> None:
     for s in summary:
         print(f"{s['preset']:<14}{s['dataset']:<12}{s['images']:>4}{fmt(s['cer']):>9}{fmt(s['cer_ja']):>9}"
               f"{fmt(s['cer_en']):>9}{s['mean_sec']:>8.2f}")
-    print(f"\n詳細: {args.out_dir / 'results.csv'}, {args.out_dir / 'summary.json'}")
+
+    table = compare_table(rows, args.presets, datasets)
+    with open(args.out_dir / "compare.csv", "w", newline="", encoding="utf-8-sig") as f:
+        writer = csv.DictWriter(f, fieldnames=list(table[0]))
+        writer.writeheader()
+        writer.writerows(table)
+
+    print("\n=== 比較表（全体の CER が小さい順） ===")
+    print(f"{'preset':<14}" + "".join(f"{ds:>12}" for ds in datasets) + f"{'全体':>10}{'秒/枚':>8}")
+    for e in table:
+        print(f"{e['preset']:<14}" + "".join(f"{fmt(e[ds]):>12}" for ds in datasets)
+              + f"{fmt(e['全体']):>10}{e['秒/枚']:>8.2f}")
+    print("\n=== データセットごとに一番よかったプリセット ===")
+    for ds, (preset, cer) in best_presets(table, datasets).items():
+        print(f"  {ds:<12} {preset:<14} CER {fmt(cer)}")
+    print(f"\n詳細: {args.out_dir / 'results.csv'}, {args.out_dir / 'summary.json'}, {args.out_dir / 'compare.csv'}")
 
 
 if __name__ == "__main__":
