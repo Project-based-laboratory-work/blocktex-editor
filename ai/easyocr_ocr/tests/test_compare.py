@@ -108,6 +108,7 @@ def test_run_reuses_saved_results_and_writes_csv(tmp_path, monkeypatch):
     assert fake.calls == 2
     assert [(r.preset, r.errors, r.chars) for r in rows] == [("base", 1, 3), ("up2", 1, 3)]
     assert (out / "ir" / "eng" / "a.base.ir.json").is_file()
+    assert (out / "text" / "eng" / "a.up2.txt").read_text(encoding="utf-8") == "abc"
 
     # 2回目は保存済みを使うので、読み直さない。時間も前回の値が使われる
     rows_again = compare.run(["base", "up2"], samples, out)

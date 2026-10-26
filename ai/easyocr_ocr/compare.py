@@ -12,6 +12,7 @@ CERの計算は evaluation/metrics.py と同じ関数を使う（空白・改行
       → easyocr_ocr/data/compare/summary.csv  プリセットごと・カテゴリごとのCERと時間
         easyocr_ocr/data/compare/details.csv  画像1枚ごとの結果
         easyocr_ocr/data/compare/ir/          読み取った結果（IR）。あれば読み直さずに再利用する
+        easyocr_ocr/data/compare/text/        比べた文字列（要素を読む順につなげたもの）。正解テキストと並べて見る用
 """
 
 import argparse
@@ -163,6 +164,10 @@ def run(presets: list[str], samples: list[Sample], out_dir: Path, force: bool = 
             save_ir(doc, str(ir_path))
             times_path.write_text(json.dumps(times, ensure_ascii=False, indent=2), encoding="utf-8")
             note = f"{times[key]}秒"
+        # 比べた文字列を残しておく（正解テキストと並べて、どこを間違えたかを見るため）
+        text_path = out_dir / "text" / sample.category / f"{sample.image.stem}.{preset}.txt"
+        text_path.parent.mkdir(parents=True, exist_ok=True)
+        text_path.write_text(page_text(doc.pages[0].elements), encoding="utf-8")
         row = score(preset, sample, doc.pages[0].elements, times.get(key))
         rows.append(row)
         print(f"[{i}/{total}] {preset:15s} {key:40s} CER={_fmt(row.cer)}（{note}）", flush=True)

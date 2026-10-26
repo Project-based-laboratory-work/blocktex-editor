@@ -31,4 +31,7 @@ PRESETS: dict[str, dict] = {
     "mag2": {"preprocess": [], "readtext": {"mag_ratio": 2.0}},
     # 近くの箱を段落にまとめる、信頼度は返らない
     "par": {"preprocess": [], "readtext": {"paragraph": True}},
+    # 効いたもの同士の組み合わせ（比較で英語が良くなった「拡大」と、英語・横書き日本語とも良くなった lowtext）
+    "up2_lowtext": {"preprocess": ["upscale2"], "readtext": {"low_text": 0.3}},
+    "up2_adaptive_lowtext": {"preprocess": ["upscale2", "adaptive"], "readtext": {"low_text": 0.3}},
 }
