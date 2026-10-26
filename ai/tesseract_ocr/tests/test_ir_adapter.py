@@ -4,7 +4,6 @@ from PIL import Image
 from common import ir
 from easyocr_ocr.preprocess import STEPS
 from tesseract_ocr import ir_adapter
-from tesseract_ocr.evaluate import default_setting
 from tesseract_ocr.ir_adapter import OcrRun, extract_ir, is_vertical, join_words, to_elements
 from tesseract_ocr.presets import PRESETS
 
@@ -81,15 +80,6 @@ def test_presets_use_known_steps():
         assert all(step in STEPS for step in settings["preprocess"]), name
 
 
-@pytest.mark.parametrize("dataset, expected", [
-    ("eng", ("horizontal", "eng")),
-    ("jphorizon", ("horizontal", None)),
-    ("jpvertical", ("vertical", None)),
-])
-def test_default_setting_from_folder_name(dataset, expected):
-    assert default_setting(dataset) == expected
-
-
 def fake_tesseract(calls: list):
     """Tesseract の代わり。画像の左上1/4に単語を1つ返す。縦書きの実行だけ信頼度を高くする。"""
 
@@ -142,3 +132,22 @@ def test_unknown_preset_or_direction_is_rejected(tmp_path):
         extract_ir(str(tmp_path / "x.png"), "nope")
     with pytest.raises(ValueError):
         extract_ir(str(tmp_path / "x.png"), "base", "diagonal")
+
+
+def eval_row(preset, dataset, errors, chars, sec=1.0):
+    return {"preset": preset, "dataset": dataset, "errors": errors, "gt_chars": chars, "sec": sec}
+
+
+def test_compare_table_adds_up_errors_and_sorts_by_overall_cer():
+    from tesseract_ocr.evaluate import best_presets, compare_table
+
+    rows = [
+        eval_row("base", "eng", 10, 100), eval_row("base", "jp", 0, 10, 3.0),
+        eval_row("up2", "eng", 2, 100), eval_row("up2", "jp", 5, 10, 3.0),
+    ]
+    table = compare_table(rows, ["base", "up2"], ["eng", "jp"])
+    assert [e["preset"] for e in table] == ["up2", "base"]  # 全体 7/110 < 10/110
+    base = table[1]
+    assert (base["eng"], base["jp"], base["全体"], base["秒/枚"]) == (0.1, 0.0, round(10 / 110, 4), 2.0)
+    # データセットごとの一番は、全体の一番と違ってよい
+    assert best_presets(table, ["eng", "jp"]) == {"eng": ("up2", 0.02), "jp": ("base", 0.0), "全体": ("up2", round(7 / 110, 4))}
