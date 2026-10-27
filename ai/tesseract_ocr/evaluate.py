@@ -7,7 +7,7 @@ Tesseract の認識結果を正解テキストと比べて CER（文字誤り率
     ocr/sample/jpvertical/jpvertical_001.jpg, jpvertical_001.txt, ...
 
 使い方（ai/ で）:
-    # 全プリセットを比べる（既定。15個 × 画像の数だけ読むので、6枚で15分ほどかかる）
+    # 全プリセットを比べる（既定。プリセットの数 × 画像の数だけ読むので時間がかかる。横書きに固定して10枚で約9分）
     python -m tesseract_ocr.evaluate
     # プリセットを絞る（presets.py の名前を並べる）
     python -m tesseract_ocr.evaluate --presets base gray otsu up2

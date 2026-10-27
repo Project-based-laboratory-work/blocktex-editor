@@ -31,7 +31,7 @@ python -m tesseract_ocr.ir_adapter ../ocr/sample/jpvertical/jpvertical_001.jpg -
 python -m tesseract_ocr.ir_adapter ../ocr/sample/eng/eng_001.jpg --lang eng -o out/
 python -m common.ir out/jphorizontal_001.base.ir.json   # 形式チェック
 
-# 正解 .txt がある画像すべてで、全プリセットの CER を比べる（6枚で15分ほど）
+# 正解 .txt がある画像すべてで、全プリセットの CER を比べる（時間はプリセットの数 × 画像の数に比例）
 python -m tesseract_ocr.evaluate
 # プリセットを絞る
 python -m tesseract_ocr.evaluate --presets base up2 otsu

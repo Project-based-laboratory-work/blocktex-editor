@@ -23,10 +23,11 @@ PRESETS: dict[str, dict] = {
     "up2_adaptive": {"preprocess": ["upscale2", "adaptive"], "tesseract": {}},
     # Tesseract のページ分割モードを1つだけ変える
     #   3: 自動でレイアウト解析（横書きの既定） / 5: 縦書きの1ブロック（縦書きの既定）
-    #   4: 1段組みの文章 / 6: 1つのブロック / 11: まばらな文字（スクショ向き）
+    #   4: 1段組みの文章 / 6: 1つのブロック / 7: 画像全体を1行として読む / 11: まばらな文字（スクショ向き）
     "psm3": {"preprocess": [], "tesseract": {"psm": 3}},
     "psm4": {"preprocess": [], "tesseract": {"psm": 4}},
     "psm5": {"preprocess": [], "tesseract": {"psm": 5}},
     "psm6": {"preprocess": [], "tesseract": {"psm": 6}},
+    "psm7": {"preprocess": [], "tesseract": {"psm": 7}},
     "psm11": {"preprocess": [], "tesseract": {"psm": 11}},
 }
