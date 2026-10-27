@@ -4,7 +4,6 @@ Tesseract の認識結果を正解テキストと比べて CER（文字誤り率
 サンプルの置き方（画像と同じ名前の .txt が正解。.txt が無い画像は飛ばす）:
     ocr/sample/eng/eng_001.jpg, eng_001.txt, ...
     ocr/sample/jphorizon/jphorizontal_001.jpg, jphorizontal_001.txt, ...
-    ocr/sample/jpvertical/jpvertical_001.jpg, jpvertical_001.txt, ...
 
 使い方（ai/ で）:
     # 全プリセットを比べる（既定。プリセットの数 × 画像の数だけ読むので時間がかかる。横書きに固定して10枚で約9分）
@@ -12,14 +11,14 @@ Tesseract の認識結果を正解テキストと比べて CER（文字誤り率
     # プリセットを絞る（presets.py の名前を並べる）
     python -m tesseract_ocr.evaluate --presets base gray otsu up2
     # データセットを絞る・向きを決め打ちする
-    python -m tesseract_ocr.evaluate --datasets jpvertical --direction vertical
+    python -m tesseract_ocr.evaluate --datasets eng --direction horizontal
 
 向きは、--direction を省略すると auto（ir_adapter が横書き・縦書きの両方で読み、「文字数 × 信頼度」が
 大きい方を採る）。言語は、--lang を省略すると向きごとの既定値（横 jpn+eng / 縦 jpn_vert+eng）。
 フォルダ名は結果をまとめる単位に使うだけで、読み方の判断には使わない。
 画像ごとに選ばれた向きと、横・縦それぞれの点数は results.csv に残す。
 
-出力（-o の下）:
+出力（-o の下。既定は tesseract_ocr/data/eval/、git管理外）:
     <プリセット>/<データセット>/<画像名>.<プリセット>.ir.json  … 共通IR ①
     <プリセット>/<データセット>/<画像名>.ocr.txt                … 認識した全文（正解と見比べる用）
     results.csv   … 画像ごとの CER・処理時間
@@ -44,6 +43,7 @@ from tesseract_ocr.ir_adapter import check_langs, extract_ir
 from tesseract_ocr.presets import PRESETS
 
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".tif", ".tiff", ".bmp"}
+DEFAULT_OUT = Path(__file__).resolve().parent / "data" / "eval"
 
 
 def find_pairs(folder: Path) -> list[tuple[Path, Path]]:
@@ -98,7 +98,7 @@ def main() -> None:
     parser.add_argument("--direction", default="auto", choices=["horizontal", "vertical", "auto", "mixed"],
                         help="全画像の向き（既定の auto は画像ごとに横・縦の両方で読んで選ぶ）")
     parser.add_argument("--lang", default=None, help="全画像の言語（省略時は向きごとの既定値）")
-    parser.add_argument("-o", "--out-dir", type=Path, default=Path("out/tesseract_eval"), help="出力先")
+    parser.add_argument("-o", "--out-dir", type=Path, default=DEFAULT_OUT, help="出力先")
     args = parser.parse_args()
     if "all" in args.presets:
         args.presets = list(PRESETS)

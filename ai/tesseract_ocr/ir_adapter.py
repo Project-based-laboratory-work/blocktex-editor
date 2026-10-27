@@ -5,7 +5,6 @@ Tesseractで画像の文字を読み取り、共通のIR形式（common/ir.py）
 使い方（ai/ で）:
     python -m tesseract_ocr.ir_adapter ../ocr/sample/jphorizon/jphorizontal_001.jpg -o out/
       → out/jphorizontal_001.base.ir.json
-    python -m tesseract_ocr.ir_adapter ../ocr/sample/jpvertical/jpvertical_001.jpg --direction vertical -o out/
     python -m tesseract_ocr.ir_adapter ../ocr/sample/eng/eng_001.jpg --lang eng --preset otsu -o out/
 
 --direction（文字の向き）:

@@ -27,7 +27,6 @@ pip install pytesseract opencv-python-headless pillow numpy
 cd ai
 # 1枚 → IR
 python -m tesseract_ocr.ir_adapter ../ocr/sample/jphorizon/jphorizontal_001.jpg -o out/   # → out/jphorizontal_001.base.ir.json
-python -m tesseract_ocr.ir_adapter ../ocr/sample/jpvertical/jpvertical_001.jpg --direction vertical --preset up2 -o out/
 python -m tesseract_ocr.ir_adapter ../ocr/sample/eng/eng_001.jpg --lang eng -o out/
 python -m common.ir out/jphorizontal_001.base.ir.json   # 形式チェック
 
@@ -43,7 +42,7 @@ python -m tesseract_ocr.evaluate --presets base up2 otsu
 
 - プリセット：`--presets` の既定は `all`（[presets.py](presets.py) の全部）。最後に、データセットごとに CER が一番小さかったプリセットを表示する
 
-出力は `out/tesseract_eval/` に、IR・認識した全文（`.ocr.txt`）・画像ごとの `results.csv`・集計の `summary.json`・比較表の `compare.csv`（行＝プリセット、列＝データセットごとの CER と全体の CER・秒/枚。全体の CER が小さい順）。`results.csv` の `score_horizontal` / `score_vertical` は、`auto` で向きを選んだときの横・縦それぞれの点数。
+出力は `tesseract_ocr/data/eval/`（git管理外）に、IR・認識した全文（`.ocr.txt`）・画像ごとの `results.csv`・集計の `summary.json`・比較表の `compare.csv`（行＝プリセット、列＝データセットごとの CER と全体の CER・秒/枚。全体の CER が小さい順）。`results.csv` の `score_horizontal` / `score_vertical` は、`auto` で向きを選んだときの横・縦それぞれの点数。
 
 ## ファイル
 
@@ -71,6 +70,7 @@ CER は空白・改行を除いた編集距離 ÷ 正解の文字数（データ
 | otsu | 1.35% | 1.90% | 8.48% |
 
 - 縦書きは拡大（up2）で大きく改善し、二値化（otsu）では悪化した。
+- 縦書きはその後対象外になり、`jpvertical` のサンプルは削除した（2026-10-27）。縦書きで読む機能（`--direction vertical`）は残している。
 - 上の表は、向き・言語をフォルダ名から決めていたとき（英語は `eng`）の結果。
 - フォルダ名を使わない `--direction auto` にしても（2026-10-26）、6枚すべてで正しい向きを選んだ。`base` の CER は英語 1.14%（`jpn+eng` で読むため 1.12% からわずかに変化）、横書き 1.57%、縦書き 5.68% で、日本語は変わらなかった。6枚の評価時間は約15秒 → 約44秒。
 - 英語の `CER_ja` が数百%になるのは、正解に非ASCII文字が数個（“ ” だけ）しかなく、Tesseract が出した `—` などで割合が大きく見えるため。英語のデータセットでは `CER_ja` は見なくてよい。

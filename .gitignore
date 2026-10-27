@@ -50,6 +50,7 @@ __pycache__/
 ai/*/data/
 ai/*/checkpoints/
 ai/models/**/*.pt
+ai/out/
 
 # web/ のビルド成果物（tsc の出力）
 web/js/
