@@ -3,10 +3,10 @@ EasyOCRで画像の文字を読み取り、共通のIR形式（common/ir.py）�
 要素はEasyOCRが返した行（または単語）単位のまま。ブロックへのまとめと読み順は行わない。
 
 使い方（ai/ で）:
-    python -m easyocr_ocr.ir_adapter ../ocr/data/easy1.jpg -o out/
-      → out/easy1.base.ir.json  抽出結果（IR）
-    python -m easyocr_ocr.ir_adapter ../ocr/data/easy1.jpg --preset up2 -o out/
-      → out/easy1.up2.ir.json   プリセット（presets.py）を選んで実行
+    python -m easyocr_ocr.ir_adapter ../ocr/sample/eng/eng_001.jpg -o easyocr_ocr/data/out/
+      → easyocr_ocr/data/out/eng_001.base.ir.json  抽出結果（IR）
+    python -m easyocr_ocr.ir_adapter ../ocr/sample/eng/eng_001.jpg --preset up2 -o easyocr_ocr/data/out/
+      → easyocr_ocr/data/out/eng_001.up2.ir.json   プリセット（presets.py）を選んで実行
 """
 
 import argparse

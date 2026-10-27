@@ -13,10 +13,10 @@
 ```bash
 cd ai
 pip install easyocr   # 初回はモデルのダウンロードがある
-python -m easyocr_ocr.ir_adapter ../ocr/data/easy1.jpg -o out/               # → out/easy1.base.ir.json
-python -m easyocr_ocr.ir_adapter ../ocr/data/easy1.jpg --preset up2 -o out/  # → out/easy1.up2.ir.json
-python -m easyocr_ocr.ir_adapter ../ocr/data/easy1.jpg --group -o out/      # → out/easy1.base.group.ir.json（段落にまとめる）
-python -m common.ir out/easy1.base.ir.json   # 形式チェック
+python -m easyocr_ocr.ir_adapter ../ocr/sample/eng/eng_001.jpg -o easyocr_ocr/data/out/               # → easyocr_ocr/data/out/eng_001.base.ir.json
+python -m easyocr_ocr.ir_adapter ../ocr/sample/eng/eng_001.jpg --preset up2 -o easyocr_ocr/data/out/  # → easyocr_ocr/data/out/eng_001.up2.ir.json
+python -m easyocr_ocr.ir_adapter ../ocr/sample/eng/eng_001.jpg --group -o easyocr_ocr/data/out/      # → easyocr_ocr/data/out/eng_001.base.group.ir.json（段落にまとめる）
+python -m common.ir easyocr_ocr/data/out/eng_001.base.ir.json   # 形式チェック
 ```
 
 ## ファイル

@@ -12,10 +12,10 @@ WIDTH, HEIGHT = 4284, 5712
 
 def test_to_ir_is_valid():
     raw = [
-        ([[531, 352], [972, 352], [972, 512], [531, 512]], "【重要】", 0.9864),
-        ([[810, 485], [3135, 485], [3135, 787], [810, 787]], "《学科試験を受けられる方にお願い》", 0.8516),
+        ([[531, 352], [972, 352], [972, 512], [531, 512]], "【見出し】", 0.9864),
+        ([[810, 485], [3135, 485], [3135, 787], [810, 787]], "《本文の一行目のテキスト》", 0.8516),
     ]
-    doc = to_ir(raw, "easy1.jpg", WIDTH, HEIGHT, {"preprocess": "none"})
+    doc = to_ir(raw, "sample.jpg", WIDTH, HEIGHT, {"preprocess": "none"})
 
     assert ir.validate(doc) == []
     assert doc.extractor == "easyocr" and doc.structurer is None
@@ -23,7 +23,7 @@ def test_to_ir_is_valid():
     assert page.page == 1 and page.unit == "px" and (page.width, page.height) == (WIDTH, HEIGHT)
 
     first = page.elements[0]
-    assert first.kind == "text" and first.text == "【重要】"
+    assert first.kind == "text" and first.text == "【見出し】"
     assert first.bbox == (0.12395, 0.06162, 0.22689, 0.08964)
     assert first.font_size == 160.0
     assert all(el.label is None for el in page.elements)
