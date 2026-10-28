@@ -18,35 +18,55 @@ from dataclasses import asdict, dataclass, field
 from typing import Any, Literal, get_args
 
 # IRの形を変えたらインクリメントする
-IR_VERSION = 1
+IR_VERSION = 2
+# 読み込める古い版。版2は版1に省略できる項目を足しただけなので、版1はそのまま読める
+COMPATIBLE_VERSIONS = (1,)
 
 # (x0, y0, x1, y1)。左上原点で、ページの幅・高さで割った0〜1の値
 Bbox = tuple[float, float, float, float]
 
 # 抽出器が見つけた領域の種類。意味（見出し・段落など）は含めない
 Kind = Literal["text", "table", "figure"]
-# 構造化器が付ける意味ラベル。rule_based/labels.py の FINE_LABELS と同じ
-Label = Literal["heading", "paragraph", "list", "math", "caption", "table", "figure", "other", "code"]
+# 構造化器が付ける意味ラベル。rule_based/labels.py の FINE_LABELS と同じ。
+# 分類モデルはこの並びの番号でクラスを表すので、足すときは最後に足す（学習済みモデルの番号がずれないように）
+Label = Literal[
+    "heading", "paragraph", "list", "math", "caption", "table", "figure", "other", "code", "title", "author", "date"
+]
 # 正解ラベルの出どころ。rule_based/labels.py の Source と同じ
 LabelSource = Literal["auto", "manual", "prelabel"]
 # ページの幅・高さ・文字サイズの単位。PDFはpt、画像はpx
 Unit = Literal["pt", "px"]
+# 表の列の揃え（左・中央・右）。web/src/model.ts の TableCellAlign と同じ
+Align = Literal["l", "c", "r"]
 
 KINDS = list(get_args(Kind))
 LABELS = list(get_args(Label))
 LABEL_SOURCES = list(get_args(LabelSource))
 UNITS = list(get_args(Unit))
+ALIGNS = list(get_args(Align))
+
+
+@dataclass
+class Run:
+    """要素の中で、装飾が同じ文字の並び。装飾が無いところも Run にする（text をつなげると要素の text になる）"""
+
+    text: str
+    bold: bool | None = None  # 付いていれば True。付いていない・判定できないときは None
+    italic: bool | None = None
+    underline: bool | None = None
 
 
 @dataclass
 class Element:
     kind: Kind
     bbox: Bbox
-    text: str | None = None  # kind="text" では必須。行の区切りは "\n"
+    text: str | None = None  # kind="text" では必須。行の区切りは "\n"。label="code" では行頭の空白（字下げ）を保つ
+    runs: list[Run] | None = None  # 文字の範囲ごとの装飾。判定できない抽出器は None
     font_size: float | None = None  # ページの unit での文字サイズ。取れない抽出器は bbox の高さから推定する
-    bold: bool | None = None  # 判定できない抽出器は None
+    bold: bool | None = None  # 要素の大半が太字か（分類の手がかり）。判定できない抽出器は None
     confidence: float | None = None  # 参考値。モデルごとに意味が違うので比較には使わない
     cells: list[list[str]] | None = None  # 表の中身（行 × 列）。取れる抽出器のみ
+    aligns: list[Align] | None = None  # 表の列ごとの揃え。判定できない抽出器は None
     # ↓ ここから下はラベル付きIRでだけ使う
     label: Label | None = None
     level: int | None = None  # label="heading" の見出しレベル（1〜3）。分からなければ None
@@ -92,22 +112,32 @@ def to_dict(doc: IRDocument) -> dict[str, Any]:
     """JSONにする形の dict。None の項目はキーごと省く（取れなかった値と区別がつくように）。"""
     data = asdict(doc)
     for page in data["pages"]:
+        for el in page["elements"]:
+            if el["runs"] is not None:
+                el["runs"] = [{k: v for k, v in run.items() if v is not None} for run in el["runs"]]
         page["elements"] = [{k: v for k, v in el.items() if v is not None} for el in page["elements"]]
     return {k: v for k, v in data.items() if v is not None}
+
+
+def _element_from_dict(el: dict[str, Any]) -> Element:
+    runs = [Run(**run) for run in el["runs"]] if "runs" in el else None
+    return Element(**{**el, "bbox": tuple(el["bbox"]), "runs": runs})
 
 
 def from_dict(data: dict[str, Any]) -> IRDocument:
     pages = []
     for p in data["pages"]:
-        elements = [Element(**{**el, "bbox": tuple(el["bbox"])}) for el in p["elements"]]
+        elements = [_element_from_dict(el) for el in p["elements"]]
         pages.append(Page(page=p["page"], width=p["width"], height=p["height"], unit=p["unit"], elements=elements))
+    # 古い版は、足した項目が無いだけなので現行の版として読む
+    version = IR_VERSION if data["ir_version"] in COMPATIBLE_VERSIONS else data["ir_version"]
     return IRDocument(
         source=data["source"],
         extractor=data["extractor"],
         pages=pages,
         params=data.get("params", {}),
         structurer=data.get("structurer"),
-        ir_version=data["ir_version"],
+        ir_version=version,
     )
 
 
@@ -125,6 +155,36 @@ def load_ir(json_path: str, check: bool = False) -> IRDocument:
         if problems:
             raise ValueError(f"{json_path} に問題があります:\n" + "\n".join(problems))
     return doc
+
+
+def _validate_runs(where: str, el: Element) -> list[str]:
+    if el.runs is None:
+        return []
+    if el.kind != "text":
+        return [f"{where}: runs は kind='text' のときだけ付ける"]
+    problems = []
+    for k, run in enumerate(el.runs):
+        if not run.text:
+            problems.append(f"{where}: runs[{k}] の text が空")
+        for mark in ("bold", "italic", "underline"):
+            if getattr(run, mark) not in (None, True, False):
+                problems.append(f"{where}: runs[{k}] の {mark} は true / false にする")
+    if "".join(run.text for run in el.runs) != el.text:
+        problems.append(f"{where}: runs の text をつなげたものが要素の text と違う")
+    return problems
+
+
+def _validate_aligns(where: str, el: Element) -> list[str]:
+    if el.aligns is None:
+        return []
+    if el.kind != "table":
+        return [f"{where}: aligns は kind='table' のときだけ付ける"]
+    problems = [f"{where}: 不明なalign {a!r}（使えるのは {ALIGNS}）" for a in el.aligns if a not in ALIGNS]
+    if el.cells:
+        n_cols = max(len(row) for row in el.cells)
+        if len(el.aligns) != n_cols:
+            problems.append(f"{where}: aligns が{len(el.aligns)}個（cells の列数 {n_cols} と同じにする）")
+    return problems
 
 
 def _validate_element(where: str, el: Element) -> list[str]:
@@ -147,6 +207,8 @@ def _validate_element(where: str, el: Element) -> list[str]:
         problems.append(f"{where}: kind='text' なのに text がない")
     if el.cells is not None and not all(isinstance(row, list) and all(isinstance(c, str) for c in row) for row in el.cells):
         problems.append(f"{where}: cells は文字列の二次元配列にする")
+    problems += _validate_runs(where, el)
+    problems += _validate_aligns(where, el)
 
     if el.label is not None and el.label not in LABELS:
         problems.append(f"{where}: 不明なlabel {el.label!r}（使えるのは {LABELS}）")

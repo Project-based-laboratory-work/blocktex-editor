@@ -22,6 +22,7 @@ def sample_pdf(tmp_path_factory) -> str:
 def test_label_definitions_match_common():
     assert labels.FINE_LABELS == ir.LABELS
     assert list(get_args(labels.Source)) == ir.LABEL_SOURCES
+    assert set(labels.COARSE_MAP) == set(labels.FINE_LABELS)  # どのラベルも粗いラベルにまとめられる
 
 
 def test_extract_ir_is_valid(sample_pdf):
