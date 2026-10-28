@@ -13,7 +13,10 @@ from typing import Literal, get_args
 
 Bbox = tuple[float, float, float, float]
 
-Label = Literal["heading", "paragraph", "list", "math", "caption", "table", "figure", "other", "code"]
+# 分類モデルはこの並びの番号でクラスを表すので、足すときは最後に足す（common/ir.py の Label と同じ）
+Label = Literal[
+    "heading", "paragraph", "list", "math", "caption", "table", "figure", "other", "code", "title", "author", "date"
+]
 Source = Literal["auto", "manual", "prelabel"]
 
 FINE_LABELS = list(get_args(Label))
@@ -31,6 +34,10 @@ COARSE_MAP = {
     "figure": "figure",
     "other": "other",
     "code": "code",  # プログラムのコード（lstlisting / verbatim）
+    # \maketitle のタイトル・著者・日付。今の分類モデルと学習データ（doc_gen.py）は other として扱っているので、そろえる
+    "title": "other",
+    "author": "other",
+    "date": "other",
 }
 
 
