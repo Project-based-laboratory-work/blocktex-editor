@@ -14,6 +14,7 @@ import argparse
 import json
 import re
 import uuid
+from itertools import groupby
 from typing import Any
 
 from common.ir import Element, IRDocument, load_ir
@@ -22,6 +23,14 @@ EDITOR_SCHEMA_VERSION = 3
 
 MAX_HEADING_LEVEL = 3
 TABLE_CAPTION_PATTERN = re.compile(r"(表|Table)\s*\d")
+
+# 文字の装飾（ir.py の Run と model.ts の TextMarks で同じ名前）
+MARKS = ("bold", "italic", "underline")
+# 1文字と、その文字に付いている装飾（MARKS のうち付いているもの）
+Char = tuple[str, tuple[str, ...]]
+
+# \maketitle のタイトル・著者・日付。まとめて文書の先頭のタイトルブロック1つにする
+TITLE_LABELS = ("title", "author", "date")
 
 # 箇条書きの行頭記号 → model.ts の ListMarker
 LIST_MARKER_PATTERNS = [
@@ -44,20 +53,70 @@ def _label_of(el: Element) -> str:
     return "paragraph" if el.kind == "text" else el.kind
 
 
-def _join_lines(text: str) -> str:
-    """PDFの折り返しで入った改行をつなぐ。英数字どうしの間だけ空白を入れる（日本語は詰める）。"""
-    result = ""
-    for line in (line.strip() for line in text.split("\n")):
+def _chars(el: Element) -> list[Char]:
+    """要素の文字を、1文字ずつ装飾と組にする。runs が無い要素は装飾なし。"""
+    if el.runs is None:
+        return [(c, ()) for c in el.text or ""]
+    return [(c, tuple(mark for mark in MARKS if getattr(run, mark))) for run in el.runs for c in run.text]
+
+
+def _lines(chars: list[Char]) -> list[list[Char]]:
+    """改行で行に分け、行の前後の空白を除く。空の行は捨てる。"""
+    lines: list[list[Char]] = [[]]
+    for ch in chars:
+        if ch[0] == "\n":
+            lines.append([])
+        else:
+            lines[-1].append(ch)
+    stripped = []
+    for line in lines:
+        start, end = 0, len(line)
+        while start < end and line[start][0].isspace():
+            start += 1
+        while end > start and line[end - 1][0].isspace():
+            end -= 1
+        if start < end:
+            stripped.append(line[start:end])
+    return stripped
+
+
+def _is_ascii_alnum(c: str) -> bool:
+    return c.isascii() and c.isalnum()
+
+
+def _join_char_lines(lines: list[list[Char]]) -> list[Char]:
+    """
+    PDFの折り返しで入った改行をつなぐ。英数字どうしの間だけ空白を入れる（日本語は詰める）。
+    入れた空白には、前後の文字の両方に付いている装飾を付ける（太字の語どうしの間の空白は太字のまま）。
+    """
+    result: list[Char] = []
+    for line in lines:
         if not line:
             continue
-        if result and result[-1].isascii() and result[-1].isalnum() and line[0].isascii() and line[0].isalnum():
-            result += " "
+        if result and _is_ascii_alnum(result[-1][0]) and _is_ascii_alnum(line[0][0]):
+            result.append((" ", tuple(mark for mark in result[-1][1] if mark in line[0][1])))
         result += line
     return result
 
 
-def _rich(text: str) -> list[dict[str, Any]]:
-    return [{"type": "text", "text": text}]
+def _plain(chars: list[Char]) -> str:
+    return "".join(c for c, _ in chars)
+
+
+def _join_lines(text: str) -> str:
+    """文字列の改行をつなぐ（装飾を使わない見出し・キャプションなど）。"""
+    return _plain(_join_char_lines(_lines([(c, ()) for c in text])))
+
+
+def _rich(chars: list[Char]) -> list[dict[str, Any]]:
+    """
+    装飾が同じで隣り合う文字を1つの text にする。付いている装飾だけキーを持たせる
+    （model.ts の TextMarks・normalizeRich と同じ形）。
+    """
+    return [
+        {"type": "text", "text": _plain(list(group)), **{mark: True for mark in marks}}
+        for marks, group in groupby(chars, key=lambda ch: ch[1])
+    ]
 
 
 def _heading_levels(elements: list[Element]) -> dict[int, int]:
@@ -100,32 +159,35 @@ def _attach_captions(items: list[tuple[int, Element, str]]) -> tuple[dict[int, s
 def _list_items(elements: list[Element]) -> tuple[str, list[dict[str, Any]]]:
     """連続した list 要素を1つの箇条書きにまとめる。行頭記号のある行で項目を区切る。"""
     marker = None
-    items: list[str] = []
+    items: list[list[list[Char]]] = []  # 項目ごとの行（行は装飾付きの文字の並び）
     for el in elements:
-        lines = [line.strip() for line in (el.text or "").split("\n") if line.strip()]
-        has_marker = any(pattern.match(line) for line in lines for pattern, _ in LIST_MARKER_PATTERNS)
-        for k, line in enumerate(lines):
+        lines = _lines(_chars(el))
+        texts = [_plain(line) for line in lines]
+        has_marker = any(pattern.match(text) for text in texts for pattern, _ in LIST_MARKER_PATTERNS)
+        for k, (line, text) in enumerate(zip(lines, texts)):
             for pattern, name in LIST_MARKER_PATTERNS:
-                if pattern.match(line):
+                if match := pattern.match(text):
                     marker = marker or name
-                    items.append(pattern.sub("", line, count=1))
+                    items.append([line[match.end() :]])
                     break
             else:
                 # 記号の無い行は前の項目の折り返し。要素内に記号が1つも無ければ要素ごとに1項目
                 if items and (has_marker or k > 0):
-                    items[-1] = _join_lines(items[-1] + "\n" + line)
+                    items[-1].append(line)
                 else:
-                    items.append(line)
-    return marker or "dot", [{"content": _rich(item)} for item in items]
+                    items.append([line])
+    return marker or "dot", [{"content": _rich(_join_char_lines(item))} for item in items]
 
 
 def _table_block(el: Element, caption: str | None) -> dict[str, Any]:
     rows = el.cells or [[""]]
     n_cols = max(len(row) for row in rows) or 1
+    # 揃えが分からない（または列数と合わない）ときは左寄せ
+    aligns = el.aligns if el.aligns and len(el.aligns) == n_cols else ["l"] * n_cols
     block: dict[str, Any] = {
         "id": _new_id(),
         "type": "table",
-        "columns": [{"align": "l"} for _ in range(n_cols)],
+        "columns": [{"align": align} for align in aligns],
         "rows": [{"cells": row + [""] * (n_cols - len(row))} for row in rows],
     }
     if caption:
@@ -141,6 +203,23 @@ def _image_block(el: Element, caption: str | None, text_area: tuple[float, float
     if caption:
         block["caption"] = caption
     return block
+
+
+def _title_block(items: list[tuple[int, Element, str]]) -> dict[str, Any] | None:
+    """
+    title / author / date の要素から、タイトルブロック（\\maketitle）を1つ作る。どれも無ければ None。
+    タイトルが折り返して複数の要素になったときは段落と同じくつなぎ、著者・日付が複数あれば空白で区切る。
+    """
+    parts = {label: [_join_lines(el.text or "") for _, el, item_label in items if item_label == label] for label in TITLE_LABELS}
+    if not any(parts.values()):
+        return None
+    return {
+        "id": _new_id(),
+        "type": "title",
+        "text": _join_lines("\n".join(parts["title"])),
+        "author": " ".join(parts["author"]),
+        "date": " ".join(parts["date"]),
+    }
 
 
 def ir_to_document(ir: IRDocument, title: str | None = None) -> dict[str, Any]:
@@ -185,12 +264,16 @@ def ir_to_document(ir: IRDocument, title: str | None = None) -> dict[str, Any]:
             blocks.append(_image_block(el, captions.get(i), text_area))
         elif label == "paragraph" or (label == "caption" and i not in used_captions):
             # 付け先の無いキャプションは段落として残す
-            text = _join_lines(el.text or "")
-            if text:
-                blocks.append({"id": _new_id(), "type": "paragraph", "content": _rich(text)})
-        # 表・図に付けたキャプションと "other"（ページ番号・ヘッダーなど）はブロックにしない
+            chars = _join_char_lines(_lines(_chars(el)))
+            if chars:
+                blocks.append({"id": _new_id(), "type": "paragraph", "content": _rich(chars)})
+        # 表・図に付けたキャプション、"other"（ページ番号・ヘッダーなど）、タイトル・著者・日付（先頭にまとめる）はここでは作らない
         i += 1
 
+    # タイトルブロックは文書に1つだけで、常に先頭（model.ts の TitleBlock）
+    title_block = _title_block(items)
+    if title_block:
+        blocks.insert(0, title_block)
     return {"schemaVersion": EDITOR_SCHEMA_VERSION, "id": _new_id(), "title": title or ir.source, "blocks": blocks}
 
 
