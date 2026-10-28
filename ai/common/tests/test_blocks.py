@@ -2,7 +2,7 @@ import re
 from pathlib import Path
 
 from common.blocks import EDITOR_SCHEMA_VERSION, ir_to_document
-from common.ir import Element, IRDocument, Page
+from common.ir import Element, IRDocument, Page, Run
 
 MODEL_TS = Path(__file__).resolve().parents[3] / "web" / "src" / "model.ts"
 
@@ -101,3 +101,65 @@ def test_consecutive_code_elements_become_one_code_block():
     blocks = convert(text("code", "int main(void) {"), text("code", "    return 0;\n}"), text("paragraph", "説明"))
     assert blocks[0] == {"id": blocks[0]["id"], "type": "code", "language": "plain", "code": "int main(void) {\n    return 0;\n}"}
     assert blocks[1]["type"] == "paragraph"
+
+
+def test_paragraph_keeps_marks_from_runs():
+    runs = [Run("これは"), Run("重要", bold=True, underline=True), Run("な点で\n"), Run("す。", italic=True)]
+    blocks = convert(text("paragraph", "これは重要な点で\nす。", runs=runs))
+    assert blocks[0]["content"] == [
+        {"type": "text", "text": "これは"},
+        {"type": "text", "text": "重要", "bold": True, "underline": True},
+        {"type": "text", "text": "な点で"},
+        {"type": "text", "text": "す。", "italic": True},
+    ]
+
+
+def test_space_between_wrapped_lines_keeps_common_marks():
+    # 太字の語が折り返されたとき、つなぐ空白も太字にして、装飾が途切れないようにする
+    runs = [Run("very\nbold", bold=True), Run(" word")]
+    blocks = convert(text("paragraph", "very\nbold word", runs=runs))
+    assert blocks[0]["content"] == [{"type": "text", "text": "very bold", "bold": True}, {"type": "text", "text": " word"}]
+
+
+def test_list_items_keep_marks_from_runs():
+    runs = [Run("・"), Run("りんご", bold=True), Run("\n・みかんと\n"), Run("ぶどう", italic=True)]
+    blocks = convert(text("list", "・りんご\n・みかんと\nぶどう", runs=runs))
+    assert [item["content"] for item in blocks[0]["items"]] == [
+        [{"type": "text", "text": "りんご", "bold": True}],
+        [{"type": "text", "text": "みかんと"}, {"type": "text", "text": "ぶどう", "italic": True}],
+    ]
+
+
+def test_table_columns_use_aligns():
+    cells = [["項目", "数", "備考"], ["工数", "15", "なし"]]
+    table = Element(kind="table", bbox=(0.1, 0.1, 0.9, 0.3), label="table", cells=cells, aligns=["l", "r", "c"])
+    assert convert(table)[0]["columns"] == [{"align": "l"}, {"align": "r"}, {"align": "c"}]
+    # 列数と合わない揃えは使わず、左寄せにする
+    table.aligns = ["r"]
+    assert convert(table)[0]["columns"] == [{"align": "l"}, {"align": "l"}, {"align": "l"}]
+
+
+def test_title_author_date_become_one_title_block_at_top():
+    blocks = convert(
+        text("other", "244", 0.02),
+        text("title", "日本語と", 0.1),
+        text("title", "言語類型", 0.13),
+        text("author", "山田 太郎", 0.2),
+        text("author", "鈴木 花子", 0.23),
+        text("date", "2026年10月28日", 0.26),
+        text("heading", "はじめに", 0.3),
+    )
+    assert [b["type"] for b in blocks] == ["title", "heading"]
+    assert blocks[0] == {
+        "id": blocks[0]["id"],
+        "type": "title",
+        "text": "日本語と言語類型",
+        "author": "山田 太郎 鈴木 花子",
+        "date": "2026年10月28日",
+    }
+
+
+def test_title_block_is_made_even_if_only_part_exists():
+    blocks = convert(text("paragraph", "本文"), text("title", "Title Only"))
+    assert blocks[0] == {"id": blocks[0]["id"], "type": "title", "text": "Title Only", "author": "", "date": ""}
+    assert convert(text("paragraph", "本文"))[0]["type"] == "paragraph"  # 無ければ作らない
