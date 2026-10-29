@@ -50,7 +50,11 @@ __pycache__/
 ai/*/data/
 ai/*/checkpoints/
 ai/models/**/*.pt
+ai/out/
 
 # web/ のビルド成果物（tsc の出力）
 web/js/
 ai/probe/*.json
+
+# リポジトリの中に誤ってできたプロジェクトのコピー（何度も追加されてしまうため除外）
+/blocktex-editor/
