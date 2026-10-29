@@ -11,12 +11,12 @@ Tesseract の認識結果を正解テキストと比べて CER（文字誤り率
     # プリセットを絞る（presets.py の名前を並べる）
     python -m tesseract_ocr.evaluate --presets base gray otsu up2
     # データセットを絞る・向きを決め打ちする
-    python -m tesseract_ocr.evaluate --datasets eng --direction horizontal
+    python -m tesseract_ocr.evaluate --datasets eng --direction auto
 
-向きは、--direction を省略すると auto（ir_adapter が横書き・縦書きの両方で読み、「文字数 × 信頼度」が
-大きい方を採る）。言語は、--lang を省略すると向きごとの既定値（横 jpn+eng / 縦 jpn_vert+eng）。
+向きは、--direction を省略すると horizontal（横書き）。auto にすると横書き・縦書きの両方で読み、
+「文字数 × 信頼度」が大きい方を採る（時間は約2倍）。言語は、--lang を省略すると向きごとの既定値（横 jpn+eng / 縦 jpn_vert+eng）。
 フォルダ名は結果をまとめる単位に使うだけで、読み方の判断には使わない。
-画像ごとに選ばれた向きと、横・縦それぞれの点数は results.csv に残す。
+auto のとき、画像ごとに選ばれた向きと、横・縦それぞれの点数は results.csv に残す。
 
 出力（-o の下。既定は tesseract_ocr/data/eval/、git管理外）:
     <プリセット>/<データセット>/<画像名>.<プリセット>.ir.json  … 共通IR ①
@@ -39,7 +39,7 @@ from pathlib import Path
 
 from common.ir import IRDocument, save_ir
 from evaluation.metrics import char_errors, char_errors_by_script, ratio_or_none
-from tesseract_ocr.ir_adapter import check_langs, extract_ir
+from tesseract_ocr.ir_adapter import DEFAULT_DIRECTION, DIRECTIONS, check_langs, extract_ir
 from tesseract_ocr.presets import PRESETS
 
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".tif", ".tiff", ".bmp"}
@@ -95,8 +95,8 @@ def main() -> None:
     parser.add_argument("--datasets", nargs="+", default=None, help="評価するフォルダ名（省略時は正解 .txt がある全フォルダ）")
     parser.add_argument("--presets", nargs="+", default=["all"], choices=[*PRESETS, "all"],
                         help="比べるプリセット（既定の all は presets.py の全部）")
-    parser.add_argument("--direction", default="auto", choices=["horizontal", "vertical", "auto", "mixed"],
-                        help="全画像の向き（既定の auto は画像ごとに横・縦の両方で読んで選ぶ）")
+    parser.add_argument("--direction", default=DEFAULT_DIRECTION, choices=DIRECTIONS,
+                        help="全画像の向き（auto は画像ごとに横・縦の両方で読んで選ぶ）")
     parser.add_argument("--lang", default=None, help="全画像の言語（省略時は向きごとの既定値）")
     parser.add_argument("-o", "--out-dir", type=Path, default=DEFAULT_OUT, help="出力先")
     args = parser.parse_args()

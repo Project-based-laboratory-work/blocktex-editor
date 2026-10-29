@@ -25,7 +25,7 @@ python -m common.ir easyocr_ocr/data/out/eng_001.base.ir.json   # 形式チェ�
 |---|---|
 | [ir_adapter.py](ir_adapter.py) | 解析の流れ：画像を開く → 前処理 → EasyOCR → IRに変換 |
 | [presets.py](presets.py) | 設定の組（プリセット）。実験はここに名前を付けて足す |
-| [preprocess.py](preprocess.py) | 前処理の部品（拡大・グレースケール・反転・二値化など）。EasyOCRに依存しない |
+| [image_common/preprocess.py](../image_common/preprocess.py) | 前処理の部品（拡大・グレースケール・反転・二値化など）。Tesseract と共有 |
 | [compare.py](compare.py) | プリセットごとの文字誤り率（CER）を、正解テキストのある画像で比べる |
 | [grouping.py](grouping.py) | 行（EasyOCRの箱）を段落（ブロック）にまとめる。`--group` で使う。EasyOCRに依存しない |
 

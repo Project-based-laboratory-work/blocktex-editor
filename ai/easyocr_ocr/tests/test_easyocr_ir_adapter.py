@@ -4,7 +4,7 @@ from PIL import Image
 from common import ir
 from easyocr_ocr import ir_adapter
 from easyocr_ocr.ir_adapter import extract_ir, to_ir
-from easyocr_ocr.preprocess import STEPS
+from image_common.preprocess import STEPS
 from easyocr_ocr.presets import PRESETS
 
 WIDTH, HEIGHT = 4284, 5712
@@ -90,6 +90,8 @@ class FakeReader:
 
 @pytest.mark.parametrize("preset", list(PRESETS))
 def test_extract_ir_with_each_preset(preset, tmp_path, monkeypatch):
+    if any(step.startswith(("otsu", "adaptive")) for step in PRESETS[preset]["preprocess"]):
+        pytest.importorskip("cv2")  # 二値化は OpenCV を使う
     image_path = tmp_path / "shot.png"
     Image.new("RGB", (200, 100), "white").save(image_path)
     reader = FakeReader()

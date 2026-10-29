@@ -1,8 +1,7 @@
 """
-OCRの前に画像にかける前処理の部品。プリセット（presets.py）から名前で選んで、順番にかける。
+OCRの前に画像にかける前処理の部品。各OCRのプリセット（easyocr_ocr/presets.py, tesseract_ocr/presets.py）から名前で選んで、順番にかける。
 
-Tesseract側でも使えるように、EasyOCRには依存しない（入力も出力もPILの画像）。
-2人で共有することが決まったら ai/image_common/ に移す。
+EasyOCR・Tesseract の両方で使う。同じ前処理で比べられるように、ここ1か所にまとめる（入力も出力もPILの画像）。
 """
 
 from collections.abc import Callable

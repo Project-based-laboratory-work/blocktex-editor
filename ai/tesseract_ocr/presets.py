@@ -1,7 +1,7 @@
 """
 Tesseractの設定の組（プリセット）。easyocr_ocr/presets.py と同じ考え方で、実験のたびにコードを書き換えず、ここに名前を付けて足していく。
 
-- preprocess: easyocr_ocr/preprocess.py の STEPS の名前を、かける順に並べる（EasyOCRと同じ名前のプリセットは同じ前処理）
+- preprocess: image_common/preprocess.py の STEPS の名前を、かける順に並べる（EasyOCRと同じ名前のプリセットは同じ前処理）
 - tesseract:  Tesseract の設定。psm / oem を書くと、向き（--direction）ごとの既定値より優先する
 
 比べやすいように、base から1か所だけ変えたものを並べている。

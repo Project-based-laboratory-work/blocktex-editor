@@ -19,7 +19,7 @@ from PIL import Image
 
 from common.ir import Element, IRDocument, Page, normalize_bbox, save_ir, validate
 from easyocr_ocr.grouping import group_document
-from easyocr_ocr.preprocess import apply_preprocess
+from image_common.preprocess import apply_preprocess
 from easyocr_ocr.presets import PRESETS
 
 NAME = "easyocr"

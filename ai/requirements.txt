@@ -17,5 +17,8 @@ pytest
 pytesseract
 pdf2image
 
+# 画像の前処理（image_common/。EasyOCR・Tesseract で共有）
+opencv-python-headless
+
 # EasyOCR（easyocr_ocr/）
 easyocr

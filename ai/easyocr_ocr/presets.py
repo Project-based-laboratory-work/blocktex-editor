@@ -1,7 +1,7 @@
 """
 EasyOCRの設定の組（プリセット）。実験のたびにコードを書き換えず、ここに名前を付けて足していく。
 
-- preprocess: preprocess.py の STEPS の名前を、かける順に並べる
+- preprocess: image_common/preprocess.py の STEPS の名前を、かける順に並べる
 - readtext:   reader.readtext() にそのまま渡す引数（EasyOCRのドキュメントを参照）
 
 比べやすいように、base から1か所だけ変えたものを並べている。

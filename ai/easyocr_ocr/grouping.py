@@ -18,6 +18,7 @@ import statistics
 from dataclasses import replace
 
 from common.ir import Element, IRDocument, Page, denormalize_bbox, normalize_bbox
+from image_common.text import join_words
 
 # 1. 同じ行とみなす条件：縦の重なりが低いほうの箱の高さのこの割合以上で、横の隙間が行の高さのこの倍以下
 SAME_LINE_OVERLAP = 0.5
@@ -43,13 +44,6 @@ def _union(elements: list[Element]) -> tuple[float, float, float, float]:
         max(el.bbox[2] for el in elements),
         max(el.bbox[3] for el in elements),
     )
-
-
-def _join_pieces(left: str, right: str) -> str:
-    """同じ行の2つの文字列をつなぐ。英数字・記号どうしの間だけ空白を入れる（日本語の間には入れない）。"""
-    if left and right and left[-1].isascii() and not left[-1].isspace() and right[0].isascii() and right[0].isalnum():
-        return f"{left} {right}"
-    return left + right
 
 
 def _font_size(elements: list[Element]) -> float | None:
@@ -89,12 +83,7 @@ def group_lines(elements: list[Element]) -> list[Element]:
                 break
         else:
             lines.append([el])
-    merged = []
-    for line in lines:
-        text = ""
-        for el in line:
-            text = _join_pieces(text, el.text or "")
-        merged.append(_merge(line, text))
+    merged = [_merge(line, join_words([el.text or "" for el in line])) for line in lines]
     return sorted(merged, key=lambda e: (e.bbox[1], e.bbox[0]))
 
 

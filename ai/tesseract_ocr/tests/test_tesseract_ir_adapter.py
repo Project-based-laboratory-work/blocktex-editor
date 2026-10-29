@@ -2,9 +2,9 @@ import pytest
 from PIL import Image
 
 from common import ir
-from easyocr_ocr.preprocess import STEPS
+from image_common.preprocess import STEPS
 from tesseract_ocr import ir_adapter
-from tesseract_ocr.ir_adapter import OcrRun, extract_ir, is_vertical, join_words, to_elements
+from tesseract_ocr.ir_adapter import OcrRun, extract_ir, is_vertical, to_elements
 from tesseract_ocr.presets import PRESETS
 
 
@@ -62,12 +62,6 @@ def test_skips_blank_words_and_splits_paragraphs():
     assert [el.text for el in elements] == ["one", "two"]
 
 
-def test_join_words_spaces_only_between_ascii():
-    assert join_words(["Hello", "world"]) == "Hello world"
-    assert join_words(["本", "文", "です"]) == "本文です"
-    assert join_words(["Tesseract", "で", "OCR"]) == "TesseractでOCR"
-
-
 def test_mixed_decides_by_line_shape():
     assert is_vertical("mixed", [(0, 0, 20, 200), (30, 0, 50, 180)])
     assert not is_vertical("mixed", [(0, 0, 200, 20)])
@@ -94,6 +88,8 @@ def fake_tesseract(calls: list):
 
 @pytest.mark.parametrize("preset", list(PRESETS))
 def test_extract_ir_with_each_preset(preset, tmp_path, monkeypatch):
+    if any(step.startswith(("otsu", "adaptive")) for step in PRESETS[preset]["preprocess"]):
+        pytest.importorskip("cv2")  # 二値化は OpenCV を使う
     image_path = tmp_path / "shot.png"
     Image.new("RGB", (200, 100), "white").save(image_path)
     calls: list = []

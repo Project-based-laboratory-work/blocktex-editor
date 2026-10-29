@@ -5,7 +5,7 @@
 | | 内容 |
 |---|---|
 | 入力 | 画像1枚。1枚＝1ページ、単位は `px` |
-| 対応 | 英語・日本語の横書き・日本語の縦書き（`--direction` で指定、既定は `auto`） |
+| 対応 | 英語・日本語の横書き・日本語の縦書き（`--direction` で指定、既定は `horizontal`） |
 | 出力 | IR（`kind="text"` の要素を Tesseract の段落ごとに1つ。`bbox`・`text`・`font_size`・`confidence`） |
 | 入口 | `ir_adapter.extract_ir(image_path, preset, direction, lang)` |
 
@@ -37,7 +37,7 @@ python -m tesseract_ocr.evaluate --presets base up2 otsu
 ```
 
 `evaluate` は `ocr/sample/<データセット>/` の画像と同じ名前の `.txt` を正解とする。フォルダ名は結果をまとめる単位に使うだけで、読み方の判断には使わない。
-- 向き：`--direction` の既定は `auto`。画像ごとに横書き・縦書きの両方で読み、「文字数 × 信頼度」が大きい方を採る（1枚につき2回読むので、時間は約2〜3倍）。`--direction vertical` などで決め打ちもできる
+- 向き：`--direction` の既定は `horizontal`（縦書きは対象外になったため）。`--direction auto` にすると画像ごとに横書き・縦書きの両方で読み、「文字数 × 信頼度」が大きい方を採る（1枚につき2回読むので、時間は約2〜3倍）
 - 言語：`--lang` を省略すると向きごとの既定値（横 `jpn+eng` / 縦 `jpn_vert+eng`）。英語の画像も `jpn+eng` で読む
 
 - プリセット：`--presets` の既定は `all`（[presets.py](presets.py) の全部）。最後に、データセットごとに CER が一番小さかったプリセットを表示する
@@ -49,14 +49,14 @@ python -m tesseract_ocr.evaluate --presets base up2 otsu
 | ファイル | 内容 |
 |---|---|
 | [ir_adapter.py](ir_adapter.py) | 解析の流れ：画像を開く → 前処理 → Tesseract（auto なら横・縦の2回）→ IRに変換 |
-| [presets.py](presets.py) | 設定の組（プリセット）。前処理は [easyocr_ocr/preprocess.py](../easyocr_ocr/preprocess.py) の名前を使い、EasyOCRと同じ名前なら同じ前処理 |
+| [presets.py](presets.py) | 設定の組（プリセット）。前処理は [image_common/preprocess.py](../image_common/preprocess.py) の名前を使い、EasyOCRと同じ名前なら同じ前処理 |
 | [evaluate.py](evaluate.py) | 正解テキストとの CER（[evaluation/metrics.py](../evaluation/metrics.py) の `char_errors`）と処理時間 |
 | [predict.py](predict.py) | 旧版。画像/PDFの文字の高さからサイズクラス（大/中/小）を表示するだけ（IRは出さない） |
 
 - 向き `auto` は横書き（`jpn+eng`, psm 3）と縦書き（`jpn_vert+eng`, psm 5）の両方で読み、「文字数 × 信頼度」が大きい方を採る。時間は約2倍。
 - 縦書きの段落は、列を右→左、列の中を上→下に並べ直して `text` にする（列の区切りは `\n`）。
 - `font_size` は横書きなら行の高さ、縦書きなら列の幅の中央値（元の画像の px）。`bold` は取れないので書かない。
-- 日本語の単語の間には空白を入れない（英数字どうしの間だけ入れる）。
+- 単語は [image_common/text.py](../image_common/text.py) の `join_words` でつなぐ（EasyOCR の `--group` と同じ。日本語の間と記号の前には空白を入れない）。
 - 前処理で拡大しても、`bbox`・`font_size` は元の画像の大きさに戻してから書く。使った設定はIRの `params` に記録される。
 
 ## 結果（2026-10-25, Tesseract 5.5.3, 正解 .txt のある各2枚）

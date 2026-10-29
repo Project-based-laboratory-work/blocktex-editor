@@ -8,9 +8,9 @@ Tesseractで画像の文字を読み取り、共通のIR形式（common/ir.py）
     python -m tesseract_ocr.ir_adapter ../ocr/sample/eng/eng_001.jpg --lang eng --preset otsu -o out/
 
 --direction（文字の向き）:
-    horizontal … 横書き（jpn+eng, psm 3）
+    horizontal … 横書き（jpn+eng, psm 3）（既定）
     vertical   … 縦書き（jpn_vert+eng, psm 5）
-    auto       … 横・縦の両方で読み、「文字数 × 信頼度」が大きい方を採用（既定）
+    auto       … 横・縦の両方で読み、「文字数 × 信頼度」が大きい方を採用（2回読むので時間は約2倍）
     mixed      … 1枚に横書きと縦書きが混在（jpn+jpn_vert+eng, psm 3。段落ごとに形で縦横を判断）
 
 事前に Tesseract 本体と言語データ eng / jpn / jpn_vert を入れておく（tesseract --list-langs で確認）。
@@ -26,12 +26,13 @@ import pytesseract
 from PIL import Image
 
 from common.ir import Element, IRDocument, Page, normalize_bbox, save_ir, validate
-from easyocr_ocr.preprocess import apply_preprocess
+from image_common.preprocess import apply_preprocess
+from image_common.text import join_words
 from tesseract_ocr.presets import PRESETS
 
 NAME = "tesseract"
 DEFAULT_PRESET = "base"
-DEFAULT_DIRECTION = "auto"
+DEFAULT_DIRECTION = "horizontal"  # 縦書きは対象外になったため（vertical / auto も指定すれば使える）
 DEFAULT_OEM = 1  # LSTM
 
 # 向きごとの既定の (言語, ページ分割モード)
@@ -72,17 +73,6 @@ def run_tesseract(image: Image.Image, direction: str, lang: str, psm: int, oem: 
     config = f"--oem {oem} --psm {psm} -c preserve_interword_spaces=1"
     data = pytesseract.image_to_data(image, lang=lang, config=config, output_type=pytesseract.Output.DICT)
     return OcrRun(direction, lang, psm, data)
-
-
-def join_words(words: list[str]) -> str:
-    """単語をつなぐ。半角（英数字・記号）どうしの間だけ空白を入れ、日本語の間には入れない。
-    （日本語は Tesseract が1〜数文字ずつに区切って返すため、空白でつなぐと「本 文」のようになる）"""
-    out = ""
-    for w in words:
-        if out and out[-1].isascii() and w[0].isascii():
-            out += " "
-        out += w
-    return out
 
 
 def is_vertical(direction: str, line_boxes: list[tuple[float, float, float, float]]) -> bool:

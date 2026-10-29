@@ -2,7 +2,7 @@ import numpy as np
 import pytest
 from PIL import Image
 
-from easyocr_ocr.preprocess import apply_preprocess
+from image_common.preprocess import apply_preprocess
 
 
 def test_no_steps_keeps_image():
