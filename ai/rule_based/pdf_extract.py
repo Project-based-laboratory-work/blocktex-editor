@@ -18,6 +18,7 @@ extract() は分類器向けの内部形式（PageBlocks。0始まりのペー�
 import argparse
 import json
 import os
+import re
 from dataclasses import dataclass, field
 
 import pdfplumber
@@ -26,6 +27,8 @@ import pymupdf
 from common.ir import Element, IRDocument, Page, normalize_bbox, save_ir, to_dict, validate
 
 NAME = "rule_based"
+TABLE_CAPTION_PATTERN = re.compile(r"(表|Table)\s*\d+")
+TABLE_ROW_GAP_RATIO = 2.0
 
 
 @dataclass
@@ -165,6 +168,47 @@ def _extract_figure_blocks(
     return figures
 
 
+def _overlaps(a: tuple[float, float, float, float], b: tuple[float, float, float, float]) -> bool:
+    """2つのbboxが少しでも重なっているか。"""
+    return min(a[2], b[2]) > max(a[0], b[0]) and min(a[3], b[3]) > max(a[1], b[1])
+
+
+
+def _extract_tables_near_captions(page, page_no, text_blocks, found_bboxes) -> list[TableBlock]:
+    result = []
+    sorted_blocks = text_blocks.sorted(key = lambda b : b.bbox[1])
+
+    for i, block in enumerate(sorted_blocks):
+        if not TABLE_CAPTION_PATTERN.match(block.text):
+            continue
+
+        table_can = []
+        j = i
+        while j + 1 < len(sorted_blocks)
+            gap = sorted_blocks[i+1].bbox[1] - sorted_blocks[i].bbox[3]
+            if gap > block.font_size * TABLE_ROW_GAP_RATIO :
+                break
+            table_can.append(sorted_blocks[i+1])
+            j += 1
+        if not table_can:
+            continue
+        x0, y0, x1, y1 = _union_bbox([b.bbox for b in table_can])
+        region = (x0 - padding, y0 - padding, x1 + padding, y1 + padding)
+        if any(_overlaps(region, found) for found in found_bboxes):
+            continue  # 罫線で見つかっている表
+
+        crop = page.crop(region, strict=False)
+        for table in crop.find_tables(table_settings={"vertical_strategy": "text", "horizontal_strategy": "text"}):
+            cells = [[cell or "" for cell in row] for row in table.extract()]
+            cells = [row for row in cells if any(cell for cell in row)]  # 行の間にできる空の行を捨てる
+            if len(cells) < 2 or max(len(row) for row in cells) < 2:
+                continue  # 1行・1列しかないものは表とみなさない
+            result.append(TableBlock(page=page_no, bbox=table.bbox, cells=cells))
+    
+    return result
+        
+        
+
 def _union_bbox(bboxes: list[tuple[float, float, float, float]]) -> tuple[float, float, float, float]:
     return (
         min(bbox[0] for bbox in bboxes),
@@ -224,6 +268,7 @@ def extract(pdf_path: str) -> list[PageBlocks]:
         for page_no, (mu_page, plumber_page) in enumerate(zip(doc, pdf.pages)):
             text_blocks = _extract_text_blocks(mu_page, page_no)
             table_blocks = _extract_table_blocks(plumber_page, page_no)
+            table_blocks += _extract_tables_near_captions(plumber_page, page_no, text_blocks, [t.bbox for t in table_blocks])   # ← 追加
             table_bboxes = [t.bbox for t in table_blocks]
             figure_blocks = _extract_figure_blocks(mu_page, page_no, table_bboxes)
 
