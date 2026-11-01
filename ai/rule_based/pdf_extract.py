@@ -88,6 +88,7 @@ def _extract_text_blocks(page: pymupdf.Page, page_no: int) -> list[TextBlock]:
         
         rows = []
         for group in groups:
+            group.sort(key=lambda line: line["bbox"][0])   # 同じ行の中は、左から順に並べる
             parts = ["".join(span["text"] for span in line["spans"]) for line in group]
             rows.append(" ".join(parts))
 
