@@ -35,8 +35,10 @@ function createBlock(kind: AddKind): Block {
         id,
         type: 'table',
         columns: [{ align: 'l' }, { align: 'l' }],
-        header: { cells: ['', ''] },
-        rows: [{ cells: ['', ''] }, { cells: ['', ''] }],
+        // v3 までの見た目（\toprule・見出しの下の \midrule・\bottomrule）を初期値にする
+        header: { cells: ['', ''], ruleBelow: true },
+        rows: [{ cells: ['', ''] }, { cells: ['', ''], ruleBelow: true }],
+        ruleTop: true,
       };
     case 'image':
       return { id, type: 'image', src: '', widthRatio: DEFAULT_IMAGE_WIDTH_RATIO };
@@ -233,6 +235,18 @@ class BlockEditor {
     return el;
   }
 
+  /** 表の罫線の切り替えボタン。押すたびにオン・オフし、オンのときは .on が付く */
+  private ruleToggle(label: string, title: string, on: boolean, onChange: (on: boolean) => void): HTMLButtonElement {
+    const button = this.controlButton(label, title, () => {
+      onChange(!on);
+      this.changed();
+    });
+    button.classList.add('table-rule');
+    button.classList.toggle('on', on);
+    button.setAttribute('aria-pressed', String(on));
+    return button;
+  }
+
   private controlButton(label: string, title: string, onClick: () => void): HTMLButtonElement {
     const button = document.createElement('button');
     button.type = 'button';
@@ -397,7 +411,8 @@ class BlockEditor {
     // 行・列の増減のときだけグリッドを作り直す。セルの入力中は作り直さない（フォーカスを保つ）
     const build = (focus?: { row: number; col: number }) => {
       const cols = block.columns.length;
-      grid.style.gridTemplateColumns = `repeat(${cols}, minmax(80px, 1fr))`;
+      // 最後の列は、行ごとの「下に横線」の切り替え
+      grid.style.gridTemplateColumns = `repeat(${cols}, minmax(80px, 1fr)) auto`;
       grid.replaceChildren();
 
       for (const [c, column] of block.columns.entries()) {
@@ -418,11 +433,33 @@ class BlockEditor {
           this.changed();
         });
         del.classList.add('table-del');
+        const ruleLeft = this.ruleToggle('│', 'この列の左に縦線', column.ruleLeft === true, (on) => {
+          column.ruleLeft = on || undefined;
+          build();
+        });
+        const width = document.createElement('input');
+        width.type = 'number';
+        width.className = 'table-width';
+        width.title = '列の幅（本文の幅に対する%）。指定するとセル内で折り返す。空なら文字に合わせる';
+        width.placeholder = '幅%';
+        width.min = '5';
+        width.max = '100';
+        width.step = '5';
+        width.value = column.width === undefined ? '' : String(Math.round(column.width * 100));
+        width.addEventListener('change', () => {
+          const percent = Number(width.value);
+          column.width = width.value === '' || !(percent > 0) ? undefined : Math.min(100, percent) / 100;
+          this.changed();
+        });
         const head = document.createElement('div');
         head.className = 'table-colhead';
-        head.append(select, del);
+        head.append(ruleLeft, select, width, del);
         grid.append(head);
       }
+      grid.append(this.ruleToggle('│', '表の右端に縦線', block.ruleRight === true, (on) => {
+        block.ruleRight = on || undefined;
+        build();
+      }));
 
       const rows = block.header ? [block.header, ...block.rows] : block.rows;
       rows.forEach((row, r) => {
@@ -431,6 +468,11 @@ class BlockEditor {
           input.type = 'text';
           input.className = 'block-input table-cell';
           if (block.header && r === 0) input.classList.add('table-header-cell');
+          // 罫線はセルの枠の太さで見せる
+          input.classList.toggle('rule-top', r === 0 && block.ruleTop === true);
+          input.classList.toggle('rule-below', row.ruleBelow === true);
+          input.classList.toggle('rule-left', block.columns[c]?.ruleLeft === true);
+          input.classList.toggle('rule-right', c === cols - 1 && block.ruleRight === true);
           input.value = text;
           input.addEventListener('input', () => {
             row.cells[c] = input.value;
@@ -438,6 +480,10 @@ class BlockEditor {
           });
           grid.append(input);
         });
+        grid.append(this.ruleToggle('＿', 'この行の下に横線', row.ruleBelow === true, (on) => {
+          row.ruleBelow = on || undefined;
+          build();
+        }));
       });
 
       if (focus) {
@@ -448,13 +494,19 @@ class BlockEditor {
     const newRow = (): TableRow => ({ cells: block.columns.map(() => '') });
 
     const addRow = this.controlButton('＋行', '行を追加', () => {
-      block.rows.push(newRow());
+      // 下の横線が最後の行だけにある（\bottomrule の）ときは、その線を新しい行へ移して表の下端に保つ
+      const last = block.rows[block.rows.length - 1];
+      const before = block.rows[block.rows.length - 2];
+      const bottomOnly = last?.ruleBelow === true && before !== undefined && !before.ruleBelow;
+      block.rows.push({ ...newRow(), ruleBelow: last?.ruleBelow });
+      if (bottomOnly) last.ruleBelow = undefined;
       build({ row: block.rows.length - 1 + (block.header ? 1 : 0), col: 0 });
       this.changed();
     });
     const delRow = this.controlButton('－行', '最後の行を削除', () => {
       if (block.rows.length <= 1) return;
-      block.rows.pop();
+      const removed = block.rows.pop();
+      if (removed?.ruleBelow) block.rows[block.rows.length - 1].ruleBelow = true;
       build();
       this.changed();
     });
@@ -470,13 +522,24 @@ class BlockEditor {
     headerCheck.type = 'checkbox';
     headerCheck.checked = block.header !== undefined;
     headerCheck.addEventListener('change', () => {
-      block.header = headerCheck.checked ? newRow() : undefined;
+      block.header = headerCheck.checked ? { ...newRow(), ruleBelow: true } : undefined;
       build();
       this.changed();
     });
     headerLabel.append(headerCheck, ' 見出し行');
 
-    toolbar.append(addRow, delRow, addCol, headerLabel);
+    const ruleTopLabel = document.createElement('label');
+    const ruleTopCheck = document.createElement('input');
+    ruleTopCheck.type = 'checkbox';
+    ruleTopCheck.checked = block.ruleTop === true;
+    ruleTopCheck.addEventListener('change', () => {
+      block.ruleTop = ruleTopCheck.checked || undefined;
+      build();
+      this.changed();
+    });
+    ruleTopLabel.append(ruleTopCheck, ' 上端の横線');
+
+    toolbar.append(addRow, delRow, addCol, headerLabel, ruleTopLabel);
 
     const caption = document.createElement('input');
     caption.type = 'text';

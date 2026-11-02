@@ -97,6 +97,13 @@ type TableCellAlign = 'l' | 'c' | 'r';
 
 interface TableColumn {
   align: TableCellAlign;
+  /**
+   * 本文の幅（\linewidth）に対する列の幅（0〜1）。指定するとセル内で折り返す（p{幅}）。
+   * 未指定なら文字に合わせた幅で、折り返さない
+   */
+  width?: number;
+  /** この列の左に縦線を引くか。未指定なら引かない */
+  ruleLeft?: boolean;
 }
 
 /** [平文] セル1つ分の文字列 */
@@ -110,6 +117,8 @@ type TableCell = string;
  */
 interface TableRow {
   cells: TableCell[];
+  /** この行の下に横線を引くか。未指定なら引かない */
+  ruleBelow?: boolean;
 }
 
 interface TableBlock {
@@ -119,13 +128,17 @@ interface TableBlock {
   caption?: string;
   /** 列定義。tabular の列指定（例: {lc}）はこの順序で組み立てる */
   columns: TableColumn[];
-  /** 見出し行。未指定なら \toprule の直後に \midrule を出さず、本体行のみを出力する */
+  /** 見出し行。未指定なら本体行のみを出力する */
   header?: TableRow;
   /**
    * 本体行。各行の cells.length は columns.length と一致させる。
    * 型では保証できないため、編集UI側で列の追加削除時に揃えること。
    */
   rows: TableRow[];
+  /** 表の上端に横線を引くか。未指定なら引かない */
+  ruleTop?: boolean;
+  /** 表の右端（最後の列の右）に縦線を引くか。未指定なら引かない */
+  ruleRight?: boolean;
 }
 
 interface ImageBlock {
@@ -250,8 +263,11 @@ interface CloudProject {
  *     保存機能が未実装で旧形式のデータは存在しないため、v1 からの移行処理は書いていない。
  * v3: 文字の装飾（TextMarks）・脚注・引用・コード・区切りブロック・式番号・文書設定を追加。
  *     どれも追加のみ（新しい項目は optional）なので、v2 の文書は schemaVersion を書き換えるだけで読める。
+ * v4: 表の罫線（ruleTop / ruleRight / 列の ruleLeft / 行の ruleBelow）と列の幅（width）を追加。
+ *     v3 までは常に \toprule・\midrule・\bottomrule を出していたが、v4 では指定した罫線だけを出す。
+ *     保存機能が未実装で v3 の文書は残っていないため、移行処理は書いていない。
  */
-const SCHEMA_VERSION = 3;
+const SCHEMA_VERSION = 4;
 
 /** 読み込んだ文書が現行スキーマかどうか。false なら移行処理が必要。 */
 function isCurrentSchema(doc: BlockDocument): boolean {

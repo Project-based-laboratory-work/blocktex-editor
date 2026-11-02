@@ -21,7 +21,7 @@ import pymupdf
 from common.blocks import ir_to_document
 from common.ir import Element, IRDocument, Page, normalize_bbox, save_ir, to_dict, validate
 from rule_based.labels import load_labels
-from rule_based.pdf_extract import NAME, extract, extract_ir
+from rule_based.pdf_extract import NAME, extract, extract_ir, table_element
 from rule_based.rule_based_classifier import classify_page
 
 
@@ -36,14 +36,16 @@ def classify_ir(pdf_path: str) -> IRDocument:
     for page_blocks in extract(pdf_path):
         page = Page(page=page_blocks.page + 1, width=page_blocks.width, height=page_blocks.height, unit="pt")
         pages.append(page)
-        cells_by_bbox = {t.bbox: t.cells for t in page_blocks.table_blocks}
-        # 分類結果には文字サイズ・太字が無いので、同じbboxの抽出結果から引く（見出しレベルの推定に使う）
+        table_by_bbox = {t.bbox: t for t in page_blocks.table_blocks}
+        # 分類結果には文字サイズ・太字・装飾が無いので、同じbboxの抽出結果から引く（見出しレベルの推定などに使う）
         text_by_bbox = {b.bbox: b for b in page_blocks.text_blocks}
         for cb in classify_page(page_blocks):
             bbox = normalize_bbox(cb.bbox, page.width, page.height)
+            if cb.kind == "table" and cb.bbox in table_by_bbox:
+                page.elements.append(table_element(table_by_bbox[cb.bbox], bbox, page.width, label="table"))
+                continue
             if cb.kind in ("table", "figure"):
-                table_cells = cells_by_bbox.get(cb.bbox) if cb.kind == "table" else None
-                page.elements.append(Element(kind=cb.kind, bbox=bbox, cells=table_cells, label=cb.kind))
+                page.elements.append(Element(kind=cb.kind, bbox=bbox, label=cb.kind))
                 continue
             source = text_by_bbox.get(cb.bbox)
             page.elements.append(
@@ -51,6 +53,7 @@ def classify_ir(pdf_path: str) -> IRDocument:
                     kind="text",
                     bbox=bbox,
                     text=cb.text,
+                    runs=source.runs if source else None,
                     font_size=source.font_size if source else None,
                     bold=source.bold if source else None,
                     label=cb.kind,

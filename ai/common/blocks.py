@@ -19,9 +19,11 @@ from typing import Any
 
 from common.ir import Element, IRDocument, load_ir
 
-EDITOR_SCHEMA_VERSION = 3
+EDITOR_SCHEMA_VERSION = 4
 
 MAX_HEADING_LEVEL = 3
+# 列幅（本文の幅に対する比率）の下限。web/src/tex.ts の MIN_COLUMN_WIDTH と同じ
+MIN_COLUMN_WIDTH = 0.05
 TABLE_CAPTION_PATTERN = re.compile(r"(表|Table)\s*\d")
 
 # 文字の装飾（ir.py の Run と model.ts の TextMarks で同じ名前）
@@ -179,17 +181,48 @@ def _list_items(elements: list[Element]) -> tuple[str, list[dict[str, Any]]]:
     return marker or "dot", [{"content": _rich(_join_char_lines(item))} for item in items]
 
 
-def _table_block(el: Element, caption: str | None) -> dict[str, Any]:
-    rows = el.cells or [[""]]
-    n_cols = max(len(row) for row in rows) or 1
+def _fits(values: list | None, n: int) -> bool:
+    """表の項目（aligns など）があり、長さが合っているか。合わなければ使わない（判定の失敗とみなす）。"""
+    return values is not None and len(values) == n
+
+
+def _table_block(el: Element, caption: str | None, text_area: tuple[float, float]) -> dict[str, Any]:
+    """
+    罫線（col_rules・row_rules）が分からないときは、v3 までのエディタと同じ見た目（上端と下端の横線）にする。
+    列幅（col_widths）はページの幅に対する比率なので、図と同じく本文の幅に対する比率に直す。
+    """
+    # セル内の改行はPDFの折り返しなので、段落と同じくつなぐ（エディタのセルは1行）
+    rows = [[_join_lines(cell) for cell in row] for row in el.cells] if el.cells else [[""]]
+    n_rows, n_cols = len(rows), max(len(row) for row in rows) or 1
     # 揃えが分からない（または列数と合わない）ときは左寄せ
-    aligns = el.aligns if el.aligns and len(el.aligns) == n_cols else ["l"] * n_cols
-    block: dict[str, Any] = {
-        "id": _new_id(),
-        "type": "table",
-        "columns": [{"align": align} for align in aligns],
-        "rows": [{"cells": row + [""] * (n_cols - len(row))} for row in rows],
-    }
+    aligns = el.aligns if _fits(el.aligns, n_cols) else ["l"] * n_cols
+    col_rules = el.col_rules if _fits(el.col_rules, n_cols + 1) else [False] * (n_cols + 1)
+    row_rules = el.row_rules if _fits(el.row_rules, n_rows + 1) else [True] + [False] * (n_rows - 1) + [True]
+    widths = el.col_widths if _fits(el.col_widths, n_cols) else [None] * n_cols
+    left, right = text_area
+
+    columns = []
+    for align, rule, width in zip(aligns, col_rules, widths):
+        column: dict[str, Any] = {"align": align}
+        if width is not None and right > left:
+            column["width"] = round(min(1.0, max(MIN_COLUMN_WIDTH, width / (right - left))), 3)
+        if rule:
+            column["ruleLeft"] = True
+        columns.append(column)
+
+    block_rows = []
+    for row, rule in zip(rows, row_rules[1:]):
+        block_row: dict[str, Any] = {"cells": row + [""] * (n_cols - len(row))}
+        if rule:
+            block_row["ruleBelow"] = True
+        block_rows.append(block_row)
+
+    # model.ts では罫線の項目は「引くときだけ true を書く」
+    block: dict[str, Any] = {"id": _new_id(), "type": "table", "columns": columns, "rows": block_rows}
+    if row_rules[0]:
+        block["ruleTop"] = True
+    if col_rules[-1]:
+        block["ruleRight"] = True
     if caption:
         block["caption"] = caption
     return block
@@ -259,7 +292,7 @@ def ir_to_document(ir: IRDocument, title: str | None = None) -> dict[str, Any]:
             # tex が無いときは仮にPDFの文字をそのまま入れる（数式OCRで tex を埋めるまで）
             blocks.append({"id": _new_id(), "type": "math", "displayMode": True, "tex": el.tex or (el.text or "").strip()})
         elif label == "table":
-            blocks.append(_table_block(el, captions.get(i)))
+            blocks.append(_table_block(el, captions.get(i), text_area))
         elif label == "figure":
             blocks.append(_image_block(el, captions.get(i), text_area))
         elif label == "paragraph" or (label == "caption" and i not in used_captions):

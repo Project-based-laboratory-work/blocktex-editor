@@ -20,7 +20,7 @@ PDF・画像の読み込みで、どのモデルも同じ形のJSONを出すた�
 
 ```json
 {
-  "ir_version": 2,
+  "ir_version": 3,
   "source": "sample.pdf",
   "extractor": "rule_based",
   "params": { "preprocess": "otsu", "scale": 1.5 },
@@ -33,7 +33,10 @@ PDF・画像の読み込みで、どのモデルも同じ形のJSONを出すた�
           "kind": "text", "bbox": [0.131, 0.2, 0.8, 0.22], "text": "これは重要な点です。",
           "runs": [{ "text": "これは" }, { "text": "重要", "bold": true, "underline": true }, { "text": "な点です。" }]
         },
-        { "kind": "table", "bbox": [0.131, 0.276, 0.5, 0.33], "cells": [["項目", "値"], ["工数", "15時間"]], "aligns": ["l", "r"] },
+        {
+          "kind": "table", "bbox": [0.131, 0.276, 0.5, 0.33], "cells": [["項目", "値"], ["工数", "15時間"]], "aligns": ["l", "r"],
+          "col_rules": [true, true, true], "row_rules": [true, true, true], "col_widths": [null, 0.2]
+        },
         { "kind": "figure", "bbox": [0.131, 0.4, 0.6, 0.5] }
       ]
     }
@@ -43,7 +46,7 @@ PDF・画像の読み込みで、どのモデルも同じ形のJSONを出すた�
 
 | 項目 | 内容 |
 |---|---|
-| `ir_version` | IRの版数。形を変えたら `ir.py` の `IR_VERSION` を上げる。版1のJSONも読み込める（版2は省略できる項目を足しただけのため） |
+| `ir_version` | IRの版数。形を変えたら `ir.py` の `IR_VERSION` を上げる。版1・版2のJSONも読み込める（版2・版3は省略できる項目を足しただけのため） |
 | `source` / `extractor` | 入力ファイル名 / 抽出器の名前 |
 | `params` | 前処理などのパラメータ。同じ抽出器でもパラメータ違いを別物として比較するために書く |
 | `structurer` | ラベルを付けた構造化器の名前。①では書かない |
@@ -58,6 +61,9 @@ PDF・画像の読み込みで、どのモデルも同じ形のJSONを出すた�
 | `confidence` | 参考値。モデルごとに意味が違うので比較には使わない |
 | `cells` | 表の中身（行×列の文字列）。取れる抽出器だけ |
 | `aligns` | 表の列ごとの揃え（`"l"` 左 / `"c"` 中央 / `"r"` 右）。`cells` の列数と同じ長さ。判定できる抽出器だけ |
+| `col_rules` | 表の縦線の有無。列の境目（左端・列の間・右端）ごとの `true` / `false` で、**列数+1個**。判定できる抽出器だけ |
+| `row_rules` | 表の横線の有無。行の境目（上端・行の間・下端）ごとの `true` / `false` で、**行数+1個**。判定できる抽出器だけ |
+| `col_widths` | 表の列幅（ページの幅で割った0〜1）。`cells` の列数と同じ長さ。**セル内で折り返している列だけ**値を入れ、ほかの列は `null`（エディタで文字に合わせた幅になる）。判定できる抽出器だけ |
 
 取れなかった値は `null` にせず、**キーごと書かない**（`save_ir` が自動でそうする）。
 
@@ -80,7 +86,7 @@ PDF・画像の読み込みで、どのモデルも同じ形のJSONを出すた�
 
 ## ③ エディタ用JSON
 
-エディタの `BlockDocument`（[web/src/model.ts](../../web/src/model.ts)、`schemaVersion: 3`）そのもの。②からの変換ルール（[blocks.py](blocks.py)）:
+エディタの `BlockDocument`（[web/src/model.ts](../../web/src/model.ts)、`schemaVersion: 4`）そのもの。②からの変換ルール（[blocks.py](blocks.py)）:
 
 | label | ブロック | 補足 |
 |---|---|---|
@@ -88,7 +94,7 @@ PDF・画像の読み込みで、どのモデルも同じ形のJSONを出すた�
 | `paragraph` | `paragraph` | PDFの折り返しの改行はつなぐ（英数字どうしの間だけ空白を入れる）。`runs` があれば、太字・斜体・下線を同じ範囲に付ける |
 | `list` | `list` | 連続した `list` 要素は1つにまとめる。行頭の `・` `•` `-` `1.` `(1)` で項目を分け、記号の種類から `marker` を決める。`runs` の装飾は段落と同じく残す |
 | `math` | `math`（別行立て） | `tex` が無ければPDFの文字をそのまま入れる（仮の値。コンパイルが通らないことがある） |
-| `table` | `table` | `cells` があれば中身を入れる。列の揃えは `aligns`（無いか列数と合わなければ全部左寄せ） |
+| `table` | `table` | `cells` があれば中身を入れる。列の揃えは `aligns`（無いか列数と合わなければ全部左寄せ）。罫線は `col_rules` → 列の `ruleLeft`・表の `ruleRight`、`row_rules` → 表の `ruleTop`・行の `ruleBelow`（無いか長さが合わなければ上端と下端の横線だけ）。`col_widths` は本文の幅に対する比率に直して列の `width` にする |
 | `figure` | `image` | 画像ファイルは無いので `src` は空（エディタで選び直す）。幅は本文の幅に対する比率 |
 | `caption` | 隣の表・図の `caption` | 同じページの隣に表・図が無ければ段落として残す |
 | `other` | なし | ページ番号・ヘッダーなどは捨てる |
