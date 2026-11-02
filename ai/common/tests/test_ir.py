@@ -33,6 +33,14 @@ def sample_doc() -> IRDocument:
                 runs=[Run("これは"), Run("重要", bold=True, underline=True), Run("な点です。")],
             ),
             Element(kind="table", bbox=(0.1, 0.6, 0.9, 0.7), cells=[["項目", "値"], ["工数", "15"]], aligns=["l", "r"]),
+            Element(
+                kind="table",
+                bbox=(0.1, 0.75, 0.9, 0.85),
+                cells=[["項目", "説明"], ["工数", "長い説明が\n折り返す"]],
+                col_rules=[True, True, True],
+                row_rules=[True, True, False],
+                col_widths=[None, 0.4],
+            ),
         ],
     )
     return IRDocument(source="sample.pdf", extractor="test", pages=[page], params={"scale": 1.5})
@@ -60,9 +68,10 @@ def test_none_fields_are_omitted_from_json():
     assert from_dict(json.loads(json.dumps(data))) == sample_doc()
 
 
-def test_version_1_is_read_as_current_version():
+@pytest.mark.parametrize("version", [1, 2])
+def test_old_versions_are_read_as_current_version(version):
     data = to_dict(sample_doc())
-    data["ir_version"] = 1
+    data["ir_version"] = version
     doc = from_dict(data)
     assert doc.ir_version == IR_VERSION
     assert validate(doc) == []
@@ -102,10 +111,29 @@ def test_validate_reports_broken_runs_and_aligns():
         "italic は true / false",
         "runs は kind='text'",
         "不明なalign 'center'",
-        "cells の列数 3",
+        "aligns が2個（cells に合わせて 3 個",
         "aligns は kind='table'",
     ]:
         assert expected in problems
+
+
+def test_validate_reports_broken_table_rules_and_widths():
+    doc = sample_doc()
+    cells = [["a", "b"], ["c", "d"], ["e", "f"]]
+    doc.pages[0].elements = [
+        Element(kind="table", bbox=(0.1, 0.1, 0.2, 0.2), cells=cells, col_rules=[True, False], row_rules=[True] * 4),
+        Element(kind="table", bbox=(0.1, 0.1, 0.2, 0.2), cells=cells, col_rules=[1, 0, 1], col_widths=[0.0, 1.5]),
+        Element(kind="text", bbox=(0.1, 0.1, 0.2, 0.2), text="x", row_rules=[True]),
+    ]
+    problems = "\n".join(validate(doc))
+    for expected in [
+        "col_rules が2個（cells に合わせて 3 個",
+        "col_rules は true / false",
+        "col_widths は 0より大きく1以下",
+        "row_rules は kind='table'",
+    ]:
+        assert expected in problems
+    assert "row_rules が" not in problems  # 行数3 + 1 = 4個なので正しい
 
 
 def test_new_labels_are_valid():

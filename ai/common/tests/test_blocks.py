@@ -74,7 +74,7 @@ def test_caption_is_attached_to_figure_and_table():
     assert blocks[0]["caption"] == "図1: 図"
     assert blocks[1]["caption"] == "表1: 表"
     assert blocks[1]["columns"] == [{"align": "l"}, {"align": "l"}]
-    assert blocks[1]["rows"] == [{"cells": ["a", "b"]}, {"cells": ["c", ""]}]  # 列数を揃える
+    assert [row["cells"] for row in blocks[1]["rows"]] == [["a", "b"], ["c", ""]]  # 列数を揃える
 
 
 def test_caption_without_target_stays_paragraph():
@@ -137,6 +137,36 @@ def test_table_columns_use_aligns():
     # 列数と合わない揃えは使わず、左寄せにする
     table.aligns = ["r"]
     assert convert(table)[0]["columns"] == [{"align": "l"}, {"align": "l"}, {"align": "l"}]
+
+
+def test_table_without_rules_gets_top_and_bottom_rules():
+    # 罫線が分からない表は、今までのエディタと同じ見た目（上端と下端の横線だけ）にする
+    table = Element(kind="table", bbox=(0.1, 0.1, 0.9, 0.3), label="table", cells=[["a", "b"], ["c", "d"], ["e", "f"]])
+    block = convert(table)[0]
+    assert block["ruleTop"] is True and "ruleRight" not in block
+    assert [row.get("ruleBelow", False) for row in block["rows"]] == [False, False, True]
+    assert all("ruleLeft" not in column for column in block["columns"])
+
+
+def test_table_rules_and_widths():
+    table = Element(
+        kind="table",
+        bbox=(0.1, 0.3, 0.9, 0.5),
+        label="table",
+        cells=[["項目", "説明"], ["工数", "長い説明"]],
+        col_rules=[True, False, True],
+        row_rules=[False, True, True],
+        col_widths=[None, 0.4],
+    )
+    blocks = convert(text("paragraph", "本文", 0.1), table)  # 本文の幅は 0.8
+    block = blocks[1]
+    assert "ruleTop" not in block and block["ruleRight"] is True
+    assert block["columns"] == [{"align": "l", "ruleLeft": True}, {"align": "l", "width": 0.5}]
+    assert block["rows"] == [{"cells": ["項目", "説明"], "ruleBelow": True}, {"cells": ["工数", "長い説明"], "ruleBelow": True}]
+    # 長さが cells と合わない項目は使わない
+    table.col_rules, table.col_widths = [True], [0.4]
+    block = convert(table)[0]
+    assert block["columns"] == [{"align": "l"}, {"align": "l"}] and "ruleRight" not in block
 
 
 def test_title_author_date_become_one_title_block_at_top():

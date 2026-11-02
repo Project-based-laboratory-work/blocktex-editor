@@ -18,9 +18,9 @@ from dataclasses import asdict, dataclass, field
 from typing import Any, Literal, get_args
 
 # IRの形を変えたらインクリメントする
-IR_VERSION = 2
-# 読み込める古い版。版2は版1に省略できる項目を足しただけなので、版1はそのまま読める
-COMPATIBLE_VERSIONS = (1,)
+IR_VERSION = 3
+# 読み込める古い版。版2・版3は省略できる項目を足しただけなので、古い版もそのまま読める
+COMPATIBLE_VERSIONS = (1, 2)
 
 # (x0, y0, x1, y1)。左上原点で、ページの幅・高さで割った0〜1の値
 Bbox = tuple[float, float, float, float]
@@ -67,6 +67,9 @@ class Element:
     confidence: float | None = None  # 参考値。モデルごとに意味が違うので比較には使わない
     cells: list[list[str]] | None = None  # 表の中身（行 × 列）。取れる抽出器のみ
     aligns: list[Align] | None = None  # 表の列ごとの揃え。判定できない抽出器は None
+    col_rules: list[bool] | None = None  # 表の縦線。列の境目（左端・列の間・右端）ごとで、列数+1個。判定できない抽出器は None
+    row_rules: list[bool] | None = None  # 表の横線。行の境目（上端・行の間・下端）ごとで、行数+1個。判定できない抽出器は None
+    col_widths: list[float | None] | None = None  # 表の列幅（ページの幅で割った0〜1）。セル内で折り返している列だけ入れ、ほかは None
     # ↓ ここから下はラベル付きIRでだけ使う
     label: Label | None = None
     level: int | None = None  # label="heading" の見出しレベル（1〜3）。分からなければ None
@@ -174,16 +177,28 @@ def _validate_runs(where: str, el: Element) -> list[str]:
     return problems
 
 
-def _validate_aligns(where: str, el: Element) -> list[str]:
-    if el.aligns is None:
-        return []
+def _validate_table(where: str, el: Element) -> list[str]:
+    """表だけに付ける項目（aligns・col_rules・row_rules・col_widths）の形と長さ。"""
+    fields = {"aligns": el.aligns, "col_rules": el.col_rules, "row_rules": el.row_rules, "col_widths": el.col_widths}
+    used = [name for name, value in fields.items() if value is not None]
     if el.kind != "table":
-        return [f"{where}: aligns は kind='table' のときだけ付ける"]
-    problems = [f"{where}: 不明なalign {a!r}（使えるのは {ALIGNS}）" for a in el.aligns if a not in ALIGNS]
+        return [f"{where}: {name} は kind='table' のときだけ付ける" for name in used]
+
+    problems = []
+    if el.aligns is not None:
+        problems += [f"{where}: 不明なalign {a!r}（使えるのは {ALIGNS}）" for a in el.aligns if a not in ALIGNS]
+    for name in ("col_rules", "row_rules"):
+        if fields[name] is not None and not all(isinstance(v, bool) for v in fields[name]):
+            problems.append(f"{where}: {name} は true / false の並びにする")
+    if el.col_widths is not None and not all(w is None or 0.0 < w <= 1.0 for w in el.col_widths):
+        problems.append(f"{where}: col_widths は 0より大きく1以下の値か null にする")
+
     if el.cells:
-        n_cols = max(len(row) for row in el.cells)
-        if len(el.aligns) != n_cols:
-            problems.append(f"{where}: aligns が{len(el.aligns)}個（cells の列数 {n_cols} と同じにする）")
+        n_rows, n_cols = len(el.cells), max(len(row) for row in el.cells)
+        expected = {"aligns": n_cols, "col_rules": n_cols + 1, "row_rules": n_rows + 1, "col_widths": n_cols}
+        for name in used:
+            if len(fields[name]) != expected[name]:
+                problems.append(f"{where}: {name} が{len(fields[name])}個（cells に合わせて {expected[name]} 個にする）")
     return problems
 
 
@@ -208,7 +223,7 @@ def _validate_element(where: str, el: Element) -> list[str]:
     if el.cells is not None and not all(isinstance(row, list) and all(isinstance(c, str) for c in row) for row in el.cells):
         problems.append(f"{where}: cells は文字列の二次元配列にする")
     problems += _validate_runs(where, el)
-    problems += _validate_aligns(where, el)
+    problems += _validate_table(where, el)
 
     if el.label is not None and el.label not in LABELS:
         problems.append(f"{where}: 不明なlabel {el.label!r}（使えるのは {LABELS}）")
