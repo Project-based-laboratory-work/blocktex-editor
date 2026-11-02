@@ -56,6 +56,12 @@ TABLE_CAPTION_PATTERN = re.compile(r"(表|Table)\s*\d+")
 TABLE_CAPTION_MAX_CHARS = 100
 # キャプションの下の文字を表の行として集めるとき、間がこの値（キャプションの文字サイズに対する比率）より空いたら表の終わり
 TABLE_ROW_GAP_RATIO = 2.0
+# キャプションと表の1行目の間の上限（同じ比率）。キャプションの下の余白の分、行の間より広く取る
+TABLE_CAPTION_GAP_RATIO = 3.5
+# 2段組みの判定。段の境目（ページの中央）からこの値(pt)までのはみ出しは同じ段とみなし、
+# 右の段だけにある幅の広い（ページの幅のこの割合以上の）文字があれば2段組みのページとみなす
+COLUMN_GUTTER = 10.0
+COLUMN_TEXT_MIN_WIDTH_RATIO = 0.3
 # キャプションの下で集めた文字の範囲を、表を探すときに広げる幅(pt)
 TABLE_REGION_PADDING = 2.0
 # 罫線とみなす線の長さ（表の幅・高さに対する割合）。セルの中の下線などを罫線と間違えないため
@@ -341,6 +347,16 @@ def _overlaps(a: Bbox, b: Bbox) -> bool:
     return min(a[2], b[2]) > max(a[0], b[0]) and min(a[3], b[3]) > max(a[1], b[1])
 
 
+def _side(bbox: Bbox, page_width: float) -> str | None:
+    """2段組みのどちらの段にあるか。段をまたいでいれば None。"""
+    center = page_width / 2
+    if bbox[2] <= center + COLUMN_GUTTER:
+        return "left"
+    if bbox[0] >= center - COLUMN_GUTTER:
+        return "right"
+    return None
+
+
 def _extract_tables_near_captions(
     page: pdfplumber.page.Page, page_no: int, text_blocks: list[TextBlock], found_bboxes: list[Bbox]
 ) -> list[TableBlock]:
@@ -348,20 +364,26 @@ def _extract_tables_near_captions(
     罫線から見つからなかった表（縦線の無い booktabs の表・罫線の無い表）を、キャプションの下の文字から探す。
     「表1」などで始まる短い1行の下に続く文字のブロックを、間が空くところまで集め、その範囲だけで
     文字の位置から行・列を決める（pdfplumber の text 方式）。2行×2列に満たないものは表とみなさない。
-    キャプションが表の上にある前提で、2段組みの段の区別はしていない。
+    キャプションが表の上にある前提。2段組みのページでは、キャプションと同じ段の文字だけを集める。
     """
     result = []
     blocks = sorted(text_blocks, key=lambda b: b.bbox[1])
+    min_width = page.width * COLUMN_TEXT_MIN_WIDTH_RATIO
+    two_column = any(_side(b.bbox, page.width) == "right" and b.bbox[2] - b.bbox[0] >= min_width for b in blocks)
 
     for i, caption in enumerate(blocks):
         is_caption = "\n" not in caption.text and len(caption.text) <= TABLE_CAPTION_MAX_CHARS
         if not is_caption or not TABLE_CAPTION_PATTERN.match(caption.text):
             continue
 
+        side = _side(caption.bbox, page.width) if two_column else None
         candidates = []
         bottom = caption.bbox[3]
         for block in blocks[i + 1 :]:
-            if block.bbox[1] - bottom > caption.font_size * TABLE_ROW_GAP_RATIO:
+            if side is not None and _side(block.bbox, page.width) != side:
+                continue  # もう一方の段の文字
+            ratio = TABLE_ROW_GAP_RATIO if candidates else TABLE_CAPTION_GAP_RATIO
+            if block.bbox[1] - bottom > caption.font_size * ratio:
                 break
             candidates.append(block)
             bottom = max(bottom, block.bbox[3])  # 同じ行のセルは上端がほぼ同じなので、下端の一番下から測る
