@@ -6,17 +6,15 @@ Tesseract の認識結果を正解テキストと比べて CER（文字誤り率
     ocr/sample/jphorizon/jphorizontal_001.jpg, jphorizontal_001.txt, ...
 
 使い方（ai/ で）:
-    # 全プリセットを比べる（既定。プリセットの数 × 画像の数だけ読むので時間がかかる。横書きに固定して10枚で約9分）
+    # 全プリセットを比べる（既定。プリセットの数 × 画像の数だけ読むので時間がかかる。10枚で約9分）
     python -m tesseract_ocr.evaluate
     # プリセットを絞る（presets.py の名前を並べる）
     python -m tesseract_ocr.evaluate --presets base gray otsu up2
-    # データセットを絞る・向きを決め打ちする
-    python -m tesseract_ocr.evaluate --datasets eng --direction auto
+    # データセットを絞る
+    python -m tesseract_ocr.evaluate --datasets eng
 
-向きは、--direction を省略すると horizontal（横書き）。auto にすると横書き・縦書きの両方で読み、
-「文字数 × 信頼度」が大きい方を採る（時間は約2倍）。言語は、--lang を省略すると向きごとの既定値（横 jpn+eng / 縦 jpn_vert+eng）。
+言語は、--lang を省略すると jpn+eng（英語の画像も同じ）。
 フォルダ名は結果をまとめる単位に使うだけで、読み方の判断には使わない。
-auto のとき、画像ごとに選ばれた向きと、横・縦それぞれの点数は results.csv に残す。
 
 出力（-o の下。既定は tesseract_ocr/data/eval/、git管理外）:
     <プリセット>/<データセット>/<画像名>.<プリセット>.ir.json  … 共通IR ①
@@ -39,7 +37,7 @@ from pathlib import Path
 
 from common.ir import IRDocument, save_ir
 from evaluation.metrics import char_errors, char_errors_by_script, ratio_or_none
-from tesseract_ocr.ir_adapter import DEFAULT_DIRECTION, DIRECTIONS, check_langs, extract_ir
+from tesseract_ocr.ir_adapter import DEFAULT_LANG, check_langs, extract_ir
 from tesseract_ocr.presets import PRESETS
 
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".tif", ".tiff", ".bmp"}
@@ -95,9 +93,7 @@ def main() -> None:
     parser.add_argument("--datasets", nargs="+", default=None, help="評価するフォルダ名（省略時は正解 .txt がある全フォルダ）")
     parser.add_argument("--presets", nargs="+", default=["all"], choices=[*PRESETS, "all"],
                         help="比べるプリセット（既定の all は presets.py の全部）")
-    parser.add_argument("--direction", default=DEFAULT_DIRECTION, choices=DIRECTIONS,
-                        help="全画像の向き（auto は画像ごとに横・縦の両方で読んで選ぶ）")
-    parser.add_argument("--lang", default=None, help="全画像の言語（省略時は向きごとの既定値）")
+    parser.add_argument("--lang", default=None, help=f"全画像の言語（省略時は {DEFAULT_LANG}）")
     parser.add_argument("-o", "--out-dir", type=Path, default=DEFAULT_OUT, help="出力先")
     args = parser.parse_args()
     if "all" in args.presets:
@@ -109,7 +105,7 @@ def main() -> None:
     if not datasets:
         raise SystemExit(f"正解 .txt のある画像が {args.sample_root} に見つかりません。")
 
-    check_langs(args.direction, args.lang)
+    check_langs(args.lang)
     rows = []
     for ds in datasets:
         pairs = find_pairs(args.sample_root / ds)
@@ -117,11 +113,11 @@ def main() -> None:
         for preset in args.presets:
             out_dir = args.out_dir / preset / ds
             out_dir.mkdir(parents=True, exist_ok=True)
-            print(f"[{preset}] {ds}（{args.direction}, lang={args.lang or '既定'}, {len(pairs)}枚）")
+            print(f"[{preset}] {ds}（lang={args.lang or '既定'}, {len(pairs)}枚）")
 
             for img, txt in pairs:
                 t0 = time.perf_counter()
-                doc = extract_ir(str(img), preset, args.direction, args.lang)
+                doc = extract_ir(str(img), preset, args.lang)
                 sec = time.perf_counter() - t0
 
                 pred, gt = ir_text(doc), txt.read_text(encoding="utf-8")
@@ -130,15 +126,10 @@ def main() -> None:
 
                 errors, chars = char_errors(pred, gt)
                 by_script = char_errors_by_script(pred, gt)
-                # auto のときだけある、横・縦それぞれの点数（向きを選んだ根拠）
-                scores = doc.params.get("direction_scores", {})
                 row = {
                     "preset": preset,
                     "dataset": ds,
                     "image": img.name,
-                    "direction": doc.params["chosen_direction"],
-                    "score_horizontal": scores.get("horizontal"),
-                    "score_vertical": scores.get("vertical"),
                     "lang": doc.params["lang"],
                     "psm": doc.params["psm"],
                     "cer": rate(errors, chars),
@@ -151,7 +142,7 @@ def main() -> None:
                     "sec": round(sec, 3),
                 }
                 rows.append(row)
-                print(f"  {img.name}: {row['direction']}・{row['lang']} CER {row['cer']:.2%}"
+                print(f"  {img.name}: {row['lang']} CER {row['cer']:.2%}"
                       f"（誤り {errors} / {chars} 文字）, {sec:.2f}秒")
 
     args.out_dir.mkdir(parents=True, exist_ok=True)

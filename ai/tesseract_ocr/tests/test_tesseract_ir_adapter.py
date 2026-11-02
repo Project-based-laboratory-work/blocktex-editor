@@ -4,7 +4,7 @@ from PIL import Image
 from common import ir
 from image_common.preprocess import STEPS
 from tesseract_ocr import ir_adapter
-from tesseract_ocr.ir_adapter import OcrRun, extract_ir, is_vertical, to_elements
+from tesseract_ocr.ir_adapter import OcrRun, extract_ir, to_elements
 from tesseract_ocr.presets import PRESETS
 
 
@@ -21,7 +21,7 @@ def test_horizontal_paragraph_is_valid():
         ("次の", 1, 1, 2, 10, 40, 30, 20, 80.0),
         ("行", 1, 1, 2, 40, 40, 20, 20, 80.0),
     ])
-    elements = to_elements(OcrRun("horizontal", "jpn+eng", 3, data), 200, 100)
+    elements = to_elements(OcrRun("jpn+eng", 3, data), 200, 100)
 
     assert len(elements) == 1
     el = elements[0]
@@ -31,22 +31,9 @@ def test_horizontal_paragraph_is_valid():
     assert el.confidence == 0.865
 
 
-def test_vertical_lines_read_right_to_left_top_to_bottom():
-    # 縦書き2列（右の列が1行目）。Tesseract が左の列・下の文字から返しても読み順に並べ直す
-    data = make_data([
-        ("く", 1, 1, 1, 10, 50, 30, 30, 90.0),
-        ("か", 1, 1, 1, 10, 10, 30, 30, 90.0),
-        ("い", 1, 1, 2, 60, 50, 30, 30, 90.0),
-        ("あ", 1, 1, 2, 60, 10, 30, 30, 90.0),
-    ])
-    el = to_elements(OcrRun("vertical", "jpn_vert+eng", 5, data), 100, 100)[0]
-    assert el.text == "あい\nかく"
-    assert el.font_size == 30.0  # 縦書きは列の幅
-
-
 def test_upscaled_coordinates_go_back_to_original():
     data = make_data([("abc", 1, 1, 1, 20, 40, 80, 20, 90.0)])
-    el = to_elements(OcrRun("horizontal", "eng", 3, data), 100, 100, scale=2.0)[0]
+    el = to_elements(OcrRun("eng", 3, data), 100, 100, scale=2.0)[0]
     assert el.bbox == (0.1, 0.2, 0.5, 0.3)
     assert el.font_size == 10.0
 
@@ -58,14 +45,8 @@ def test_skips_blank_words_and_splits_paragraphs():
         ("one", 1, 1, 1, 10, 10, 30, 10, 95.0),
         ("two", 2, 1, 1, 10, 50, 30, 10, 95.0),
     ])
-    elements = to_elements(OcrRun("horizontal", "eng", 3, data), 100, 100)
+    elements = to_elements(OcrRun("eng", 3, data), 100, 100)
     assert [el.text for el in elements] == ["one", "two"]
-
-
-def test_mixed_decides_by_line_shape():
-    assert is_vertical("mixed", [(0, 0, 20, 200), (30, 0, 50, 180)])
-    assert not is_vertical("mixed", [(0, 0, 200, 20)])
-    assert is_vertical("vertical", [(0, 0, 200, 20)])
 
 
 def test_presets_use_known_steps():
@@ -75,13 +56,12 @@ def test_presets_use_known_steps():
 
 
 def fake_tesseract(calls: list):
-    """Tesseract の代わり。画像の左上1/4に単語を1つ返す。縦書きの実行だけ信頼度を高くする。"""
+    """Tesseract の代わり。画像の左上1/4に単語を1つ返す。"""
 
-    def run(image, direction, lang, psm, oem):
-        calls.append((image.size, direction, lang, psm, oem))
+    def run(image, lang, psm, oem):
+        calls.append((image.size, lang, psm, oem))
         w, h = image.size
-        conf = 95.0 if direction == "vertical" else 40.0
-        return OcrRun(direction, lang, psm, make_data([("テスト", 1, 1, 1, 0, 0, w // 2, h // 4, conf)]))
+        return OcrRun(lang, psm, make_data([("テスト", 1, 1, 1, 0, 0, w // 2, h // 4, 95.0)]))
 
     return run
 
@@ -96,15 +76,13 @@ def test_extract_ir_with_each_preset(preset, tmp_path, monkeypatch):
     monkeypatch.setattr(ir_adapter, "run_tesseract", fake_tesseract(calls))
     monkeypatch.setattr(ir_adapter.pytesseract, "get_tesseract_version", lambda: "5.5.0")
 
-    doc = extract_ir(str(image_path), preset, "auto")
+    doc = extract_ir(str(image_path), preset)
 
     assert ir.validate(doc) == []
     assert doc.extractor == "tesseract" and doc.params["preset"] == preset
-    # auto は横・縦の両方で読み、点数の高い縦書きを選ぶ
-    assert [c[1] for c in calls] == ["horizontal", "vertical"]
-    assert doc.params["chosen_direction"] == "vertical" and doc.params["lang"] == "jpn_vert+eng"
-    if "psm" in PRESETS[preset]["tesseract"]:
-        assert {c[3] for c in calls} == {PRESETS[preset]["tesseract"]["psm"]}
+    # 読むのは1回だけ。言語・psm は既定値（プリセットに psm があればそちら）
+    assert len(calls) == 1 and doc.params["lang"] == "jpn+eng"
+    assert calls[0][2] == PRESETS[preset]["tesseract"].get("psm", 3)
     page = doc.pages[0]
     # ページの大きさは元の画像のまま。拡大しても bbox は同じ割合になる
     assert (page.width, page.height) == (200, 100)
@@ -118,16 +96,14 @@ def test_lang_option_overrides_default(tmp_path, monkeypatch):
     monkeypatch.setattr(ir_adapter, "run_tesseract", fake_tesseract(calls))
     monkeypatch.setattr(ir_adapter.pytesseract, "get_tesseract_version", lambda: "5.5.0")
 
-    doc = extract_ir(str(image_path), "base", "horizontal", "eng")
-    assert calls == [((40, 40), "horizontal", "eng", 3, 1)]
-    assert "direction_scores" not in doc.params
+    doc = extract_ir(str(image_path), "base", "eng")
+    assert calls == [((40, 40), "eng", 3, 1)]
+    assert doc.params["lang"] == "eng"
 
 
-def test_unknown_preset_or_direction_is_rejected(tmp_path):
+def test_unknown_preset_is_rejected(tmp_path):
     with pytest.raises(ValueError):
         extract_ir(str(tmp_path / "x.png"), "nope")
-    with pytest.raises(ValueError):
-        extract_ir(str(tmp_path / "x.png"), "base", "diagonal")
 
 
 def eval_row(preset, dataset, errors, chars, sec=1.0):
