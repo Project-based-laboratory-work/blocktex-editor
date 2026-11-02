@@ -1,5 +1,5 @@
 import http from 'node:http';
-import { mkdtemp, writeFile, readFile, rm, access } from 'node:fs/promises';
+import { mkdtemp, writeFile, readFile, rm, access, readdir } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { execFile } from 'node:child_process';
@@ -15,6 +15,42 @@ const PORT = Number(process.env.PORT ?? 8080);
 // server/src/index.ts → ../../ai が ai/ フォルダ
 const AI_DIR = path.resolve(import.meta.dirname, '../../ai');
 const PYTHON = path.join(AI_DIR, '.venv/bin/python');
+
+// 評価の結果（ai/evaluation/run.py が書き出す）
+const RESULTS_DIR = path.join(AI_DIR, 'evaluation/data/results');
+
+// 結果一覧の画面に出す、1回分の実行の要約
+interface RunSummary {
+    run_id: string;
+    model: { id: string; name: string };
+    dataset: string;
+    summary: Record<string, number | null>;   // precision, recall, ... null は「対象外」
+}
+
+async function listRuns(): Promise<RunSummary[]> {
+    let names: string[];
+    try {
+        names = await readdir(RESULTS_DIR);
+    } catch {
+        return [];      // まだ一度も評価していない（フォルダが無い）
+    }
+
+    const runs: RunSummary[] = [];
+    for (const name of names.sort().reverse()) {                              // ← ① 新しい順（名前の逆順）
+        try {
+            const report = JSON.parse(await readFile(path.join(RESULTS_DIR, name, 'report.json'), 'utf-8'));
+            runs.push({
+                run_id: report.run_id,
+                model: { id: report.model.id, name: report.model.name },
+                dataset: report.dataset,
+                summary: report.summary,
+            });
+        } catch {
+            // report.json が無い・壊れているフォルダ（評価を途中で止めたなど）は飛ばす
+        }
+    }
+    return runs;
+}
 
 // 各自のPCで動かす前提なので、画面を開く場所（file:// で開くと 'null'、または localhost）からだけ受け付ける。
 // ほかのサイトを開いているときに、そのページから勝手にコンパイルさせられないようにするため。
@@ -234,6 +270,20 @@ const server = http.createServer((req, res) => {
             }
         });
 
+        return;
+    }
+
+    if (req.method === 'GET' && req.url === '/api/eval/runs') {
+        listRuns()
+            .then((runs) => {
+                res.setHeader('Content-Type', 'application/json; charset=utf-8');
+                res.end(JSON.stringify(runs));
+            })
+            .catch((err) => {
+                console.error(err);
+                res.statusCode = 500;
+                res.end('server error');
+            });
         return;
     }
 
