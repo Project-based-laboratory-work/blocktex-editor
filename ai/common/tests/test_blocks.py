@@ -153,7 +153,7 @@ def test_table_rules_and_widths():
         kind="table",
         bbox=(0.1, 0.3, 0.9, 0.5),
         label="table",
-        cells=[["項目", "説明"], ["工数", "長い説明"]],
+        cells=[["項目", "説明"], ["工数", "長い\n説明"]],
         col_rules=[True, False, True],
         row_rules=[False, True, True],
         col_widths=[None, 0.4],

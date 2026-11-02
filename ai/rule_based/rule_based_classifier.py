@@ -1,12 +1,14 @@
 """
-4-1-2: ルールベースでブロックを 見出し/段落/キャプション/表/図 に分類するベースライン実装。
+4-1-2: ルールベースでブロックを タイトル/著者/日付/見出し/段落/キャプション/表/図 に分類するベースライン実装。
 
 ルール:
   1. 表として検出された領域と重なるテキストは "table" として扱う（テキスト自体は重複させない）
   2. 図として検出された領域と重なるテキストは "figure" として扱う
-  3. 残ったテキストのうち、「図1」「Table 2」などで始まるものを "caption"
-  4. 本文フォントサイズより明らかに大きい／太字で、短いものを "heading"
-  5. それ以外を "paragraph"
+  3. 1ページ目の上の、中央に置かれた短い行の並び（\\maketitle）のうち、一番大きい文字を "title"、
+     日付の形のものを "date"、それ以外を "author"（_title_blocks を参照）
+  4. 残ったテキストのうち、「図1」「Table 2」などで始まるものを "caption"
+  5. 本文フォントサイズより明らかに大きい／太字で、短いものを "heading"
+  6. それ以外を "paragraph"
 
 本文フォントサイズは、ページ内で最も多く使われているフォントサイズ（最頻値）を採用する。
 分類後のブロックは、2段組みを考慮した読み順（段をまたぐブロックで区切り、左の段→右の段）に並べる。
@@ -27,12 +29,21 @@ OVERLAP_RATIO_THRESHOLD = 0.5  # テキストbboxの何割が表/図と重なっ
 CAPTION_MAX_CHARS = 100
 CAPTION_PATTERN = re.compile(r"(図|表|Figure|Fig\.|Table)\s*\d+([.\-]\d+)*")
 COLUMN_GUTTER = 10.0
+# タイトル部分の行とみなす条件。中央からのずれ（ページの幅に対する割合）と、幅の上限（同じ割合）
+TITLE_CENTER_TOLERANCE = 0.05
+TITLE_MAX_WIDTH_RATIO = 0.7
+# タイトル部分の行どうしの間の上限（タイトルの文字サイズに対する比率）。離れた行（中央揃えの見出しなど）を含めないため
+TITLE_MAX_GAP_RATIO = 2.0
+DATE_PATTERN = re.compile(
+    r"\d{4}\s*年|\d{4}[/.\-]\d{1,2}[/.\-]\d{1,2}|(令和|平成|昭和)\s*(\d+|元)\s*年"
+    r"|(January|February|March|April|May|June|July|August|September|October|November|December)\s+\d"
+)
 
 
 @dataclass
 class ClassifiedBlock:
     page: int
-    kind: str  # "heading" | "paragraph" | "table" | "figure" | "caption"
+    kind: str  # "title" | "author" | "date" | "heading" | "paragraph" | "table" | "figure" | "caption"
     bbox: Bbox
     text: str | None
 
@@ -83,6 +94,46 @@ def _sort_reading_order(blocks: list[ClassifiedBlock], page_width: float) -> lis
     return [block for block, _ in sorted(zip(blocks, columns), key=key)]
 
 
+def _title_blocks(page: PageBlocks, text_blocks: list[TextBlock], body_size: float) -> dict[int, str]:
+    """
+    1ページ目のタイトル部分（\\maketitle のタイトル・著者・日付）を探し、{id(ブロック): ラベル} で返す。
+    上から順に「中央に置かれた・幅の狭い・短い1行」が近い間隔で続く間を候補にし、
+    その中に本文より明らかに大きい文字があればタイトル部分とみなす。無ければ空。
+    """
+    if page.page != 0:
+        return {}
+    candidates: list[TextBlock] = []
+    for block in sorted(text_blocks, key=lambda b: b.bbox[1]):
+        x0, _, x1, _ = block.bbox
+        centered = abs((x0 + x1) / 2 - page.width / 2) <= page.width * TITLE_CENTER_TOLERANCE
+        narrow = x1 - x0 <= page.width * TITLE_MAX_WIDTH_RATIO
+        short = "\n" not in block.text and len(block.text) <= HEADING_MAX_CHARS
+        if not (centered and narrow and short):
+            if candidates:
+                break
+            continue  # タイトルより上のヘッダーなどは飛ばす
+        if candidates:
+            gap_limit = max(b.font_size for b in candidates) * TITLE_MAX_GAP_RATIO
+            if block.bbox[1] - candidates[-1].bbox[3] > gap_limit:
+                break
+        candidates.append(block)
+
+    title_size = max((b.font_size for b in candidates), default=0.0)
+    if title_size < body_size * HEADING_SIZE_RATIO:
+        return {}
+    labels = {}
+    # タイトルより上の候補（ページのヘッダーなど）はタイトル部分に入れない
+    first = next(k for k, b in enumerate(candidates) if b.font_size == title_size)
+    for block in candidates[first:]:
+        if block.font_size == title_size:
+            labels[id(block)] = "title"
+        elif DATE_PATTERN.search(block.text):
+            labels[id(block)] = "date"
+        else:
+            labels[id(block)] = "author"
+    return labels
+
+
 def classify_page(page: PageBlocks) -> list[ClassifiedBlock]:
     absorbed_bboxes = [t.bbox for t in page.table_blocks] + [f.bbox for f in page.figure_blocks]
     body_size = _body_font_size(page.text_blocks)
@@ -90,8 +141,16 @@ def classify_page(page: PageBlocks) -> list[ClassifiedBlock]:
     results = [ClassifiedBlock(page.page, "table", t.bbox, None) for t in page.table_blocks]
     results += [ClassifiedBlock(page.page, "figure", f.bbox, None) for f in page.figure_blocks]
 
-    for block in page.text_blocks:
-        if any(_overlap_ratio(block.bbox, absorbed) >= OVERLAP_RATIO_THRESHOLD for absorbed in absorbed_bboxes):
+    text_blocks = [
+        block
+        for block in page.text_blocks
+        if not any(_overlap_ratio(block.bbox, absorbed) >= OVERLAP_RATIO_THRESHOLD for absorbed in absorbed_bboxes)
+    ]
+    title_labels = _title_blocks(page, text_blocks, body_size)
+
+    for block in text_blocks:
+        if id(block) in title_labels:
+            results.append(ClassifiedBlock(page.page, title_labels[id(block)], block.bbox, block.text))
             continue
 
         is_large = block.font_size >= body_size * HEADING_SIZE_RATIO

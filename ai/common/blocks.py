@@ -191,7 +191,8 @@ def _table_block(el: Element, caption: str | None, text_area: tuple[float, float
     罫線（col_rules・row_rules）が分からないときは、v3 までのエディタと同じ見た目（上端と下端の横線）にする。
     列幅（col_widths）はページの幅に対する比率なので、図と同じく本文の幅に対する比率に直す。
     """
-    rows = el.cells or [[""]]
+    # セル内の改行はPDFの折り返しなので、段落と同じくつなぐ（エディタのセルは1行）
+    rows = [[_join_lines(cell) for cell in row] for row in el.cells] if el.cells else [[""]]
     n_rows, n_cols = len(rows), max(len(row) for row in rows) or 1
     # 揃えが分からない（または列数と合わない）ときは左寄せ
     aligns = el.aligns if _fits(el.aligns, n_cols) else ["l"] * n_cols
