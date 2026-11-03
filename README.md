@@ -217,13 +217,14 @@ PDF・画像の読み込みモデルを、正解が分かっている文書で�
 データセットの作り方・指標・モデルの登録方法は [ai/evaluation/README.md](ai/evaluation/README.md) を参照。
 
 ```bash
-cd ai && python -m evaluation.make_dataset --out evaluation/data/synth_v2 --docs 40 && cd ..   # 初回だけ
+cd ai && python -m evaluation.make_dataset --out evaluation/data/synth_all --docs 40 --features all && cd ..   # 初回だけ
 npm run build
 cd server && npm run dev        # listening on :8080 と出たら web/eval.html を開く
 ```
 
 - 結果一覧：データセットごとに、モデル × 指標の表。★ はモデルごとの最新の実行の中で一番良い値
-- モデル詳細：全体の成績、能力の内訳（0〜1 の横棒）、強み・弱み、切り口（日本語/英語など）ごとの成績、混同行列、ケース一覧
+- モデル詳細：全体の成績、能力の内訳（0〜1 の横棒）、強み・弱み、ブロックの種類（表・図・数式・コードなど）ごとの成績、表・数式・コードの中身、切り口（日本語/英語、表あり/なし、2段組など）ごとの成績、混同行列、ケース一覧
+- 表だけ・2段組だけ、のように機能ごとのデータセットも作れる（`--features table --rate 1` など。[ai/evaluation/README.md](ai/evaluation/README.md)）
 - ケース詳細：ページの画像に正解と予測の枠を重ね、当たり・誤検出・見逃しを色と線の種類で分ける。枠をクリックすると正解と予測の文字・ラベルを並べる
-- 「評価を実行」：`POST /api/eval/run`（本文 `{"model": "rule_based", "dataset": "synth_v2"}`）。登録簿にあるモデルと、あるデータセットだけを受け付け、同時に1つだけ実行する
+- 「評価を実行」：`POST /api/eval/run`（本文 `{"model": "rule_based", "dataset": "synth_all"}`）。登録簿にあるモデルと、あるデータセットだけを受け付け、同時に1つだけ実行する
 - 評価の窓口（`/api/eval/...`）は Docker のサーバーでは使えない（イメージに `ai/` が入っていないため）。`npm run dev` で動かす

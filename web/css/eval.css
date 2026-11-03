@@ -247,6 +247,11 @@ button.primary:disabled {
     border-radius: 0 4px 4px 0;
 }
 
+.bar-track.mini {
+    min-width: 120px;
+    height: 10px;
+}
+
 .bar-hit {
     position: absolute;
     inset: -6px 0;

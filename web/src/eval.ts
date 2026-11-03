@@ -39,9 +39,19 @@
         metric: string;
         slice: string;
         value: number;
-        overall: number;
+        overall: number | null;   // ブロックの種類ごとの文章（slice が label=...）は全体と比べないので null
         n: number;
         text: string;
+    }
+
+    // ブロックの種類（正解のラベル）ごとの成績（ai/evaluation/metrics.py の label_scores）
+    interface LabelScore {
+        n_gt: number;
+        n_pred: number;
+        found_rate: number | null;
+        recall: number | null;
+        precision: number | null;
+        f1: number | null;
     }
 
     interface CaseReport {
@@ -62,6 +72,7 @@
         iou_threshold: number;
         summary: Scores;
         by_tag: Record<string, Scores>;
+        by_label?: Record<string, LabelScore>;
         tag_cases?: Record<string, number>;
         findings?: Finding[];
         confusion: { labels: string[]; matrix: number[][] } | null;
@@ -117,6 +128,12 @@
         { key: 'cer_ja', name: 'CER（日本語）', better: 'low', help: '日本語などASCII以外の文字だけで数えたCER（並び順の違いは数えない）' },
         { key: 'cer_en', name: 'CER（英語）', better: 'low', help: 'ASCIIの文字だけで数えたCER（並び順の違いは数えない）' },
         { key: 'deco_f1', name: '装飾 F1', better: 'high', help: '段落・箇条書きの太字・斜体・下線が、正しい文字に付いていたか' },
+        { key: 'table_shape_acc', name: '表の形', better: 'high', help: '当たった表のうち、行数・列数が正解と同じだった割合' },
+        { key: 'table_cell_acc', name: '表のセル', better: 'high', help: '正解のセルのうち、同じ位置のセルの文字が一致した割合' },
+        { key: 'table_align_acc', name: '表の揃え', better: 'high', help: '列の揃え（左・中央・右）が一致した割合' },
+        { key: 'table_rule_acc', name: '表の罫線', better: 'high', help: '縦線・横線の有無（境目ごと）が一致した割合' },
+        { key: 'math_ter', name: '数式 TER', better: 'low', help: '数式のLaTeXのトークン誤り率（直す必要のあるトークン ÷ 正解のトークン数）。LaTeXを出すモデルだけ' },
+        { key: 'code_indent_acc', name: 'コードの字下げ', better: 'high', help: 'コードの各行の字下げ（行頭の空白の数）が正解と同じだった割合' },
         { key: 'sec_per_page', name: '秒/ページ', better: 'low', help: '1ページを読むのにかかった時間' },
     ];
     const METRIC_BY_KEY = new Map(METRICS.map((m) => [m.key, m]));
@@ -132,7 +149,17 @@
         { name: '文字（日本語）', key: 'cer_ja', invert: true },
         { name: '文字（英語）', key: 'cer_en', invert: true },
         { name: '装飾', key: 'deco_f1', invert: false },
+        { name: '表のセル', key: 'table_cell_acc', invert: false },
+        { name: '表の揃え・罫線', key: 'table_rule_acc', invert: false },
+        { name: '数式（LaTeX）', key: 'math_ter', invert: true },
+        { name: 'コードの字下げ', key: 'code_indent_acc', invert: false },
     ];
+
+    // ブロックの種類（ラベル）の読み方（run.py の LABEL_NAMES と同じ）
+    const LABEL_NAMES: Record<string, string> = {
+        heading: '見出し', paragraph: '段落', list: '箇条書き', math: '数式', caption: 'キャプション',
+        table: '表', figure: '図', other: 'ページ番号など', code: 'コード', title: 'タイトル', author: '著者', date: '日付',
+    };
 
     // 切り口（run.py の tag_keys の名前）を読める言葉にする（run.py の TAG_NAMES と同じ）
     const TAG_NAMES: Record<string, string> = {
@@ -144,6 +171,18 @@
         'has_title=False': 'タイトルなし',
         'has_decoration=True': '装飾あり',
         'has_decoration=False': '装飾なし',
+        'has_table=True': '表あり',
+        'has_table=False': '表なし',
+        'has_figure=True': '図あり',
+        'has_figure=False': '図なし',
+        'has_math=True': '数式あり',
+        'has_math=False': '数式なし',
+        'has_code=True': 'コードあり',
+        'has_code=False': 'コードなし',
+        'has_page_number=True': 'ページ番号あり',
+        'has_page_number=False': 'ページ番号なし',
+        'columns=1': '1段組',
+        'columns=2': '2段組',
     };
 
     // 混同行列の濃さ（青の1色で、薄い → 濃い）
@@ -406,6 +445,8 @@
             statsCard(report),
             abilityCard(report, others),
             findingsCard(report),
+            labelCard(report),
+            featureCard(report),
             tagCard(report),
             confusionCard(report),
             casesCard(report),
@@ -473,6 +514,83 @@
                 ? 'この結果は、強み・弱みを出す前の版の評価で作られています。もう一度評価すると表示されます。'
                 : '全体と比べて目立つ差（0.05以上、5件以上の切り口）はありませんでした。');
         return h('section', { class: 'card' }, h('h2', {}, '強み・弱み'), h('p', { class: 'lead' }, '文書の種類（切り口）ごとの成績を全体と比べて、差が大きい順に並べています。'), list);
+    }
+
+    /** 0〜1 の値を、表の中に置く小さな横棒にする */
+    function miniBar(value: number | null): HTMLElement {
+        const track = h('div', { class: 'bar-track mini' });
+        if (value !== null) {
+            track.append(h('div', { class: 'bar-fill', style: `width: ${(Math.max(0, Math.min(1, value)) * 100).toFixed(1)}%` }));
+        }
+        return track;
+    }
+
+    function labelCard(report: Report): HTMLElement {
+        const section = h('section', { class: 'card' }, h('h2', {}, 'ブロックの種類ごとの成績'));
+        const byLabel = report.by_label;
+        if (byLabel === undefined) {
+            section.append(h('p', { class: 'note' }, 'この結果は、種類ごとの成績を出す前の版の評価で作られています。もう一度評価すると表示されます。'));
+            return section;
+        }
+        const hasLabels = report.model.outputs.includes('label');
+        const head = h(
+            'tr',
+            {},
+            h('th', {}, '種類'),
+            h('th', { class: 'num' }, '正解の数'),
+            h('th', {}, '見つけた割合'),
+            h('th', { class: 'num' }, ''),
+            h('th', { class: 'num' }, '分類 Recall'),
+            h('th', { class: 'num' }, '分類 Precision'),
+            h('th', { class: 'num' }, '分類 F1'),
+            h('th', { class: 'num' }, 'その種類と予測した数'),
+        );
+        const rows = Object.entries(byLabel)
+            .filter(([, s]) => s.n_gt > 0)
+            .sort((a, b) => b[1].n_gt - a[1].n_gt)
+            .map(([label, s]) => {
+                const f1Cell = h('td', { class: `num${s.f1 === null ? ' na' : ''}` }, format('f1', s.f1));
+                return h(
+                    'tr',
+                    {},
+                    h('td', {}, `${LABEL_NAMES[label] ?? label}（${label}）`),
+                    h('td', { class: 'num' }, String(s.n_gt)),
+                    h('td', {}, miniBar(s.found_rate)),
+                    h('td', { class: 'num' }, format('recall', s.found_rate)),
+                    h('td', { class: `num${s.recall === null ? ' na' : ''}` }, format('recall', s.recall)),
+                    h('td', { class: `num${s.precision === null ? ' na' : ''}` }, format('precision', s.precision)),
+                    f1Cell,
+                    h('td', { class: 'num' }, hasLabels ? String(s.n_pred) : '—'),
+                );
+            });
+        section.append(
+            h(
+                'p',
+                { class: 'lead' },
+                '見つけた割合：その種類の正解のうち、ラベルを問わず枠が対応した割合。分類の Recall / Precision / F1 は、ラベルまで合っていたものだけで数えます'
+                + '（Precision は、その種類と予測したブロック全部が分母なので、段落を1行ずつ出すモデルでは低く出ます）。',
+            ),
+            h('table', {}, h('thead', {}, head), h('tbody', {}, ...rows)),
+        );
+        return section;
+    }
+
+    function featureCard(report: Report): HTMLElement {
+        const keys = ['table_shape_acc', 'table_cell_acc', 'table_align_acc', 'table_rule_acc', 'math_ter', 'code_indent_acc'];
+        const tiles = keys.map((key) => {
+            const info = METRIC_BY_KEY.get(key)!;
+            const value = report.summary[key] ?? null;
+            const tile = h('div', { class: 'stat' }, h('div', { class: 'label' }, info.name), h('div', { class: `value${value === null ? ' na' : ''}` }, format(key, value)));
+            showTooltip(tile, info.help);
+            return tile;
+        });
+        return h(
+            'section',
+            { class: 'card' },
+            h('h2', {}, '表・数式・コードの中身'),
+            h('p', { class: 'lead' }, '当たったブロックの中身の正しさ。— は、データセットにそのブロックが無いか、モデルがその項目（表の cells、数式の tex など）を出さないもの。'),
+            h('div', { class: 'stats' }, ...tiles),
+        );
     }
 
     function tagCard(report: Report): HTMLElement {
