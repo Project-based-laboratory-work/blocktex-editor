@@ -1,5 +1,5 @@
 import http from 'node:http';
-import { mkdtemp, writeFile, readFile, rm, access } from 'node:fs/promises';
+import { mkdtemp, writeFile, readFile, rm, access, readdir } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { execFile } from 'node:child_process';
@@ -15,6 +15,165 @@ const PORT = Number(process.env.PORT ?? 8080);
 // server/src/index.ts → ../../ai が ai/ フォルダ
 const AI_DIR = path.resolve(import.meta.dirname, '../../ai');
 const PYTHON = path.join(AI_DIR, '.venv/bin/python');
+
+// 評価の結果（ai/evaluation/run.py が書き出す）
+const RESULTS_DIR = path.join(AI_DIR, 'evaluation/data/results');
+
+// 結果一覧の画面に出す、1回分の実行の要約
+interface RunSummary {
+    run_id: string;
+    model: { id: string; name: string };
+    dataset: string;
+    summary: Record<string, number | null>;   // precision, recall, ... null は「対象外」
+    errors: number;                           // モデルが失敗したケースの数
+}
+
+async function listRuns(): Promise<RunSummary[]> {
+    let names: string[];
+    try {
+        names = await readdir(RESULTS_DIR);
+    } catch {
+        return [];      // まだ一度も評価していない（フォルダが無い）
+    }
+
+    const runs: RunSummary[] = [];
+    // run_id の先頭が日時なので、名前の逆順 = 新しい順
+    for (const name of names.sort().reverse()) {
+        try {
+            const report = JSON.parse(await readFile(path.join(RESULTS_DIR, name, 'report.json'), 'utf-8'));
+            runs.push({
+                run_id: report.run_id,
+                model: { id: report.model.id, name: report.model.name },
+                dataset: report.dataset,
+                summary: report.summary,
+                errors: report.errors ?? 0,
+            });
+        } catch {
+            // report.json が無い・壊れているフォルダ（評価を途中で止めたなど）は飛ばす
+        }
+    }
+    return runs;
+}
+
+// 評価のデータセット（ai/evaluation/make_dataset.py が作る）と、評価できるモデルの登録簿
+const DATASETS_DIR = path.join(AI_DIR, 'evaluation/data');
+const MODELS_JSON = path.join(AI_DIR, 'evaluation/models.json');
+// 評価の実行にかかる時間の上限。OCRのモデルは1ページに数秒〜十数秒かかるので長めにする
+const EVAL_TIMEOUT_MS = 30 * 60_000;
+
+// データセットやモデルの名前に使ってよい文字（英数字と _ -）。. や / を含められないので、../ でフォルダの外に出られない
+const SAFE_NAME = /^[\w-]+$/;
+
+// 返してよいファイルを、URLの形ごとに全部書いておく。ファイル名（report.json など）はURLから取らずに、ここで決める
+const EVAL_FILES: { pattern: RegExp; toPath: (m: RegExpMatchArray) => string; type: string }[] = [
+    {   // /api/eval/runs/<run_id>/report.json
+        pattern: /^\/api\/eval\/runs\/([\w-]+)\/report\.json$/,
+        toPath: (m) => path.join(RESULTS_DIR, m[1], 'report.json'),
+        type: 'application/json; charset=utf-8',
+    },
+    {   // /api/eval/runs/<run_id>/preds/<case_id>.labeled.json
+        pattern: /^\/api\/eval\/runs\/([\w-]+)\/preds\/(\d{4})\.labeled\.json$/,
+        toPath: (m) => path.join(RESULTS_DIR, m[1], 'preds', `${m[2]}.labeled.json`),
+        type: 'application/json; charset=utf-8',
+    },
+    {   // /api/eval/datasets/<dataset>/cases/<case_id>/gt.labeled.json
+        pattern: /^\/api\/eval\/datasets\/([\w-]+)\/cases\/(\d{4})\/gt\.labeled\.json$/,
+        toPath: (m) => path.join(DATASETS_DIR, m[1], 'cases', m[2], 'gt.labeled.json'),
+        type: 'application/json; charset=utf-8',
+    },
+    {   // /api/eval/datasets/<dataset>/cases/<case_id>/page-<n>.png（ケース詳細の下絵）
+        pattern: /^\/api\/eval\/datasets\/([\w-]+)\/cases\/(\d{4})\/page-(\d{1,3})\.png$/,
+        toPath: (m) => path.join(DATASETS_DIR, m[1], 'cases', m[2], `page-${m[3]}.png`),
+        type: 'image/png',
+    },
+];
+
+/** URL に対応するファイルの場所と種類。返してよい形でなければ null */
+function evalFile(url: string): { filePath: string; type: string } | null {
+    for (const { pattern, toPath, type } of EVAL_FILES) {
+        const m = url.match(pattern);
+        if (m !== null) {
+            return { filePath: toPath(m), type };
+        }
+    }
+    return null;
+}
+
+interface ModelInfo {
+    id: string;
+    name: string;
+    input: string;
+    outputs: string[];
+    note?: string;
+}
+
+async function listModels(): Promise<ModelInfo[]> {
+    const models = JSON.parse(await readFile(MODELS_JSON, 'utf-8'));
+    // entry（呼び出す関数の場所）や params は画面に要らないので渡さない
+    return models.map((m: any) => ({ id: m.id, name: m.name, input: m.input, outputs: m.outputs, note: m.note }));
+}
+
+interface DatasetInfo {
+    name: string;
+    created: string;
+    cases: number;
+    tags: Record<string, number>;   // "lang=en" などの切り口ごとのケースの数
+}
+
+async function listDatasets(): Promise<DatasetInfo[]> {
+    let names: string[];
+    try {
+        names = await readdir(DATASETS_DIR);
+    } catch {
+        return [];
+    }
+    const datasets: DatasetInfo[] = [];
+    for (const name of names.sort()) {
+        if (!SAFE_NAME.test(name)) {
+            continue;
+        }
+        try {
+            // manifest.json があるフォルダだけがデータセット（results/ などは飛ばす）
+            const manifest = JSON.parse(await readFile(path.join(DATASETS_DIR, name, 'manifest.json'), 'utf-8'));
+            const tags: Record<string, number> = {};
+            for (const c of manifest.cases) {
+                for (const [k, v] of Object.entries(c.tags)) {
+                    // run.py の tag_keys と同じ名前にする（Python の True / False に合わせる）
+                    const key = `${k}=${v === true ? 'True' : v === false ? 'False' : v}`;
+                    tags[key] = (tags[key] ?? 0) + 1;
+                }
+            }
+            datasets.push({ name, created: manifest.created, cases: manifest.cases.length, tags });
+        } catch {
+            // manifest.json が無い・壊れている
+        }
+    }
+    return datasets;
+}
+
+// 評価は重いので、同時に1つだけ動かす
+let evalRunning = false;
+
+/** 登録したモデルをデータセットで採点し、run_id を返す（ai/evaluation/run.py を呼ぶ） */
+async function runEval(model: string, dataset: string): Promise<string> {
+    const { stdout } = await execFileAsync(
+        PYTHON,
+        ['-m', 'evaluation.run', '--model', model, '--dataset', path.join('evaluation/data', dataset), '--quiet'],
+        { cwd: AI_DIR, timeout: EVAL_TIMEOUT_MS, maxBuffer: MAX_BODY },
+    );
+    return stdout.trim().split('\n').pop() ?? '';
+}
+
+function sendJson(res: http.ServerResponse, value: unknown): void {
+    res.setHeader('Content-Type', 'application/json; charset=utf-8');
+    res.end(JSON.stringify(value));
+}
+
+function sendText(res: http.ServerResponse, status: number, text: string): void {
+    res.statusCode = status;
+    res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+    res.end(text);
+}
 
 // 各自のPCで動かす前提なので、画面を開く場所（file:// で開くと 'null'、または localhost）からだけ受け付ける。
 // ほかのサイトを開いているときに、そのページから勝手にコンパイルさせられないようにするため。
@@ -234,6 +393,122 @@ const server = http.createServer((req, res) => {
             }
         });
 
+        return;
+    }
+
+    if (req.method === 'GET' && req.url === '/api/eval/runs') {
+        listRuns()
+            .then((runs) => {
+                res.setHeader('Content-Type', 'application/json; charset=utf-8');
+                res.end(JSON.stringify(runs));
+            })
+            .catch((err) => {
+                console.error(err);
+                res.statusCode = 500;
+                res.end('server error');
+            });
+        return;
+    }
+
+    if (req.method === 'GET' && req.url === '/api/eval/models') {
+        listModels()
+            .then((models) => sendJson(res, models))
+            .catch((err) => {
+                console.error(err);
+                sendText(res, 500, 'server error');
+            });
+        return;
+    }
+
+    if (req.method === 'GET' && req.url === '/api/eval/datasets') {
+        listDatasets()
+            .then((datasets) => sendJson(res, datasets))
+            .catch((err) => {
+                console.error(err);
+                sendText(res, 500, 'server error');
+            });
+        return;
+    }
+
+    // 評価を実行する。本文は {"model": "rule_based", "dataset": "synth_v1"}。
+    // サーバーの中に新しい結果ができる（中身が変わる）ので POST にする
+    if (req.method === 'POST' && req.url === '/api/eval/run') {
+        let body = '';
+        req.setEncoding('utf8');
+        req.on('data', (chunk) => {
+            body += chunk;
+            if (body.length > 10_000) {
+                sendText(res, 413, 'too large');
+                req.destroy();
+            }
+        });
+        req.on('end', async () => {
+            let model: unknown;
+            let dataset: unknown;
+            try {
+                ({ model, dataset } = JSON.parse(body));
+            } catch {
+                sendText(res, 400, 'JSONの形が正しくありません');
+                return;
+            }
+            try {
+                // 登録簿にあるモデルと、あるデータセットだけを受け付ける（任意のものを実行させない）
+                const models = await listModels();
+                const datasets = await listDatasets();
+                if (typeof model !== 'string' || !models.some((m) => m.id === model)) {
+                    sendText(res, 400, `登録されていないモデルです: ${String(model)}`);
+                    return;
+                }
+                if (typeof dataset !== 'string' || !SAFE_NAME.test(dataset) || !datasets.some((d) => d.name === dataset)) {
+                    sendText(res, 400, `データセットが見つかりません: ${String(dataset)}`);
+                    return;
+                }
+                if (evalRunning) {
+                    sendText(res, 409, 'ほかの評価を実行中です。終わってからもう一度実行してください');
+                    return;
+                }
+                evalRunning = true;
+                try {
+                    sendJson(res, { run_id: await runEval(model, dataset) });
+                } finally {
+                    evalRunning = false;
+                }
+            } catch (err: any) {
+                if (err.code === 'ENOENT') {
+                    sendText(res, 500, '評価のPythonが見つかりません（ai/.venv を作ってください）');
+                    return;
+                }
+                if (err.killed) {
+                    sendText(res, 500, '評価に時間がかかりすぎたため中断しました');
+                    return;
+                }
+                console.error(err.stderr ?? err);
+                sendText(res, 500, '評価に失敗しました。サーバーのターミナルにエラーが出ています');
+            }
+        });
+        return;
+    }
+
+    // 1回分の成績表・モデルの出力・正解・ページの画像を返す。返してよいURLの形は EVAL_FILES に全部書いてある
+    if (req.method === 'GET' && req.url?.startsWith('/api/eval/')) {
+        const file = evalFile(req.url);
+        if (file === null) {
+            sendText(res, 404, 'not found');
+            return;
+        }
+        readFile(file.filePath)
+            .then((data) => {
+                res.setHeader('Content-Type', file.type);
+                res.end(data);
+            })
+            .catch((err) => {
+                if (err.code === 'ENOENT') {
+                    sendText(res, 404, 'not found');
+                    return;
+                }
+                console.error(err);
+                sendText(res, 500, 'server error');
+            });
         return;
     }
 

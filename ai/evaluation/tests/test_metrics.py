@@ -1,21 +1,27 @@
 import pytest
 
+from common.ir import Element, IRDocument, Page, Run
 from evaluation.metrics import (
+    Counts,
     char_errors,
     char_errors_by_script,
     confusion_matrix,
+    count_document,
+    count_page,
+    decoration_counts,
+    indent_counts,
+    label_scores,
+    order_counts,
+    tex_tokens,
     detection_scores,
     iou,
     label_accuracy,
     match,
     normalize_text,
     split_by_script,
-    Counts,
-    count_page,
-    count_document,
-    summarize
+    summarize,
 )
-from common.ir import Element, IRDocument, Page
+
 
 def test_iou_same_box_is_1():
     assert iou((0.1, 0.1, 0.5, 0.5), (0.1, 0.1, 0.5, 0.5)) == 1.0
@@ -28,6 +34,7 @@ def test_iou_no_overlap_is_0():
 def test_iou_partial_overlap():
     # a と b は右下に 0.2 ずつずれている
     assert iou((0.0, 0.0, 0.4, 0.4), (0.2, 0.2, 0.6, 0.6)) == pytest.approx(0.04 / 0.28)
+
 
 def test_match_pairs_each_pred_with_nearest_gt():
     gts = [(0.1, 0.1, 0.9, 0.15), (0.1, 0.2, 0.9, 0.4)]  # 0: 見出し、1: 段落
@@ -44,6 +51,7 @@ def test_match_is_one_to_one():
     preds = [(0.0, 0.0, 0.4, 0.4)]                         # 予測は1つだけ
     assert match(preds, gts) == [(0, 0)]
 
+
 def test_detection_scores():
     # 2-b の1つ目のテストと同じ状況: 予測3つ、正解2つ、ペア2つ
     scores = detection_scores(n_pairs=2, n_preds=3, n_gts=2)
@@ -55,6 +63,7 @@ def test_detection_scores():
 def test_detection_scores_with_no_preds():
     # 予測が1つも無くても止まらない
     assert detection_scores(n_pairs=0, n_preds=0, n_gts=3) == {"precision": 0.0, "recall": 0.0, "f1": 0.0}
+
 
 LABEL_PAIRS = [  # (正解, 予測)
     ("heading", "heading"),
@@ -77,6 +86,7 @@ def test_confusion_matrix():
         [0, 0, 0],  # caption は出てこないので全部0
     ]
 
+
 def test_normalize_text_removes_spaces_and_newlines():
     assert normalize_text("これは\nテスト です") == "これはテストです"
     assert normalize_text("Hello\u3000World") == "HelloWorld"  # \u3000 は全角空白
@@ -87,6 +97,7 @@ def test_char_errors():
     assert char_errors("段落\nです", "段落です") == (0, 4)  # 改行の違いは数えない
     assert char_errors("", "abc") == (3, 3)               # 何も読めなければ全部誤り
 
+
 def test_split_by_script():
     assert split_by_script("PDFの読み込み") == ("の読み込み", "PDF")
 
@@ -96,6 +107,7 @@ def test_char_errors_by_script():
     assert char_errors_by_script(gt, gt) == {"ja": (0, 5), "en": (0, 3)}
     assert char_errors_by_script("PBFの読み込み", gt) == {"ja": (0, 5), "en": (1, 3)}  # 英語だけ間違えた
     assert char_errors_by_script("PDFの読み込ろ", gt) == {"ja": (1, 5), "en": (0, 3)}  # 日本語だけ間違えた
+
 
 A = (0.1, 0.1, 0.5, 0.15)
 B = (0.1, 0.2, 0.9, 0.4)
@@ -132,6 +144,7 @@ def test_count_page_adds_up():
     count_page(page, page, counts)  # 2ページ目も同じ入れ物に足す
     assert (counts.n_pairs, counts.n_preds, counts.n_gts) == (2, 2, 2)
 
+
 def test_summarize():
     counts = Counts(
         n_pairs=2, n_preds=3, n_gts=3, iou_sum=1.8,
@@ -166,3 +179,100 @@ def test_count_document_counts_missing_pages_as_missed():
     counts = Counts()
     count_document(pred, gt, counts)
     assert (counts.n_pairs, counts.n_preds, counts.n_gts) == (1, 1, 2)  # 2ページ目の図は見逃し扱い
+
+
+def test_decoration_counts_compares_decorated_characters():
+    gt = [Run("これは"), Run("重要", bold=True), Run("な点で、"), Run("ここ", underline=True), Run("も大事。")]
+    pred = [Run("これは重要な"), Run("点", bold=True), Run("で、"), Run("ここ", underline=True), Run("も大事。")]
+    # 太字: 予測「点」と正解「重要」は1文字も重ならない。下線: 「ここ」の2文字が一致
+    assert decoration_counts(pred, gt) == (2, 3, 4)
+    assert decoration_counts(None, gt) == (0, 0, 4)  # runs が無い = 装飾が1つも無い
+
+
+def test_decorations_and_levels_are_scored():
+    gt_page = Page(page=1, width=595, height=842, unit="pt", elements=[
+        Element(kind="text", bbox=A, text="はじめに", label="heading", level=1),
+        Element(kind="text", bbox=B, text="重要な点", runs=[Run("重要", bold=True), Run("な点")], label="paragraph"),
+    ])
+    pred_page = Page(page=1, width=595, height=842, unit="pt", elements=[
+        Element(kind="text", bbox=A, text="はじめに", runs=[Run("はじめに", bold=True)], label="heading", level=2),
+        Element(kind="text", bbox=B, text="重要な点", runs=[Run("重要", bold=True), Run("な点")], label="paragraph"),
+    ])
+    counts = Counts()
+    count_page(pred_page, gt_page, counts)
+    scores = summarize(counts)
+    assert scores["level_acc"] == 0.0  # 見出しレベルが違う
+    assert scores["deco_f1"] == 1.0    # 見出しの太字は採点しない（書体ごと太字なので）。段落の「重要」は一致
+
+
+def test_decorations_are_none_when_nothing_is_decorated():
+    page = Page(page=1, width=595, height=842, unit="pt", elements=[Element(kind="text", bbox=B, text="本文", label="paragraph")])
+    counts = Counts()
+    count_page(page, page, counts)
+    assert summarize(counts)["deco_f1"] is None  # 正解にも予測にも装飾が無ければ対象外
+
+
+def test_table_contents_are_compared_cell_by_cell():
+    gt = Element(kind="table", bbox=B, label="table", cells=[["a", "b"], ["1", "2"]], aligns=["l", "r"],
+                 col_rules=[False, False, False], row_rules=[True, True, True])
+    pred = Element(kind="table", bbox=B, label="table", cells=[["a", "b"], ["1", "3"]], aligns=["l", "c"],
+                   col_rules=[False, True, False], row_rules=[True, True, True])
+    counts = Counts()
+    count_page(Page(page=1, width=1, height=1, unit="pt", elements=[pred]), Page(page=1, width=1, height=1, unit="pt", elements=[gt]), counts)
+    scores = summarize(counts)
+    assert scores["table_shape_acc"] == 1.0      # 2行 × 2列で同じ
+    assert scores["table_cell_acc"] == 3 / 4     # 「2」と「3」だけ違う
+    assert scores["table_align_acc"] == 1 / 2
+    assert scores["table_rule_acc"] == 5 / 6     # 縦線3つ・横線3つのうち、真ん中の縦線だけ違う
+    assert scores["cer"] is None                 # 表の文字は CER では数えない（セルで見る）
+
+
+def test_math_tex_and_code_indent():
+    assert tex_tokens(r"y &= \frac{a}{b}") == ["y", "=", r"\frac", "{", "a", "}", "{", "b", "}"]  # & は数えない
+    assert indent_counts("def f():\nreturn 1", "def f():\n    return 1") == (1, 2)  # 2行目の字下げが消えている
+    gt = Page(page=1, width=1, height=1, unit="pt", elements=[Element(kind="text", bbox=A, text="x", label="math", tex=r"x^{2}")])
+    pred = Page(page=1, width=1, height=1, unit="pt", elements=[Element(kind="text", bbox=A, text="x", label="math", tex=r"x^{3}")])
+    counts = Counts()
+    count_page(pred, gt, counts)
+    assert summarize(counts)["math_ter"] == 1 / 5  # x ^ { 2 } の5トークンのうち1つ違う
+
+
+def test_label_scores():
+    gt = Page(page=1, width=1, height=1, unit="pt", elements=[
+        Element(kind="text", bbox=A, text="1 はじめに", label="heading"),
+        Element(kind="text", bbox=B, text="本文", label="paragraph"),
+        Element(kind="text", bbox=C, text="1", label="other"),
+    ])
+    pred = Page(page=1, width=1, height=1, unit="pt", elements=[
+        Element(kind="text", bbox=A, text="1 はじめに", label="paragraph"),  # 見出しを段落と間違えた
+        Element(kind="text", bbox=B, text="本文", label="paragraph"),
+        Element(kind="text", bbox=D, text="ゴミ", label="paragraph"),        # 誤検出。ページ番号は見逃し
+    ])
+    counts = Counts()
+    count_page(pred, gt, counts)
+    scores = label_scores(counts)
+    assert scores["heading"]["found_rate"] == 1.0 and scores["heading"]["recall"] == 0.0
+    assert scores["paragraph"]["recall"] == 1.0 and scores["paragraph"]["precision"] == 1 / 3  # 段落と予測した3つのうち1つ
+    assert scores["other"]["found_rate"] == 0.0 and scores["other"]["f1"] == 0.0             # 一度も予測していない
+
+
+def test_column_widths_count_only_wrapped_columns():
+    gt = Element(kind="table", bbox=B, label="table", cells=[["a", "b", "c"]], col_widths=[None, 0.24, None])
+    pred = Element(kind="table", bbox=B, label="table", cells=[["a", "b", "c"]], col_widths=[None, 0.25, 0.3])
+    counts = Counts()
+    count_page(Page(page=1, width=1, height=1, unit="pt", elements=[pred]), Page(page=1, width=1, height=1, unit="pt", elements=[gt]), counts)
+    # 1列目はどちらも指定なし → 数えない。2列目は差 0.01 → 正解。3列目は正解に無い幅を付けた → 不正解
+    assert summarize(counts)["table_width_acc"] == 1 / 2
+
+
+def test_reading_order():
+    assert order_counts([(0, 0), (1, 1), (2, 2)]) == (3, 0)  # 全部同じ順
+    assert order_counts([(1, 0), (0, 1), (2, 2)]) == (2, 1)  # 最初の2つが逆
+    gt = Page(page=1, width=1, height=1, unit="pt", elements=[
+        Element(kind="text", bbox=A, text="a", label="heading"),
+        Element(kind="text", bbox=B, text="b", label="paragraph"),
+    ])
+    pred = Page(page=1, width=1, height=1, unit="pt", elements=list(reversed(gt.elements)))  # 逆の順に出した
+    counts = Counts()
+    count_page(pred, gt, counts)
+    assert summarize(counts)["order_acc"] == 0.0

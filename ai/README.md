@@ -82,6 +82,7 @@ Transformer（4-3）との精度比較の基準として使う。
 | [rule_based/](rule_based/) | PDFブロック分類のルールベースライン（PDF抽出・ラベル定義・サンプルPDF） |
 | [image_dataset/](image_dataset/README.md) | 画像の構造化器の学習データ生成（画像 + 正解のラベル付きIR を自動で作る） |
 | [image_rule_based/](image_rule_based/README.md) | 画像の構造化器のルールベース（OCRのIRに見出し・段落・キャプションのラベルを付ける。PDF版 rule_based の画像版） |
+| [evaluation/](evaluation/README.md) | モデルの評価。正解付きのデータセットを作り、登録したモデルを採点する（結果は `web/eval.html` で見る） |
 | [models/](models/README.md) | アプリから選択できる、配布用モデルの置き場 |
 
 ### 新しいモデルを作るときの構成

@@ -1,0 +1,7 @@
+\documentclass[uplatex,a4paper,11pt]{jsarticle}
+\newcommand{\mk}[1]{\leavevmode\special{pdf:dest (#1) [@thispage /XYZ @xpos @ypos null]}}
+\begin{document}
+\section{\mk{b0s}はじめに\mk{b0e}}
+\mk{b1s}これは目印の動作を確かめるための段落です。PDFの中で、この段落の始まりと終わりの位置が記録されます。2行以上になるように、少し長めに書いておきます。\mk{b1e}
+\end{document}
+
