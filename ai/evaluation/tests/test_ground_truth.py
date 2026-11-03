@@ -3,9 +3,19 @@ import random
 import pytest
 
 from common.ir import validate
-from evaluation.ground_truth import Glyph, block_bbox, block_text, build_ground_truth, compile_tex, read_glyphs, union_bbox
-from evaluation.marks import read_marks
-from evaluation.synth_doc import PREAMBLE, SourceBlock, mark, random_document
+from evaluation.ground_truth import (
+    Glyph,
+    block_bbox,
+    block_lines,
+    block_runs,
+    block_text,
+    build_ground_truth,
+    compile_tex,
+    read_glyphs,
+    union_bbox,
+)
+from evaluation.marks import Mark, read_marks
+from evaluation.synth_doc import PREAMBLE, SourceBlock, mark, random_document, title_blocks
 
 # サンプルPDF（sample_data/mark_test.tex）から取った実際の値
 GLYPHS = [
@@ -107,3 +117,26 @@ def test_build_ground_truth_splits_block_across_pages(has_tex, tmp_path):
     first_half = doc.pages[0].elements[1]
     assert first_half.label == "paragraph"
     assert first_half.bbox[3] < 0.9  # ページの下の端（ページ番号の位置）まで伸びていない
+
+
+def test_block_runs_marks_characters_between_decoration_marks():
+    glyphs = [Glyph(page=1, bbox=(x, 0, x + 10, 10), baseline=8.0, c=c) for x, c in zip(range(0, 50, 10), "abcde")]
+    lines = block_lines(glyphs, page=1, top=8.0, bottom=8.0)
+    # 目印は「b」の左端（x=10）と「d」の左端（x=30）→「bc」が太字
+    runs = block_runs(lines, [(Mark(page=1, x=10.0, y=8.0), Mark(page=1, x=30.0, y=8.0), "bold")])
+    assert [(r.text, r.bold) for r in runs] == [("a", None), ("bc", True), ("de", None)]
+    assert block_runs(lines, []) is None  # 装飾が無ければ runs を省く
+
+
+def test_build_ground_truth_with_title_and_decoration(has_tex, tmp_path):
+    blocks = title_blocks(random.Random(0), "en", 0)
+    paragraph = SourceBlock(3, "paragraph", None, "", decorations=[("b3d0", "italic")])
+    paragraph.tex = f"{mark('b3s')}Plain words and {mark('b3d0s')}\\textit{{slanted words}}{mark('b3d0e')} here.{mark('b3e')}"
+    blocks.append(paragraph)
+    tex = PREAMBLE % {"size": "11pt"} + "\n\n".join(b.tex for b in blocks if b.tex) + "\n\\end{document}\n"
+    doc = build_ground_truth(str(compile_tex(tex, tmp_path)), blocks, source="doc.pdf")
+    assert validate(doc) == []  # runs をつなげると text になる、なども確かめられる
+    elements = doc.pages[0].elements
+    assert [el.label for el in elements] == ["title", "author", "date", "paragraph"]
+    italic = [run.text for run in elements[3].runs if run.italic]
+    assert italic == ["slanted words"]

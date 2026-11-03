@@ -10,9 +10,11 @@ def test_make_case_writes_files(has_tex, tmp_path):
     tags = make_case(random.Random(0), "en", case_dir)
     assert (case_dir / "input.pdf").exists()
     assert (case_dir / "source.tex").exists()
+    assert (case_dir / "page-1.png").exists()  # サイトで枠を重ねる下絵
     load_ir(str(case_dir / "gt.labeled.json"), check=True)  # 形式チェックで問題があれば ValueError で止まる
     assert tags["lang"] == "en"
     assert tags["pages"] >= 1
+    assert set(tags) == {"lang", "pages", "has_list", "has_title", "has_decoration"}
 
 
 def test_main_writes_manifest(has_tex, tmp_path):

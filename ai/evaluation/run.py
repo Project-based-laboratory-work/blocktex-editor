@@ -35,6 +35,7 @@ class CaseResult:
 class DatasetResult:
     total: Counts = field(default_factory=Counts)                      # 全ケースを足したもの
     by_tag: dict[str, Counts] = field(default_factory=dict)            # "lang=en" などの切り口ごと
+    tag_cases: dict[str, int] = field(default_factory=dict)            # 切り口ごとのケースの数
     cases: list[CaseResult] = field(default_factory=list)
 
 
@@ -65,24 +66,106 @@ def evaluate_dataset(spec: ModelSpec, dataset_dir: Path, pred_dir: Path | None =
         count_document(pred, gt, result.total)
         for key in tag_keys(case["tags"]):
             count_document(pred, gt, result.by_tag.setdefault(key, Counts()))
+            result.tag_cases[key] = result.tag_cases.get(key, 0) + 1
         result.cases.append(CaseResult(case["id"], case["tags"], seconds, len(gt.pages), summarize(case_counts), error))
     return result
 
+
+# モデルが出さないもの（models.json の outputs に無いもの）で決まる指標は、0点ではなく「対象外」（None）にする
+METRICS_BY_OUTPUT = {
+    "label": ["label_acc", "level_acc"],
+    "runs": ["deco_precision", "deco_recall", "deco_f1"],
+}
+
+# 強み・弱みの文章にする指標。(画面に出す名前, 大きいほど良いか)
+FINDING_METRICS = {
+    "f1": ("ブロックの検出（F1）", True),
+    "miou": ("枠の位置の正確さ（mIoU）", True),
+    "label_acc": ("ラベルの正解率", True),
+    "level_acc": ("見出しレベルの正解率", True),
+    "cer": ("文字の誤り率（CER）", False),
+    "deco_f1": ("装飾（太字・斜体・下線）のF1", True),
+}
+FINDING_MIN_CASES = 5     # ケースがこれより少ない切り口は、偶然の差かもしれないので文章にしない
+FINDING_MIN_DIFF = 0.05   # 全体との差がこれより小さいときは、強み・弱みとしない
+
+# 切り口（tag_keys の名前）を、文章で読める言葉にする。ここに無いものは "lang=en" のまま出す
+TAG_NAMES = {
+    "lang=ja": "日本語の文書",
+    "lang=en": "英語の文書",
+    "has_list=True": "箇条書きがある文書",
+    "has_list=False": "箇条書きが無い文書",
+    "has_title=True": "タイトルがある文書",
+    "has_title=False": "タイトルが無い文書",
+    "has_decoration=True": "文中に装飾がある文書",
+    "has_decoration=False": "文中に装飾が無い文書",
+    "pages=1": "1ページの文書",
+    "pages=2": "2ページの文書",
+    "pages=3": "3ページの文書",
+}
+
+
+def mask_unsupported(scores: dict, outputs: list[str]) -> dict:
+    """モデルが出さないもので決まる指標を None（対象外）にした、新しい辞書を返す"""
+    masked = dict(scores)
+    for output, metrics in METRICS_BY_OUTPUT.items():
+        if output not in outputs:
+            for metric in metrics:
+                masked[metric] = None
+    return masked
+
+
+def find_strengths(summary: dict, by_tag: dict[str, dict], tag_cases: dict[str, int]) -> list[dict]:
+    """切り口ごとの成績を全体と比べて、目立って良い（強み）・悪い（弱み）ものを、差の大きい順に返す"""
+    findings = []
+    for key, scores in by_tag.items():
+        n = tag_cases.get(key, 0)
+        if n < FINDING_MIN_CASES:
+            continue
+        for metric, (name, higher_is_better) in FINDING_METRICS.items():
+            overall, value = summary.get(metric), scores.get(metric)
+            if overall is None or value is None:
+                continue
+            gain = value - overall if higher_is_better else overall - value  # プラスなら全体より良い
+            if abs(gain) < FINDING_MIN_DIFF:
+                continue
+            findings.append({
+                "kind": "strength" if gain > 0 else "weakness",
+                "metric": metric,
+                "slice": key,
+                "value": value,
+                "overall": overall,
+                "n": n,
+                "text": f"{TAG_NAMES.get(key, key)}（{n}件）では、{name}が {value:.3f} で、全体の {overall:.3f} より{'良い' if gain > 0 else '悪い'}",
+            })
+    findings.sort(key=lambda f: abs(f["value"] - f["overall"]), reverse=True)
+    return findings
+
+
 def build_report(spec: ModelSpec, dataset_dir: Path, result: DatasetResult, run_id: str) -> dict:
     """サイトが読む成績表（JSONにできる辞書）を作る"""
-    summary = summarize(result.total)
+    summary = mask_unsupported(summarize(result.total), spec.outputs)
     total_seconds = sum(c.seconds for c in result.cases)
     total_pages = sum(c.pages for c in result.cases)
     summary["sec_per_page"] = ratio_or_none(total_seconds, total_pages)
+    by_tag = {key: mask_unsupported(summarize(counts), spec.outputs) for key, counts in result.by_tag.items()}
+    has_labels = "label" in spec.outputs
     return {
         "run_id": run_id,
-        "model": {"id": spec.id, "name": spec.name, "outputs": spec.outputs, "params": spec.params},
+        "created": datetime.now().isoformat(timespec="seconds"),
+        "model": {"id": spec.id, "name": spec.name, "input": spec.input, "outputs": spec.outputs, "params": spec.params},
         "dataset": dataset_dir.name,
         "iou_threshold": IOU_THRESHOLD,
         "summary": summary,
-        "by_tag": {key: summarize(counts) for key, counts in result.by_tag.items()},
-        "confusion": {"labels": LABELS, "matrix": confusion_matrix(result.total.label_pairs, LABELS)},
-        "cases": [asdict(c) | {"pred_path": f"preds/{c.id}.labeled.json"} for c in result.cases],
+        "by_tag": by_tag,
+        "tag_cases": result.tag_cases,
+        "findings": find_strengths(summary, by_tag, result.tag_cases),
+        "confusion": {"labels": LABELS, "matrix": confusion_matrix(result.total.label_pairs, LABELS)} if has_labels else None,
+        "errors": sum(1 for c in result.cases if c.error is not None),
+        "cases": [
+            asdict(c) | {"scores": mask_unsupported(c.scores, spec.outputs), "pred_path": f"preds/{c.id}.labeled.json"}
+            for c in result.cases
+        ],
     }
 
 
@@ -92,6 +175,7 @@ def main(argv: list[str] | None = None) -> Path:
     parser.add_argument("--model", required=True, help="models.json の id（例: rule_based）")
     parser.add_argument("--dataset", required=True, help="データセットのフォルダ（例: evaluation/data/synth_v1）")
     parser.add_argument("--out", default=str(RESULTS_DIR), help="結果を置くフォルダ")
+    parser.add_argument("--quiet", action="store_true", help="成績表を出さず、run_id だけを出す（サーバーから呼ぶとき）")
     args = parser.parse_args(argv)
 
     spec = load_registry()[args.model]
@@ -103,9 +187,14 @@ def main(argv: list[str] | None = None) -> Path:
     report = build_report(spec, dataset_dir, result, run_id)
     (run_dir / "report.json").write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
 
+    if args.quiet:
+        print(run_id)
+        return run_dir
     print(f"{run_dir / 'report.json'} に保存した")
     for name, value in report["summary"].items():
-        print(f"  {name:12} {'—' if value is None else f'{value:.3f}'}")  # None は「対象外」
+        print(f"  {name:14} {'—' if value is None else f'{value:.3f}'}")  # None は「対象外」
+    for finding in report["findings"]:
+        print(f"  {'強み' if finding['kind'] == 'strength' else '弱み'}: {finding['text']}")
     return run_dir
 
 

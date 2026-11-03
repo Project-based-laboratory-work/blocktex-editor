@@ -2,9 +2,15 @@
 予測したラベル付きIRと正解のラベル付きIRを比べる評価指標。
 """
 from dataclasses import dataclass, field
+from difflib import SequenceMatcher
 
-from common.ir import Bbox, IRDocument, Page
+from common.ir import Bbox, IRDocument, Page, Run
 from common.text import edit_distance
+
+DECORATION_MARKS = ("bold", "italic", "underline")  # common/ir.py の Run の装飾
+# 文中の装飾を採点するラベル。見出しやタイトルは書体ごと太字で印刷されるが、エディタでは装飾（runs）ではなく
+# ブロックの種類で表すので、採点しない
+DECORATED_LABELS = ("paragraph", "list", "caption")
 
 
 def area(bbox: Bbox) -> float:
@@ -116,6 +122,29 @@ class Counts:
     ja_chars: int = 0
     en_errors: int = 0
     en_chars: int = 0
+    level_correct: int = 0  # 正解も予測も見出しで、見出しレベルが一致した数
+    level_total: int = 0    # 正解も予測も見出しで、両方にレベルがあった数
+    deco_matched: int = 0   # 装飾（太字・斜体・下線）が正しく付いた文字の数
+    deco_preds: int = 0     # 予測で装飾が付いた文字の数
+    deco_gts: int = 0       # 正解で装飾が付いた文字の数
+
+
+def decorated_text(runs: list[Run] | None, mark: str) -> str:
+    """runs のうち、mark（"bold" など）が付いた部分の文字をつなげる。空白・改行は数えない"""
+    return normalize_text("".join(run.text for run in runs or [] if getattr(run, mark)))
+
+
+def decoration_counts(pred_runs: list[Run] | None, gt_runs: list[Run] | None) -> tuple[int, int, int]:
+    """(装飾が正しく付いた文字の数, 予測で装飾が付いた文字の数, 正解で装飾が付いた文字の数)。
+    装飾ごとに、付いた文字の並びを比べ、一致した部分（SequenceMatcher の一致ブロック）の文字数を数える。
+    runs が無い（None）のは、装飾が1つも無いものとして扱う"""
+    matched = n_pred = n_gt = 0
+    for mark in DECORATION_MARKS:
+        p, g = decorated_text(pred_runs, mark), decorated_text(gt_runs, mark)
+        matched += sum(block.size for block in SequenceMatcher(None, p, g, autojunk=False).get_matching_blocks())
+        n_pred += len(p)
+        n_gt += len(g)
+    return matched, n_pred, n_gt
 
 
 def count_page(pred: Page, gt: Page, counts: Counts) -> None:
@@ -132,6 +161,14 @@ def count_page(pred: Page, gt: Page, counts: Counts) -> None:
 
         if p.label is not None and g.label is not None:
             counts.label_pairs.append((g.label, p.label))
+        if p.label == g.label == "heading" and p.level is not None and g.level is not None:
+            counts.level_total += 1
+            counts.level_correct += int(p.level == g.level)
+        if g.text is not None and g.label in DECORATED_LABELS:
+            matched, n_pred, n_gt = decoration_counts(p.runs, g.runs)
+            counts.deco_matched += matched
+            counts.deco_preds += n_pred
+            counts.deco_gts += n_gt
         if g.text is not None:
             pred_text = p.text or ""
             errors, n = char_errors(pred_text, g.text)
@@ -157,6 +194,16 @@ def summarize(counts: Counts) -> dict[str, float | None]:
     scores["cer"] = ratio_or_none(counts.text_errors, counts.text_chars)
     scores["cer_ja"] = ratio_or_none(counts.ja_errors, counts.ja_chars)
     scores["cer_en"] = ratio_or_none(counts.en_errors, counts.en_chars)
+    scores["level_acc"] = ratio_or_none(counts.level_correct, counts.level_total)
+    deco_precision = ratio_or_none(counts.deco_matched, counts.deco_preds)
+    deco_recall = ratio_or_none(counts.deco_matched, counts.deco_gts)
+    scores["deco_precision"] = deco_precision
+    scores["deco_recall"] = deco_recall
+    # 正解にも予測にも装飾が1つも無ければ、比べるものが無いので対象外
+    if counts.deco_preds == 0 and counts.deco_gts == 0:
+        scores["deco_f1"] = None
+    else:
+        scores["deco_f1"] = safe_div(2 * (deco_precision or 0.0) * (deco_recall or 0.0), (deco_precision or 0.0) + (deco_recall or 0.0))
     return scores
 
 

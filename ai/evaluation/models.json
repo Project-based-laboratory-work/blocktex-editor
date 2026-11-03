@@ -4,11 +4,34 @@
         "name": "ルールベース（ベースライン）",
         "entry": "rule_based.ir_adapter:classify_ir",
         "input": "pdf",
-        "outputs": [
-            "bbox",
-            "text",
-            "label"
-        ],
+        "outputs": ["bbox", "text", "label", "runs"],
         "params": {}
+    },
+    {
+        "id": "tesseract",
+        "name": "Tesseract（文字の読み取りだけ）",
+        "entry": "evaluation.adapters:tesseract",
+        "input": "image",
+        "outputs": ["bbox", "text"],
+        "params": {"dpi": 200},
+        "note": "Tesseract 本体と pytesseract が必要（tesseract_ocr/README.md）"
+    },
+    {
+        "id": "tesseract_image_rule_based",
+        "name": "Tesseract + 画像の構造化器",
+        "entry": "evaluation.adapters:tesseract_image_rule_based",
+        "input": "image",
+        "outputs": ["bbox", "text", "label"],
+        "params": {"dpi": 200},
+        "note": "Tesseract 本体と pytesseract が必要（tesseract_ocr/README.md）"
+    },
+    {
+        "id": "easyocr_image_rule_based",
+        "name": "EasyOCR + 画像の構造化器",
+        "entry": "evaluation.adapters:easyocr_image_rule_based",
+        "input": "image",
+        "outputs": ["bbox", "text", "label"],
+        "params": {"dpi": 200},
+        "note": "easyocr が必要（easyocr_ocr/README.md）。1ページに数秒〜十数秒かかる"
     }
 ]

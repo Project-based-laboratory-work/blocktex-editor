@@ -1,6 +1,6 @@
 import pytest
 
-from common.ir import Element, IRDocument, Page
+from common.ir import Element, IRDocument, Page, Run
 from evaluation.metrics import (
     Counts,
     char_errors,
@@ -8,6 +8,7 @@ from evaluation.metrics import (
     confusion_matrix,
     count_document,
     count_page,
+    decoration_counts,
     detection_scores,
     iou,
     label_accuracy,
@@ -174,3 +175,34 @@ def test_count_document_counts_missing_pages_as_missed():
     counts = Counts()
     count_document(pred, gt, counts)
     assert (counts.n_pairs, counts.n_preds, counts.n_gts) == (1, 1, 2)  # 2ページ目の図は見逃し扱い
+
+
+def test_decoration_counts_compares_decorated_characters():
+    gt = [Run("これは"), Run("重要", bold=True), Run("な点で、"), Run("ここ", underline=True), Run("も大事。")]
+    pred = [Run("これは重要な"), Run("点", bold=True), Run("で、"), Run("ここ", underline=True), Run("も大事。")]
+    # 太字: 予測「点」と正解「重要」は1文字も重ならない。下線: 「ここ」の2文字が一致
+    assert decoration_counts(pred, gt) == (2, 3, 4)
+    assert decoration_counts(None, gt) == (0, 0, 4)  # runs が無い = 装飾が1つも無い
+
+
+def test_decorations_and_levels_are_scored():
+    gt_page = Page(page=1, width=595, height=842, unit="pt", elements=[
+        Element(kind="text", bbox=A, text="はじめに", label="heading", level=1),
+        Element(kind="text", bbox=B, text="重要な点", runs=[Run("重要", bold=True), Run("な点")], label="paragraph"),
+    ])
+    pred_page = Page(page=1, width=595, height=842, unit="pt", elements=[
+        Element(kind="text", bbox=A, text="はじめに", runs=[Run("はじめに", bold=True)], label="heading", level=2),
+        Element(kind="text", bbox=B, text="重要な点", runs=[Run("重要", bold=True), Run("な点")], label="paragraph"),
+    ])
+    counts = Counts()
+    count_page(pred_page, gt_page, counts)
+    scores = summarize(counts)
+    assert scores["level_acc"] == 0.0  # 見出しレベルが違う
+    assert scores["deco_f1"] == 1.0    # 見出しの太字は採点しない（書体ごと太字なので）。段落の「重要」は一致
+
+
+def test_decorations_are_none_when_nothing_is_decorated():
+    page = Page(page=1, width=595, height=842, unit="pt", elements=[Element(kind="text", bbox=B, text="本文", label="paragraph")])
+    counts = Counts()
+    count_page(page, page, counts)
+    assert summarize(counts)["deco_f1"] is None  # 正解にも予測にも装飾が無ければ対象外

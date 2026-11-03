@@ -8,6 +8,7 @@
     <out>/cases/<id>/input.pdf        モデルに渡すPDF
     <out>/cases/<id>/gt.labeled.json  正解（ラベル付きIR）
     <out>/cases/<id>/source.tex       元のTeX（デバッグ用）
+    <out>/cases/<id>/page-<n>.png     ページの画像（評価サイトで、正解と予測の枠を重ねる下絵）
 """
 import argparse
 import json
@@ -20,6 +21,7 @@ from pathlib import Path
 
 from common.ir import save_ir
 from evaluation.ground_truth import build_ground_truth, compile_tex
+from evaluation.images import SITE_DPI, render_pages
 from evaluation.synth_doc import random_document
 
 
@@ -31,10 +33,17 @@ def make_case(rng: random.Random, lang: str, case_dir: Path) -> dict:
         pdf = compile_tex(tex, Path(tmp))
         doc = build_ground_truth(str(pdf), blocks, source="input.pdf")
         shutil.copy(pdf, case_dir / "input.pdf")
+    render_pages(str(case_dir / "input.pdf"), case_dir, SITE_DPI)
     (case_dir / "source.tex").write_text(tex, encoding="utf-8")
     save_ir(doc, str(case_dir / "gt.labeled.json"))
     labels = {el.label for page in doc.pages for el in page.elements}
-    return {"lang": lang, "pages": len(doc.pages), "has_list": "list" in labels}
+    return {
+        "lang": lang,
+        "pages": len(doc.pages),
+        "has_list": "list" in labels,
+        "has_title": "title" in labels,
+        "has_decoration": any(b.decorations for b in blocks),
+    }
 
 
 def main(argv: list[str] | None = None) -> None:
