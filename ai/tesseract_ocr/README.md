@@ -1,18 +1,74 @@
-# tesseract_ocr — Tesseractによる文字認識・サイズ判定
+# tesseract_ocr — Tesseractによる文字認識
 
-学習なしの既存OCR（Tesseract）を使うモデル。`math_ocr`（自作の学習モデル）との比較対象になる。
+学習なしの既存OCR（Tesseract）で画像の文字を読み取り、共通のIR形式（[common/README.md](../common/README.md) の①）で出力する抽出器。`easyocr_ocr` と同じ前処理・同じ評価（CER）で比較する。
 
-| | tesseract_ocr | math_ocr |
-|---|---|---|
-| 課題 | 文字認識＋文字サイズ判定（大/中/小） | 数式画像 → LaTeX |
-| 学習 | なし（既製のTesseract） | あり（自作CNN+Transformer） |
-| 入口 | `predict.predict(image)` | `math_ocr.predict` |
+| | 内容 |
+|---|---|
+| 入力 | 画像1枚。1枚＝1ページ、単位は `px` |
+| 対応 | 英語・日本語の横書き（縦書きは対象外） |
+| 出力 | IR（`kind="text"` の要素を Tesseract の段落ごとに1つ。`bbox`・`text`・`font_size`・`confidence`） |
+| 入口 | `ir_adapter.extract_ir(image_path, preset, lang)` |
+
+## 準備
+
+Python 3.10 以上（`common/ir.py` が `str | None` を使うため）。Tesseract 本体と言語データ `eng` / `jpn` をOSに入れる。
+
+```bash
+brew install tesseract tesseract-lang   # macOS（Ubuntu は apt install tesseract-ocr tesseract-ocr-jpn）
+tesseract --list-langs                  # eng, jpn があるか確認
+pip install pytesseract opencv-python-headless pillow numpy
+```
+
+言語データを別の場所（例: [tessdata/](tessdata/)。Gitには上げない）に置いた場合は、`TESSDATA_PREFIX` にそのフォルダを指定する。
 
 ## 実行方法
 
-事前に `tesseract-ocr`（日本語データ `tesseract-ocr-jpn` 含む）と `poppler-utils` をOSに入れておく。
-
 ```bash
 cd ai
-python -m tesseract_ocr.predict rule_based/sample_data/sample.pdf
+# 1枚 → IR
+python -m tesseract_ocr.ir_adapter ../ocr/sample/jphorizon/jphorizontal_001.jpg -o out/   # → out/jphorizontal_001.base.ir.json
+python -m tesseract_ocr.ir_adapter ../ocr/sample/eng/eng_001.jpg --lang eng -o out/
+python -m common.ir out/jphorizontal_001.base.ir.json   # 形式チェック
+
+# 正解 .txt がある画像すべてで、全プリセットの CER を比べる（時間はプリセットの数 × 画像の数に比例）
+python -m tesseract_ocr.evaluate
+# プリセットを絞る
+python -m tesseract_ocr.evaluate --presets base up2 otsu
 ```
+
+`evaluate` は `ocr/sample/<データセット>/` の画像と同じ名前の `.txt` を正解とする。フォルダ名は結果をまとめる単位に使うだけで、読み方の判断には使わない。
+- 言語：`--lang` を省略すると `jpn+eng`。英語の画像も `jpn+eng` で読む
+
+- プリセット：`--presets` の既定は `all`（[presets.py](presets.py) の全部）。最後に、データセットごとに CER が一番小さかったプリセットを表示する
+
+出力は `tesseract_ocr/data/eval/`（git管理外）に、IR・認識した全文（`.ocr.txt`）・画像ごとの `results.csv`・集計の `summary.json`・比較表の `compare.csv`（行＝プリセット、列＝データセットごとの CER と全体の CER・秒/枚。全体の CER が小さい順）。
+
+## ファイル
+
+| ファイル | 内容 |
+|---|---|
+| [ir_adapter.py](ir_adapter.py) | 解析の流れ：画像を開く → 前処理 → Tesseract → IRに変換 |
+| [presets.py](presets.py) | 設定の組（プリセット）。前処理は [image_common/preprocess.py](../image_common/preprocess.py) の名前を使い、EasyOCRと同じ名前なら同じ前処理 |
+| [evaluate.py](evaluate.py) | 正解テキストとの CER（[evaluation/metrics.py](../evaluation/metrics.py) の `char_errors`）と処理時間 |
+| [predict.py](predict.py) | 旧版。画像/PDFの文字の高さからサイズクラス（大/中/小）を表示するだけ（IRは出さない） |
+
+- 言語は `jpn+eng`、ページ分割モードは psm 3（自動でレイアウト解析）が既定。プリセットに `psm` があればそちらを使う。
+- `font_size` は行の高さの中央値（元の画像の px）。`bold` は取れないので書かない。
+- 単語は [image_common/text.py](../image_common/text.py) の `join_words` でつなぐ（EasyOCR の `--group` と同じ。日本語の間と記号の前には空白を入れない）。
+- 前処理で拡大しても、`bbox`・`font_size` は元の画像の大きさに戻してから書く。使った設定はIRの `params` に記録される。
+
+## 結果（2026-10-25, Tesseract 5.5.3, 正解 .txt のある各2枚）
+
+CER は空白・改行を除いた編集距離 ÷ 正解の文字数（データセットごとに合計してから割る）。
+
+| preset | eng | jphorizon | jpvertical |
+|---|---|---|---|
+| base | 1.12% | **1.57%** | 5.68% |
+| up2 | **1.06%** | 2.18% | **2.33%** |
+| otsu | 1.35% | 1.90% | 8.48% |
+
+- 縦書きは拡大（up2）で大きく改善し、二値化（otsu）では悪化した。
+- 縦書きはその後対象外になり、`jpvertical` のサンプルは削除した（2026-10-27）。縦書きで読む機能（`--direction`）も削除した（2026-11-02）。この表と下の `auto` の結果は、当時の記録として残している。
+- 上の表は、向き・言語をフォルダ名から決めていたとき（英語は `eng`）の結果。
+- フォルダ名を使わない `--direction auto` にしても（2026-10-26）、6枚すべてで正しい向きを選んだ。`base` の CER は英語 1.14%（`jpn+eng` で読むため 1.12% からわずかに変化）、横書き 1.57%、縦書き 5.68% で、日本語は変わらなかった。6枚の評価時間は約15秒 → 約44秒。
+- 英語の `CER_ja` が数百%になるのは、正解に非ASCII文字が数個（“ ” だけ）しかなく、Tesseract が出した `—` などで割合が大きく見えるため。英語のデータセットでは `CER_ja` は見なくてよい。

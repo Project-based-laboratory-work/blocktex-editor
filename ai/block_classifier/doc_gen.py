@@ -60,7 +60,7 @@ def _noun(rng: random.Random) -> str:
 
 
 def _sentence(rng: random.Random, inline_math: bool = True) -> str:
-    """日本語の文を1つ。太字・下線・文中数式をときどき混ぜる"""
+    """日本語の文を1つ。太字・斜体・下線・文中数式をときどき混ぜる"""
     parts = [rng.choice(CONNECTORS), _noun(rng), rng.choice(["を", "について", "に対して", "と"])]
     if rng.random() < 0.5:
         parts += [_noun(rng), "の", _noun(rng), "を"]
@@ -70,6 +70,8 @@ def _sentence(rng: random.Random, inline_math: bool = True) -> str:
         noun = rf"\textbf{{{noun}}}"
     elif r < 0.14:
         noun = rf"\underline{{{noun}}}"
+    elif r < 0.2:
+        noun = rf"\textit{{{noun}}}"
     parts += [noun, "として", rng.choice(VERBS)]
     sentence = "".join(parts)
     if inline_math and rng.random() < 0.2:
@@ -126,10 +128,48 @@ def _caption(i: int, rng: random.Random) -> str:
     return rf"\caption{{{_mark(f'b{i}s')}{_noun(rng)}の{rng.choice(['結果', '比較', '概要', '例', '構成'])}{_mark(f'b{i}e')}}}"
 
 
+# 表の罫線の種類。エディタ（web/src/tex.ts）で作れる形に合わせる。
+# booktabs: 上端・見出しの下・下端の横線 / grid: すべての罫線 / hline: booktabs と同じ位置の \hline / none: 罫線なし
+TABLE_RULE_STYLES = ["booktabs", "grid", "hline", "none"]
+TABLE_RULE_WEIGHTS = [4, 3, 1, 2]
+WRAP_SENTENCES = 3  # 折り返す列のセルに入れる文の数
+
+
 def _table(rng: random.Random, i: int) -> list[SourceBlock]:
+    """
+    表。列の揃え（l / c / r）と罫線の種類をランダムに変える。ときどき1列を幅指定（p{幅}）にして、セル内で折り返させる。
+    行の先頭の {} は、エディタと同じく [ で始まるセルで「Illegal unit of measure」にならないため（issue #28）。
+    """
     cols = rng.randint(2, 5)
+    style = rng.choices(TABLE_RULE_STYLES, weights=TABLE_RULE_WEIGHTS)[0]
+    aligns = [rng.choice("lcr") for _ in range(cols)]
+    wrap_col = rng.randrange(cols) if rng.random() < 0.2 else None
+    specs = [
+        rf">{{\raggedright\arraybackslash}}p{{\dimexpr 0.4\linewidth-2\tabcolsep\relax}}" if c == wrap_col else align
+        for c, align in enumerate(aligns)
+    ]
+    rule = "|" if style == "grid" else ""
+    spec = rule + rule.join(specs) + rule
+
+    def cell(c: int, value: str) -> str:
+        if c == wrap_col:
+            return "".join(_sentence(rng, inline_math=False) for _ in range(WRAP_SENTENCES))
+        return value
+
     rows = [" & ".join(_noun(rng) for _ in range(cols))]
-    rows += [" & ".join(f"{rng.uniform(0, 100):.1f}" for _ in range(cols)) for _ in range(rng.randint(2, 6))]
+    rows += [" & ".join(cell(c, f"{rng.uniform(0, 100):.1f}") for c in range(cols)) for _ in range(rng.randint(2, 6))]
+    top, middle, bottom = {
+        "booktabs": (r"\toprule", r"\midrule", r"\bottomrule"),
+        "grid": (r"\hline", r"\hline", r"\hline"),
+        "hline": (r"\hline", r"\hline", r"\hline"),
+        "none": (None, None, None),
+    }[style]
+    lines = [*([top] if top else []), f"{{}}{rows[0]} \\\\", *([middle] if middle else [])]
+    for k, row in enumerate(rows[1:]):
+        lines.append(f"{{}}{row} \\\\")
+        if style == "grid" and k < len(rows) - 2:
+            lines.append(r"\hline")  # grid は行の間にもすべて線を引く
+    lines += [bottom] if bottom else []
     body = [
         r"\begin{table}[htbp]",
         r"  \centering",
@@ -137,12 +177,8 @@ def _table(rng: random.Random, i: int) -> list[SourceBlock]:
         # 目印は表の上と下の別の行に置く。表と同じ行に置くと、表全体が1行の文字のように扱われ、
         # 目印が表の縦の真ん中の高さに記録されてしまう
         f"  {_mark(f'b{i}s')}\\par",
-        rf"  \begin{{tabular}}{{{'l' * cols}}}",
-        r"    \toprule",
-        f"    {rows[0]} \\\\",
-        r"    \midrule",
-        *(f"    {row} \\\\" for row in rows[1:]),
-        r"    \bottomrule",
+        rf"  \begin{{tabular}}{{{spec}}}",
+        *(f"    {line}" for line in lines),
         r"  \end{tabular}",
         f"  \\par{_mark(f'b{i}e')}",
         r"\end{table}",
@@ -198,6 +234,7 @@ def _code(rng: random.Random, i: int) -> SourceBlock:
 PREAMBLE = r"""%(documentclass)s
 \usepackage{amsmath,amssymb}
 \usepackage{booktabs}
+\usepackage{array}
 \usepackage{listings}
 %(fonts)s
 \newcommand{\mk}[1]{\leavevmode\special{pdf:dest (#1) [@thispage /XYZ @xpos @ypos null]}}
@@ -241,12 +278,14 @@ def random_document(rng: random.Random) -> tuple[str, list[SourceBlock]]:
 
     title_lines = []
     if rng.random() < 0.6:
+        # タイトル・著者・日付にそれぞれ目印を置き、別のラベルにする。TeXは \maketitle をタイトル側にまとめて持たせる
+        title, author, date = next_id, next_id + 1, next_id + 2
         title_lines = [
-            rf"\title{{{_mark(f'b{next_id}s')}{_noun(rng)}を用いた{_noun(rng)}の{rng.choice(VERBS[:3])[:-2]}{_mark(f'b{next_id}e')}}}",
-            r"\author{" + rng.choice(["山田 太郎", "佐藤 花子", "情報 太郎"]) + "}",
-            r"\date{2026年" + f"{rng.randint(1, 12)}月{rng.randint(1, 28)}日" + "}",
+            rf"\title{{{_mark(f'b{title}s')}{_noun(rng)}を用いた{_noun(rng)}の{rng.choice(VERBS[:3])[:-2]}{_mark(f'b{title}e')}}}",
+            rf"\author{{{_mark(f'b{author}s')}{rng.choice(['山田 太郎', '佐藤 花子', '情報 太郎'])}{_mark(f'b{author}e')}}}",
+            rf"\date{{{_mark(f'b{date}s')}2026年{rng.randint(1, 12)}月{rng.randint(1, 28)}日{_mark(f'b{date}e')}}}",
         ]
-        add(SourceBlock(next_id, "other", r"\maketitle"))  # タイトル（ラベル定義に title が無いので other）
+        add([SourceBlock(title, "title", r"\maketitle"), SourceBlock(author, "author", ""), SourceBlock(date, "date", "")])
 
     for _ in range(rng.randint(3, 8)):  # 節の数
         add(_heading(rng, next_id))

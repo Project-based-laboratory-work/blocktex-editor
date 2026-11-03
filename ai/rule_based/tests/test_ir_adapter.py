@@ -22,6 +22,7 @@ def sample_pdf(tmp_path_factory) -> str:
 def test_label_definitions_match_common():
     assert labels.FINE_LABELS == ir.LABELS
     assert list(get_args(labels.Source)) == ir.LABEL_SOURCES
+    assert set(labels.COARSE_MAP) == set(labels.FINE_LABELS)  # どのラベルも粗いラベルにまとめられる
 
 
 def test_extract_ir_is_valid(sample_pdf):
@@ -50,8 +51,10 @@ def test_classify_ir_is_valid_and_labeled(sample_pdf):
     assert ir.validate(doc) == []
     elements = doc.pages[0].elements
     assert all(el.label is not None for el in elements)
+    # サンプルの先頭は ReportLab の Title スタイル（中央・大きい文字）なので、タイトルとして判定する
+    assert [el.text for el in elements if el.label == "title"] == ["第1章 サンプル文書"]
     headings = [el for el in elements if el.label == "heading"]
-    assert headings[0].text == "第1章 サンプル文書" and headings[0].font_size is not None
+    assert headings[0].text == "1.1 はじめに" and headings[0].font_size is not None
 
 
 def test_labels_to_ir(sample_pdf, tmp_path):
@@ -76,4 +79,4 @@ def test_ir_adapter_stdout(sample_pdf, monkeypatch, capsys):
     out = json.loads(capsys.readouterr().out)
     assert ir.validate(ir.from_dict(out["labeled"])) == []
     assert out["document"]["title"] == "サンプル"
-    assert out["document"]["blocks"][0]["type"] == "heading"
+    assert [block["type"] for block in out["document"]["blocks"][:2]] == ["title", "heading"]

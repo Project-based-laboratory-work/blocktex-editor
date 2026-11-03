@@ -63,7 +63,8 @@ const PACKAGES_BY_BLOCK_TYPE: Record<BlockType, string[]> = {
   list: [],
   math: ['\\usepackage{amsmath}'],
   toc: [],
-  table: ['\\usepackage{booktabs}'],
+  // array は列幅を指定した列（p{幅}）の揃えに使う（tableColumnSpec を参照）
+  table: ['\\usepackage{booktabs}', '\\usepackage{array}'],
   image: ['\\usepackage{graphicx}'],
   quote: [],
   // minted は shell-escape が必要で、コンパイルサーバーは -no-shell-escape で動かすため listings を使う
@@ -306,17 +307,42 @@ function codeToTex(block: CodeBlock): string {
   return `\\begin{lstlisting}${optionText}\n${code}\n\\end{lstlisting}`;
 }
 
+/** 列幅を指定した列で、セル内の文字を揃える命令 */
+const PARBOX_ALIGN: Record<TableCellAlign, string> = { l: '\\raggedright', c: '\\centering', r: '\\raggedleft' };
+/** 列幅の下限。0 に近い幅だと1文字ずつ折り返して表が縦に伸びるため */
+const MIN_COLUMN_WIDTH = 0.05;
+
+/**
+ * 1列分の列指定。幅が無ければ l / c / r、あれば p{幅} にして折り返させる。
+ * p は常に両端揃えなので、揃えは >{…} でセルの先頭に命令を足して指定する（array パッケージ）。
+ * 幅は列の左右の余白（\tabcolsep）を引いて、列幅の合計が 1 なら本文の幅に収まるようにする。
+ */
+function tableColumnSpec(column: TableColumn): string {
+  const rule = column.ruleLeft ? '|' : '';
+  if (column.width === undefined) return rule + column.align;
+  const width = ratio(Math.min(1, Math.max(MIN_COLUMN_WIDTH, column.width)));
+  return `${rule}>{${PARBOX_ALIGN[column.align]}\\arraybackslash}p{\\dimexpr ${width}\\linewidth-2\\tabcolsep\\relax}`;
+}
+
 function tableToTex(block: TableBlock): string {
-  const row = (r: TableRow) => `    ${r.cells.map(escapeTex).join(' & ')} \\\\`;
+  // 行の先頭に {} を置く。前の行の \\ や \midrule は、次が [ だと [長さ] の指定として読もうとして
+  // 「Illegal unit of measure」で止まるため（issue #28）。{} はPDFには何も出ない
+  const row = (r: TableRow) => `    {}${r.cells.map(escapeTex).join(' & ')} \\\\`;
+  // booktabs の横線は縦線とつながらない（隙間が空く）ので、縦線があるときは \hline にする
+  const hasVerticalRule = block.ruleRight === true || block.columns.some((c) => c.ruleLeft);
+  const rule = (booktabs: string) => `    ${hasVerticalRule ? '\\hline' : booktabs}`;
+  const rows = block.header ? [block.header, ...block.rows] : block.rows;
+  const spec = block.columns.map(tableColumnSpec).join('') + (block.ruleRight ? '|' : '');
   const lines = [
     '\\begin{table}[htbp]',
     '  \\centering',
     ...(block.caption ? [`  \\caption{${escapeTex(block.caption)}}`] : []),
-    `  \\begin{tabular}{${block.columns.map((c) => c.align).join('')}}`,
-    '    \\toprule',
-    ...(block.header ? [row(block.header), '    \\midrule'] : []),
-    ...block.rows.map(row),
-    '    \\bottomrule',
+    `  \\begin{tabular}{${spec}}`,
+    ...(block.ruleTop ? [rule('\\toprule')] : []),
+    ...rows.flatMap((r, i) => {
+      if (!r.ruleBelow) return [row(r)];
+      return [row(r), rule(i === rows.length - 1 ? '\\bottomrule' : '\\midrule')];
+    }),
     '  \\end{tabular}',
     '\\end{table}',
   ];

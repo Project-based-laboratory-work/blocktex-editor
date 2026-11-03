@@ -27,7 +27,7 @@ from rule_based.rule_based_classifier import (
     _body_font_size, _overlap_ratio,
 )  # fmt: skip
 
-LABELS = FINE_LABELS  # ["heading", "paragraph", "list", "math", "caption", "table", "figure", "other"]
+LABELS = FINE_LABELS  # 並びの番号がクラスの番号になる（rule_based/labels.py の Label の順）
 LABEL_TO_ID = {label: i for i, label in enumerate(LABELS)}
 IGNORE = -100  # パディングの位置。CrossEntropyLoss の ignore_index の既定値と同じ
 
