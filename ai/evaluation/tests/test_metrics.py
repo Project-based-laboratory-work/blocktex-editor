@@ -11,6 +11,7 @@ from evaluation.metrics import (
     decoration_counts,
     indent_counts,
     label_scores,
+    order_counts,
     tex_tokens,
     detection_scores,
     iou,
@@ -253,3 +254,25 @@ def test_label_scores():
     assert scores["heading"]["found_rate"] == 1.0 and scores["heading"]["recall"] == 0.0
     assert scores["paragraph"]["recall"] == 1.0 and scores["paragraph"]["precision"] == 1 / 3  # 段落と予測した3つのうち1つ
     assert scores["other"]["found_rate"] == 0.0 and scores["other"]["f1"] == 0.0             # 一度も予測していない
+
+
+def test_column_widths_count_only_wrapped_columns():
+    gt = Element(kind="table", bbox=B, label="table", cells=[["a", "b", "c"]], col_widths=[None, 0.24, None])
+    pred = Element(kind="table", bbox=B, label="table", cells=[["a", "b", "c"]], col_widths=[None, 0.25, 0.3])
+    counts = Counts()
+    count_page(Page(page=1, width=1, height=1, unit="pt", elements=[pred]), Page(page=1, width=1, height=1, unit="pt", elements=[gt]), counts)
+    # 1列目はどちらも指定なし → 数えない。2列目は差 0.01 → 正解。3列目は正解に無い幅を付けた → 不正解
+    assert summarize(counts)["table_width_acc"] == 1 / 2
+
+
+def test_reading_order():
+    assert order_counts([(0, 0), (1, 1), (2, 2)]) == (3, 0)  # 全部同じ順
+    assert order_counts([(1, 0), (0, 1), (2, 2)]) == (2, 1)  # 最初の2つが逆
+    gt = Page(page=1, width=1, height=1, unit="pt", elements=[
+        Element(kind="text", bbox=A, text="a", label="heading"),
+        Element(kind="text", bbox=B, text="b", label="paragraph"),
+    ])
+    pred = Page(page=1, width=1, height=1, unit="pt", elements=list(reversed(gt.elements)))  # 逆の順に出した
+    counts = Counts()
+    count_page(pred, gt, counts)
+    assert summarize(counts)["order_acc"] == 0.0

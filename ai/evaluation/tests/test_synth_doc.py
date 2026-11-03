@@ -2,7 +2,7 @@ import random
 
 import pytest
 
-from evaluation.synth_doc import FEATURES, HEADING_COMMANDS, preamble, random_document, table_blocks, title_blocks
+from evaluation.synth_doc import FEATURES, HEADING_COMMANDS, figure_blocks, preamble, random_document, table_blocks, title_blocks
 
 
 def test_every_block_has_start_and_end_marks():
@@ -76,3 +76,26 @@ def test_preamble_options():
     assert r"\pagestyle{empty}" in preamble()
     assert r"\mk{pn\thepage s}" in preamble(page_number=True)  # ページ番号の前後に目印
     assert set(FEATURES) >= {"table", "figure", "math", "code", "two_column", "page_number"}
+
+
+def test_wrapped_column_has_width():
+    tables = [table_blocks(random.Random(seed), "ja", 0)[0] for seed in range(30)]
+    wrapped = [t for t in tables if t.col_widths is not None]
+    assert wrapped  # 30個あれば、折り返す列のある表は1つ以上ある
+    for t in wrapped:
+        widths = [w for w in t.col_widths if w is not None]
+        # (5cm ＋ 左右の余白 6pt×2) ÷ A4の幅（595.28pt）。10pt の文書なので拡大は無し
+        assert len(t.col_widths) == len(t.cells[0]) and widths == [0.2582]
+        assert r"p{5.0cm}" in t.tex
+
+
+def test_wide_floats_only_in_two_column():
+    wide = [b for seed in range(30) for b in table_blocks(random.Random(seed), "en", 0, two_column=True) + figure_blocks(random.Random(seed), "en", 2, two_column=True)]
+    assert any(b.full_width for b in wide) and any(r"\begin{table*}" in b.tex or r"\begin{figure*}" in b.tex for b in wide)
+    assert not any(b.full_width for seed in range(30) for b in table_blocks(random.Random(seed), "en", 0))  # 1段組では使わない
+
+
+def test_header_in_preamble():
+    head = preamble(header="Evaluation document")
+    assert r"\mk{hd\thepage s}Evaluation document\mk{hd\thepage e}" in head
+    assert r"\pagestyle{empty}" not in head

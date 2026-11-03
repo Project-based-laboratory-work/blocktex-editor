@@ -163,10 +163,13 @@ def test_build_ground_truth_with_every_feature(has_tex, tmp_path, lang, seed):
     assert all(el.text for el in codes)
     assert by_label["math"].tex is not None
     assert by_label["figure"].kind == "figure" and by_label["figure"].text is None
-    # ページ番号は各ページに1つ、その文字はページの番号
-    numbers = [(page.page, el.text) for page in doc.pages for el in page.elements if el.label == "other"]
-    assert numbers == [(page.page, str(page.page)) for page in doc.pages]
-    # 2段組なので、タイトル以外の要素は左右どちらかの段に収まる（段をまたがない）
+    # ヘッダー（柱）は各ページの先頭、ページ番号は各ページの最後。どちらも label="other"
+    for page in doc.pages:
+        assert page.elements[0].label == "other" and not page.elements[0].text.isdigit()
+        assert page.elements[-1].label == "other" and page.elements[-1].text == str(page.page)
+    # 2段組なので、段をまたぐもの（タイトル、table* / figure* とそのキャプション、ヘッダー・ページ番号）以外は、
+    # 左右どちらかの段に収まる
+    wide_labels = {b.label for b in blocks if b.full_width} | {"other"}
     for el in elements:
-        if el.label not in ("title", "author", "date", "other"):
+        if el.label not in wide_labels:
             assert el.bbox[2] <= 0.52 or el.bbox[0] >= 0.48, (el.label, el.bbox)

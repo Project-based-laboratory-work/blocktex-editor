@@ -38,6 +38,7 @@ FEATURE_TAGS = {
     "math": "has_math",
     "code": "has_code",
     "page_number": "has_page_number",
+    "header": "has_header",
 }
 
 

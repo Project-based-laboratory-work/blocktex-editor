@@ -85,6 +85,7 @@ FINDING_METRICS = {
     "level_acc": ("見出しレベルの正解率", True),
     "cer": ("文字の誤り率（CER）", False),
     "deco_f1": ("装飾（太字・斜体・下線）のF1", True),
+    "order_acc": ("読み順の正しさ", True),
 }
 # 表・数式・コードの指標は、1文書に1つくらいしか無く切り口ごとだと数が少なすぎるので、切り口の比較には使わない
 # （ブロックの種類ごとの成績 by_label と、全体の値で見る）
@@ -127,6 +128,11 @@ TAG_NAMES = {
     "has_page_number=False": "ページ番号が無い文書",
     "columns=1": "1段組の文書",
     "columns=2": "2段組の文書",
+    "has_header=True": "ヘッダーがある文書",
+    "has_header=False": "ヘッダーが無い文書",
+    "label_source=manual": "人が付けた正解の文書",
+    "label_source=prelabel": "正解が下書きのままの文書",
+    "label_source=auto": "正解を自動で作った文書",
 }
 
 

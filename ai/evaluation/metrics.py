@@ -12,6 +12,7 @@ DECORATION_MARKS = ("bold", "italic", "underline")  # common/ir.py の Run の�
 # 文中の装飾を採点するラベル。見出しやタイトルは書体ごと太字で印刷されるが、エディタでは装飾（runs）ではなく
 # ブロックの種類で表すので、採点しない
 DECORATED_LABELS = ("paragraph", "list", "caption")
+COL_WIDTH_TOLERANCE = 0.03  # 列幅（ページの幅で割った値）の差がこれ以内なら合っているとする
 # 文字の誤り率（CER）を数えないラベル。表の中身は cells で持つ抽出器が多いので、セルの正解率（table_cell_acc）で別に見る
 CER_EXCLUDED_LABELS = ("table",)
 
@@ -143,6 +144,11 @@ class Counts:
     align_total: int = 0
     rule_correct: int = 0    # 罫線（縦・横の境目ごとの有無）が一致した数
     rule_total: int = 0
+    width_correct: int = 0   # 列幅を指定した（折り返す）列で、予測の列幅が正解と近かった数
+    width_total: int = 0
+    # 読み順。対応したブロックの2つずつの組で、予測の並び順が正解と同じ（concordant）か逆（discordant）か
+    order_concordant: int = 0
+    order_discordant: int = 0
     # 数式（正解も予測も tex を持つ組だけ）。トークン単位の編集距離
     math_errors: int = 0
     math_tokens: int = 0
@@ -176,6 +182,29 @@ def table_counts(pred: Element, gt: Element, counts: Counts) -> None:
         if gt_rules is not None and pred_rules is not None:
             counts.rule_total += len(gt_rules)
             counts.rule_correct += sum(int(k < len(pred_rules) and pred_rules[k] == v) for k, v in enumerate(gt_rules))
+    if pred.col_widths is not None:  # 列幅を出さない抽出器は対象外
+        n_cols = max(len(row) for row in gt.cells) if gt.cells else 0
+        for c in range(n_cols):
+            g = gt.col_widths[c] if gt.col_widths is not None and c < len(gt.col_widths) else None
+            w = pred.col_widths[c] if c < len(pred.col_widths) else None
+            if g is None and w is None:
+                continue  # どちらも幅を指定しない列は数えない（ほとんどの列がこれなので、数えると正解率が甘くなる）
+            counts.width_total += 1
+            counts.width_correct += int(g is not None and w is not None and abs(g - w) <= COL_WIDTH_TOLERANCE)
+
+
+def order_counts(pairs: list[tuple[int, int]]) -> tuple[int, int]:
+    """読み順。(予測の番号, 正解の番号) の組を2つずつ比べ、(並び順が正解と同じ組の数, 逆の組の数) を返す。
+    要素は読み順に並んでいる決まり（common/README.md）なので、番号の大小がそのまま読む順番"""
+    concordant = discordant = 0
+    for a in range(len(pairs)):
+        for b in range(a + 1, len(pairs)):
+            (pa, ga), (pb, gb) = pairs[a], pairs[b]
+            if (pa - pb) * (ga - gb) > 0:
+                concordant += 1
+            else:
+                discordant += 1
+    return concordant, discordant
 
 
 TEX_TOKEN = re.compile(r"\\[A-Za-z]+|\\.|\S")  # \frac、\{、1文字（math_ocr/tokenizer.py と同じ区切り方）
@@ -227,6 +256,9 @@ def count_page(pred: Page, gt: Page, counts: Counts) -> None:
     for el in pred.elements:
         if el.label is not None:
             add_count(counts.pred_labels, el.label)
+    concordant, discordant = order_counts(pairs)
+    counts.order_concordant += concordant
+    counts.order_discordant += discordant
 
     for i, j in pairs:
         p = pred.elements[i]
@@ -292,6 +324,8 @@ def summarize(counts: Counts) -> dict[str, float | None]:
     scores["table_cell_acc"] = ratio_or_none(counts.cell_correct, counts.cell_total)
     scores["table_align_acc"] = ratio_or_none(counts.align_correct, counts.align_total)
     scores["table_rule_acc"] = ratio_or_none(counts.rule_correct, counts.rule_total)
+    scores["table_width_acc"] = ratio_or_none(counts.width_correct, counts.width_total)
+    scores["order_acc"] = ratio_or_none(counts.order_concordant, counts.order_concordant + counts.order_discordant)
     scores["math_ter"] = ratio_or_none(counts.math_errors, counts.math_tokens)
     scores["code_indent_acc"] = ratio_or_none(counts.indent_correct, counts.indent_total)
     return scores

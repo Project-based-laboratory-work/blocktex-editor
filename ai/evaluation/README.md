@@ -31,12 +31,13 @@ python -m pytest evaluation                                                     
 |---|---|---|---|
 | `title` | `\maketitle` のタイトル・著者・日付 | `title` / `author` / `date` | `has_title` |
 | `decoration` | 段落・箇条書きの中の太字・斜体（英語だけ）・下線 | 要素の `runs` | `has_decoration` |
-| `table` | 表（列の揃え・罫線の種類がランダム）とキャプション | `kind="table"`、`cells` / `aligns` / `col_rules` / `row_rules`、`caption` | `has_table` |
-| `figure` | 図（画像のPNG、ときどき枠線だけの図）とキャプション | `kind="figure"`、`caption` | `has_figure` |
+| `table` | 表（列の揃え・罫線の種類がランダム、ときどきセルの中で折り返す幅指定の列）とキャプション。2段組では、ときどき段をまたぐ表（`table*`） | `kind="table"`、`cells` / `aligns` / `col_rules` / `row_rules` / `col_widths`、`caption` | `has_table` |
+| `figure` | 図（画像のPNG、ときどき枠線だけの図）とキャプション。2段組では、ときどき段をまたぐ図（`figure*`） | `kind="figure"`、`caption` | `has_figure` |
 | `math` | 別行立ての数式（`align*`、1〜3行） | `label="math"`、正解のLaTeX `tex` | `has_math` |
 | `code` | コード（`verbatim` / `lstlisting`、字下げあり） | `label="code"`、字下げを保った `text` | `has_code` |
 | `two_column` | 2段組 | 段ごとに分けた要素 | `columns` |
-| `page_number` | ページ番号 | `label="other"` | `has_page_number` |
+| `page_number` | ページ番号 | `label="other"`（各ページの最後） | `has_page_number` |
+| `header` | ヘッダー（柱。ページの上の右寄せの文字） | `label="other"`（各ページの先頭） | `has_header` |
 
 ```bash
 # 1つの機能だけを、全文書に入れたデータセット（10件で約15秒）
@@ -73,7 +74,9 @@ cd server && npm run dev   # listening on :8080 と出たら web/eval.html を�
   - 表の `cells`・揃え・罫線、数式の `tex`、コードの文字（字下げごと）は、PDFからではなく文書を作ったときの値を使う
   - 数式は分数の分子・分母などがベースラインからずれるので、範囲を上下に 14pt 広げる
   - 2段組では、範囲を段ごとに分けてその段の文字だけを集める。段・ページをまたぐブロックは、段・ページごとの要素になる
-  - ページ番号は、フッターに置いた目印（`pn<ページ>s` / `pn<ページ>e`）から `label="other"` にし、その文字はほかのブロックに入れない
+  - ページ番号・ヘッダーは、フッター・ヘッダーに置いた目印（`pn<ページ>s` / `pn<ページ>e`、`hd<ページ>s` / `hd<ページ>e`）から `label="other"` にし、その文字はほかのブロックに入れない
+  - 段をまたぐもの（タイトル、`table*` / `figure*`）は段で分けず、その文字もほかのブロックに入れない
+  - 表の列幅は、幅指定の列（`p{5cm}`、2段組の段の中では `p{3cm}`）だけに入れ、ほかの列は `null`。値はエディタ（web/src/tex.ts）と同じく、列の左右の余白（`\tabcolsep` = 6pt）を含めた幅をA4の幅（595.28pt）で割ったもの。jsarticle は 11pt・12pt で文書全体を 1.095・1.2 倍にする（`\mag`）ので、その倍率も掛ける（grid の表の縦線の間隔と 0.001 以内で一致することを確かめた）
 - フォントや PyMuPDF のブロックの区切り方に頼らないので、特定の抽出器だけが有利になることがない
 - [block_classifier/doc_gen.py](../block_classifier/doc_gen.py) とは別に作っている。学習データと同じ作り方の文書で評価すると、block_classifier の点数が実力より高く出るため
 - 古いデータセットにページの画像を足すだけなら `python -m evaluation.images evaluation/data/synth_v1`
@@ -103,12 +106,14 @@ OCRのライブラリが入っていない環境では、そのモデルの評�
 |---|---|
 | `precision` / `recall` / `f1` | ブロックの検出。誤検出が多いと precision、見逃しが多いと recall が下がる |
 | `miou` | 対応した組の IoU の平均（枠の位置の正確さ） |
+| `order_acc` | 読み順。対応した組を2つずつ比べ、予測の並び順が正解と同じだった割合（要素は読み順に並べる決まりなので、並び順で比べる） |
 | `label_acc` | 対応した組のうちラベルが一致した割合。混同行列も出す |
 | `level_acc` | 見出し同士の組のうち見出しレベルが一致した割合 |
 | `cer` / `cer_ja` / `cer_en` | 文字の誤り率（編集距離 ÷ 正解の文字数、空白・改行は数えない）。言語別は文字の読み取りだけを見て、並び順の違いは数えない |
 | `deco_precision` / `deco_recall` / `deco_f1` | 段落・箇条書き・キャプションの太字・斜体・下線が、正しい文字に付いたか（見出しは書体ごと太字なので採点しない） |
 | `table_shape_acc` | 当たった表のうち、行数・列数が一致した割合 |
 | `table_cell_acc` / `table_align_acc` / `table_rule_acc` | 同じ位置どうしで比べた、セルの文字・列の揃え・罫線の有無の正解率（表の文字は CER では数えない） |
+| `table_width_acc` | 幅を指定した列の幅（`col_widths`）が、ページの幅の3%以内で合っていた割合。どちらも幅を指定しない列は数えない。列幅を出すモデルだけ |
 | `math_ter` | 数式の LaTeX のトークン誤り率（`&` は数えない）。`tex` を出すモデルだけ |
 | `code_indent_acc` | コードの各行の字下げ（行頭の空白の数）が一致した割合 |
 | `sec_per_page` | 1ページにかかった秒数 |
@@ -131,8 +136,23 @@ OCRのライブラリが入っていない環境では、そのモデルの評�
 
 サイトでは、同じデータセットで評価した各モデルの最新の実行の中での順位も出す。
 
+## 本物のPDFで評価する（import_dataset.py）
+
+合成した文書だけでなく、論文や資料のPDFでも評価できる。正解（ラベル付きIR）は人が付ける。
+
+```bash
+# PDFの隣に <名前>.labeled.json（正解）を置いて取り込む
+python -m evaluation.import_dataset --out evaluation/data/real_v1 papers/a.pdf papers/b.pdf
+# 正解が無いPDFは、モデルの出力を下書きにする（label_source: "prelabel"）。人が直してから使う
+python -m evaluation.import_dataset --out evaluation/data/real_v1 --draft rule_based papers/*.pdf
+```
+
+- 下書きはそのモデル自身の答えなので、直さずにそのモデルを評価すると満点に近くなる。直した要素は `label_source` を `"manual"` にする
+- tags の `label_source`（ケースの要素で一番多いもの）で、「正解が下書きのままの文書」を分けて見られる
+- tags の `lang` は正解の文字から推定する（ASCII以外が3割以上なら `ja`）。`has_table` などは正解のラベルから付ける
+
 ## 未対応
 
-- 表の列幅（`col_widths`。セル内で折り返す列）と、セルを結合した表
-- 段をまたぐ表・図（`table*` / `figure*`）と、ヘッダー（柱）
+- セルを結合した表（`\multicolumn` / `\multirow`）。IR（`common/ir.py`）の `cells` に結合を表す方法が無いため、IR を広げてから
 - 数式の正解の `text`（PDFの文字を並べたもので、分数などは行が分かれる）。数式は `tex` の TER で見る
+- 正解を人が直すための画面（今は `gt.labeled.json` を直接直す）

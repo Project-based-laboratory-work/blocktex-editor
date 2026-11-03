@@ -10,7 +10,8 @@ TeXで作ったPDFから、正解のラベル付きIRを作る。
 - コード: 文字はPDFからではなく、ソースから取る（行頭の空白＝字下げを正しく持つため）
 - 数式: 分数の分子・分母はベースラインが大きくずれるので、範囲を広めにとる。正解のLaTeX（tex）も持つ
 - 2段組: 範囲を段ごとに分け、その段の中の文字だけを集める（タイトルなど段をまたぐものは分けない）
-- ページ番号: 目印 pn{ページ}s / pn{ページ}e から label="other" の要素にし、ほかのブロックの範囲からは外す
+- ページ番号・ヘッダー（柱）: 目印 pn{ページ}s / pn{ページ}e、hd{ページ}s / hd{ページ}e から label="other" の要素にし、
+  ほかのブロックの範囲からは外す
 """
 import re
 import subprocess
@@ -277,7 +278,8 @@ def block_regions(block: SourceBlock, start: Mark, end: Mark, pages: list[Page],
     return regions
 
 
-PAGE_NUMBER_MARK = re.compile(r"^pn(\d+)s$")
+# ページ番号（pn）とヘッダー（hd）の目印。どちらも label="other" にする
+PAGE_MARK = re.compile(r"^(pn|hd)(\d+)s$")
 
 
 def build_ground_truth(pdf_path: str, blocks: list[SourceBlock], source: str, two_column: bool = False) -> IRDocument:
@@ -289,16 +291,16 @@ def build_ground_truth(pdf_path: str, blocks: list[SourceBlock], source: str, tw
     with pymupdf.open(pdf_path) as doc:
         pages = [Page(page=i + 1, width=p.rect.width, height=p.rect.height, unit="pt") for i, p in enumerate(doc)]
 
-    # ページ番号の文字は、ほかのブロックに入らないように先に取り分ける
-    page_numbers: list[tuple[Page, list[list[Glyph]]]] = []
-    for name, start in marks.items():
-        m = PAGE_NUMBER_MARK.match(name)
-        end = marks.get(f"pn{m.group(1)}e") if m else None
+    # ページ番号・ヘッダーの文字は、ほかのブロックに入らないように先に取り分ける（ヘッダーを先に置く）
+    page_numbers: list[tuple[Page, str, list[list[Glyph]]]] = []  # (ページ, "pn" か "hd", 文字の行)
+    for name, start in sorted(marks.items(), key=lambda item: (item[0].startswith("pn"), item[0])):
+        m = PAGE_MARK.match(name)
+        end = marks.get(f"{m.group(1)}{m.group(2)}e") if m else None
         if m is None or end is None:
             continue
         lines = region_lines(glyphs, Region(start.page, start.y, end.y))
-        page_numbers.append((pages[start.page - 1], lines))
-    reserved = {id(g) for _, lines in page_numbers for line in lines for g in line}
+        page_numbers.append((pages[start.page - 1], m.group(1), lines))
+    reserved = {id(g) for _, _, lines in page_numbers for line in lines for g in line}
     # 段をまたぐブロック（タイトルなど）の文字も先に取り分ける。2段組で、ブロックが右の段の上から続くとき、
     # 右の段の範囲（ページの上の端から）にタイトルの右半分が入ってしまわないように
     for block in blocks:
@@ -341,20 +343,27 @@ def build_ground_truth(pdf_path: str, blocks: list[SourceBlock], source: str, tw
                 aligns=block.aligns,
                 col_rules=block.col_rules,
                 row_rules=block.row_rules,
+                col_widths=block.col_widths,
                 label=block.label,
                 level=block.level,
                 tex=block.tex_value,
                 label_source="auto",  # TeXから自動で作った正解
             ))
 
-    for page, lines in page_numbers:
+    for page, prefix, lines in page_numbers:
         boxes = [g.bbox for line in lines for g in line if not g.c.isspace()]
-        if boxes:
-            page.elements.append(Element(
-                kind="text",
-                bbox=normalize_bbox(union_bbox(boxes), page.width, page.height),
-                text=lines_text(lines),
-                label="other",
-                label_source="auto",
-            ))
+        if not boxes:
+            continue
+        element = Element(
+            kind="text",
+            bbox=normalize_bbox(union_bbox(boxes), page.width, page.height),
+            text=lines_text(lines),
+            label="other",
+            label_source="auto",
+        )
+        # 読み順: ヘッダーはページの先頭、ページ番号はページの最後
+        if prefix == "hd":
+            page.elements.insert(0, element)
+        else:
+            page.elements.append(element)
     return IRDocument(source=source, extractor="ground_truth", structurer="ground_truth", pages=pages)

@@ -1,7 +1,7 @@
 """
 評価用のランダムな文書（TeX）を作る。各ブロックの始まりと終わりに目印 \\mk{b{番号}s} / \\mk{b{番号}e} を埋め込む。
 文中の装飾（太字・斜体・下線）も、装飾した語の前後に目印 \\mk{b{番号}d{何個目}s} / \\mk{b{番号}d{何個目}e} を置く。
-ページ番号には \\mk{pn{ページ}s} / \\mk{pn{ページ}e} を置く。
+ページ番号には \\mk{pn{ページ}s} / \\mk{pn{ページ}e}、ヘッダー（柱）には \\mk{hd{ページ}s} / \\mk{hd{ページ}e} を置く。
 
 文書に入れるもの（FEATURES）を選べるので、表だけ・2段組だけ、のように機能ごとに評価できる。
 
@@ -15,7 +15,7 @@ from dataclasses import dataclass, field
 from PIL import Image, ImageDraw
 
 # 文書に入れられるもの。見出し・段落・箇条書きはいつも入る
-FEATURES = ["title", "decoration", "table", "figure", "math", "code", "two_column", "page_number"]
+FEATURES = ["title", "decoration", "table", "figure", "math", "code", "two_column", "page_number", "header"]
 
 PREAMBLE = r"""\documentclass[uplatex,a4paper,%(size)s%(columns)s]{jsarticle}
 \usepackage[dvipdfmx]{graphicx}
@@ -28,17 +28,21 @@ PREAMBLE = r"""\documentclass[uplatex,a4paper,%(size)s%(columns)s]{jsarticle}
 \begin{document}
 """
 
-# ページ番号を出さない（ページをまたぐブロックの範囲に、ページ番号が入らないように）
-NO_PAGE_NUMBER = r"\pagestyle{empty}"
-# ページ番号を出し、その前後に目印を置く。jsarticle の \maketitle は1ページ目を plainfoot / plainhead にするので、それも同じにする
-PAGE_NUMBER = r"""\makeatletter
-\def\ps@evalfoot{\let\@mkboth\@gobbletwo\def\@oddhead{}\def\@evenhead{}%
-  \def\@oddfoot{\hfil\mk{pn\thepage s}\thepage\mk{pn\thepage e}\hfil}\let\@evenfoot\@oddfoot}
-\let\ps@plain\ps@evalfoot
-\let\ps@plainfoot\ps@evalfoot
-\let\ps@plainhead\ps@evalfoot
+# ページ番号もヘッダーも出さない（ページをまたぐブロックの範囲に入らないように）
+NO_PAGE_STYLE = r"\pagestyle{empty}"
+# ページ番号・ヘッダーを出し、その前後に目印を置く。jsarticle の \maketitle は1ページ目を plainfoot / plainhead にするので、
+# それも同じにする（1ページ目だけ目印が無い、とならないように）
+PAGE_STYLE = r"""\makeatletter
+\def\ps@evalpage{\let\@mkboth\@gobbletwo%%
+  \def\@oddhead{%(head)s}\let\@evenhead\@oddhead%%
+  \def\@oddfoot{%(foot)s}\let\@evenfoot\@oddfoot}
+\let\ps@plain\ps@evalpage
+\let\ps@plainfoot\ps@evalpage
+\let\ps@plainhead\ps@evalpage
 \makeatother
-\pagestyle{evalfoot}"""
+\pagestyle{evalpage}"""
+PAGE_NUMBER_FOOT = r"\hfil\mk{pn\thepage s}\thepage\mk{pn\thepage e}\hfil"
+HEADER_TEXT = {"ja": "評価用の文書", "en": "Evaluation document"}  # ヘッダー（柱）の文字。右寄せにする
 
 # 言語ごとの材料。英語の文書がASCIIだけになるように、英語側には日本語を入れない
 WORDS = {
@@ -93,12 +97,20 @@ CODE_SNIPPETS = [
 ]
 
 
-def preamble(size: str = "11pt", two_column: bool = False, page_number: bool = False) -> str:
-    """文書の頭（\\begin{document} まで）"""
+def page_style(page_number: bool, header: str | None) -> str:
+    """ページ番号・ヘッダーの設定。どちらも無ければ何も出さない"""
+    if not page_number and header is None:
+        return NO_PAGE_STYLE
+    head = rf"\hfil\mk{{hd\thepage s}}{header}\mk{{hd\thepage e}}" if header is not None else ""
+    return PAGE_STYLE % {"head": head, "foot": PAGE_NUMBER_FOOT if page_number else ""}
+
+
+def preamble(size: str = "11pt", two_column: bool = False, page_number: bool = False, header: str | None = None) -> str:
+    """文書の頭（\\begin{document} まで）。header はヘッダー（柱）に出す文字"""
     return PREAMBLE % {
         "size": size,
         "columns": ",twocolumn" if two_column else "",
-        "pagestyle": PAGE_NUMBER if page_number else NO_PAGE_NUMBER,
+        "pagestyle": page_style(page_number, header),
     }
 
 
@@ -120,6 +132,7 @@ class SourceBlock:
     aligns: list[str] | None = None
     col_rules: list[bool] | None = None
     row_rules: list[bool] | None = None
+    col_widths: list[float | None] | None = None
     files: dict[str, bytes] = field(default_factory=dict)  # コンパイルに要るファイル（図の画像）
 
 
@@ -194,18 +207,48 @@ def caption_tex(rng: random.Random, lang: str, i: int) -> str:
     return rf"\caption{{{mark(f'b{i}s')}{text[0].upper() + text[1:]}{mark(f'b{i}e')}}}"
 
 
-def table_blocks(rng: random.Random, lang: str, i: int) -> list[SourceBlock]:
-    """表（番号 i）とキャプション（番号 i+1）。列の揃え・罫線の種類をランダムに変え、正解の cells・揃え・罫線も持つ"""
+# 折り返す列（p{幅}）の幅。IR の col_widths は、エディタ（web/src/tex.ts）と同じく列の左右の余白（\tabcolsep）を含めた
+# 列の幅を、ページの幅（A4 = 595.28pt）で割った値
+WRAP_WIDTH_CM = {False: 5.0, True: 3.0}  # 1段組 / 2段組の段の中
+CM = 72 / 2.54                            # 1cm を PDF の pt（1/72インチ）にした値
+TABCOLSEP = 6 * 72 / 72.27                # jsarticle の \tabcolsep（6pt）を PDF の pt にした値
+A4_WIDTH_PT = 595.28
+# jsarticle は 11pt・12pt のとき文書全体を拡大する（\mag）。cm や pt で書いた長さも、PDFの上ではこの倍率になる
+MAGNIFICATION = {"10pt": 1.0, "11pt": 1.095, "12pt": 1.2}
+
+
+def wrap_column_width(two_column: bool, size: str) -> float:
+    """折り返す列の、IR の col_widths の値"""
+    width_pt = (WRAP_WIDTH_CM[two_column] * CM + 2 * TABCOLSEP) * MAGNIFICATION[size]
+    return round(width_pt / A4_WIDTH_PT, 4)
+
+
+def table_blocks(rng: random.Random, lang: str, i: int, two_column: bool = False, size: str = "10pt") -> list[SourceBlock]:
+    """表（番号 i）とキャプション（番号 i+1）。列の揃え・罫線の種類をランダムに変え、正解の cells・揃え・罫線・列幅も持つ。
+    ときどき1列を幅指定（p{幅}）にして、セルの中で折り返させる。2段組では、ときどき段をまたぐ表（table*）にする"""
+    wide = two_column and rng.random() < 0.4
     cols = rng.randint(2, 4)
     n_body = rng.randint(2, 4)
     style = rng.choice(TABLE_RULE_STYLES)
     aligns = [rng.choice("lcr") for _ in range(cols)]
+    wrap_col = rng.randrange(cols) if rng.random() < 0.3 else None
+    narrow = two_column and not wide  # 2段組の段の中に置く表
+    wrap_cm = WRAP_WIDTH_CM[narrow]
     header = rng.sample(TABLE_WORDS[lang], cols)
-    body = [[f"{rng.uniform(0, 100):.1f}" for _ in range(cols)] for _ in range(n_body)]
+    body = [
+        [
+            WORDS[lang]["sep"].join(sentence(rng, lang) for _ in range(2)) if c == wrap_col else f"{rng.uniform(0, 100):.1f}"
+            for c in range(cols)
+        ]
+        for _ in range(n_body)
+    ]
     cells = [header, *body]
+    if wrap_col is not None:
+        aligns[wrap_col] = "l"  # 折り返す列は左寄せ（エディタの p{} 列と同じ）
 
+    specs = [rf">{{\raggedright\arraybackslash}}p{{{wrap_cm}cm}}" if c == wrap_col else a for c, a in enumerate(aligns)]
     rule = "|" if style == "grid" else ""
-    spec = rule + rule.join(aligns) + rule
+    spec = rule + rule.join(specs) + rule
     top, middle, bottom = {
         "booktabs": (r"\toprule", r"\midrule", r"\bottomrule"),
         "grid": (r"\hline", r"\hline", r"\hline"),
@@ -223,9 +266,12 @@ def table_blocks(rng: random.Random, lang: str, i: int) -> list[SourceBlock]:
     has_rules = style != "none"
     row_rules = [has_rules, has_rules, *([style == "grid"] * (n_body - 1)), has_rules]
     col_rules = [style == "grid"] * (cols + 1)
+    # 列幅は、折り返す列だけページの幅で割った値を入れ、ほかは None（IR の決まり）
+    col_widths = [wrap_column_width(narrow, size) if c == wrap_col else None for c in range(cols)] if wrap_col is not None else None
 
+    env = "table*" if wide else "table"
     tex = "\n".join([
-        r"\begin{table}[htbp]",
+        rf"\begin{{{env}}}[htbp]",
         r"  \centering",
         f"  {caption_tex(rng, lang, i + 1)}",
         # 目印は表の上と下の別の行に置く。表と同じ行に置くと、目印が表の縦の真ん中の高さに記録されてしまう
@@ -234,13 +280,14 @@ def table_blocks(rng: random.Random, lang: str, i: int) -> list[SourceBlock]:
         *(f"    {line}" for line in lines),
         r"  \end{tabular}",
         f"  \\par{mark(f'b{i}e')}",
-        r"\end{table}",
+        rf"\end{{{env}}}",
     ])
     table = SourceBlock(
-        i, "table", None, tex, kind="table", own_line_marks=True,
+        i, "table", None, tex, kind="table", own_line_marks=True, full_width=wide,
         text="\n".join(" ".join(row) for row in cells), cells=cells, aligns=aligns, col_rules=col_rules, row_rules=row_rules,
+        col_widths=col_widths,
     )
-    return [table, SourceBlock(i + 1, "caption", None, "")]
+    return [table, SourceBlock(i + 1, "caption", None, "", full_width=wide)]
 
 
 def figure_image(rng: random.Random) -> bytes:
@@ -260,8 +307,11 @@ def figure_image(rng: random.Random) -> bytes:
     return out.getvalue()
 
 
-def figure_blocks(rng: random.Random, lang: str, i: int) -> list[SourceBlock]:
-    """図（番号 i）とキャプション（番号 i+1）。たいていは画像、ときどき枠線だけの図（ベクターの描画）"""
+def figure_blocks(rng: random.Random, lang: str, i: int, two_column: bool = False) -> list[SourceBlock]:
+    """図（番号 i）とキャプション（番号 i+1）。たいていは画像、ときどき枠線だけの図（ベクターの描画）。
+    2段組では、ときどき段をまたぐ図（figure*）にする"""
+    wide = two_column and rng.random() < 0.4
+    env = "figure*" if wide else "figure"
     files = {}
     if rng.random() < 0.7:
         name = f"fig{i}.png"
@@ -270,16 +320,16 @@ def figure_blocks(rng: random.Random, lang: str, i: int) -> list[SourceBlock]:
     else:
         body = rf"\fbox{{\rule{{0pt}}{{{rng.uniform(2, 4):.1f}cm}}\hspace{{{rng.uniform(0.3, 0.7):.2f}\linewidth}}}}"
     tex = "\n".join([
-        r"\begin{figure}[htbp]",
+        rf"\begin{{{env}}}[htbp]",
         r"  \centering",
         f"  {mark(f'b{i}s')}\\par",
         f"  {body}",
         f"  \\par{mark(f'b{i}e')}",
         f"  {caption_tex(rng, lang, i + 1)}",
-        r"\end{figure}",
+        rf"\end{{{env}}}",
     ])
-    figure = SourceBlock(i, "figure", None, tex, kind="figure", own_line_marks=True, files=files)
-    return [figure, SourceBlock(i + 1, "caption", None, "")]
+    figure = SourceBlock(i, "figure", None, tex, kind="figure", own_line_marks=True, full_width=wide, files=files)
+    return [figure, SourceBlock(i + 1, "caption", None, "", full_width=wide)]
 
 
 def math_block(rng: random.Random, lang: str, i: int) -> SourceBlock:
@@ -324,6 +374,7 @@ def random_document(rng: random.Random, lang: str, features: set[str] | None = N
         raise ValueError(f"不明な features {sorted(unknown)}（使えるのは {FEATURES}）")
     decorate = "decoration" in features
 
+    size = rng.choice(["10pt", "11pt", "12pt"])  # 表の列幅の正解が文字サイズで変わるので、先に決める
     blocks: list[SourceBlock] = []
     if "title" in features:
         blocks += title_blocks(rng, lang, 0)
@@ -339,15 +390,20 @@ def random_document(rng: random.Random, lang: str, features: set[str] | None = N
             blocks.append(builder(rng, lang, len(blocks), decorate))
         extra = placed.get(section)
         if extra == "table":
-            blocks += table_blocks(rng, lang, len(blocks))
+            blocks += table_blocks(rng, lang, len(blocks), "two_column" in features, size)
         elif extra == "figure":
-            blocks += figure_blocks(rng, lang, len(blocks))
+            blocks += figure_blocks(rng, lang, len(blocks), "two_column" in features)
         elif extra == "math":
             blocks.append(math_block(rng, lang, len(blocks)))
         elif extra == "code":
             blocks.append(code_block(rng, lang, len(blocks)))
 
-    head = preamble(rng.choice(["10pt", "11pt", "12pt"]), "two_column" in features, "page_number" in features)
+    head = preamble(
+        size,
+        "two_column" in features,
+        "page_number" in features,
+        HEADER_TEXT[lang] if "header" in features else None,
+    )
     body = "\n\n".join(b.tex for b in blocks if b.tex)
     return head + body + "\n\\end{document}\n", blocks
 
