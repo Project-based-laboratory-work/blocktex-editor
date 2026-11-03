@@ -9,6 +9,9 @@ from evaluation.metrics import (
     count_document,
     count_page,
     decoration_counts,
+    indent_counts,
+    label_scores,
+    tex_tokens,
     detection_scores,
     iou,
     label_accuracy,
@@ -206,3 +209,47 @@ def test_decorations_are_none_when_nothing_is_decorated():
     counts = Counts()
     count_page(page, page, counts)
     assert summarize(counts)["deco_f1"] is None  # 正解にも予測にも装飾が無ければ対象外
+
+
+def test_table_contents_are_compared_cell_by_cell():
+    gt = Element(kind="table", bbox=B, label="table", cells=[["a", "b"], ["1", "2"]], aligns=["l", "r"],
+                 col_rules=[False, False, False], row_rules=[True, True, True])
+    pred = Element(kind="table", bbox=B, label="table", cells=[["a", "b"], ["1", "3"]], aligns=["l", "c"],
+                   col_rules=[False, True, False], row_rules=[True, True, True])
+    counts = Counts()
+    count_page(Page(page=1, width=1, height=1, unit="pt", elements=[pred]), Page(page=1, width=1, height=1, unit="pt", elements=[gt]), counts)
+    scores = summarize(counts)
+    assert scores["table_shape_acc"] == 1.0      # 2行 × 2列で同じ
+    assert scores["table_cell_acc"] == 3 / 4     # 「2」と「3」だけ違う
+    assert scores["table_align_acc"] == 1 / 2
+    assert scores["table_rule_acc"] == 5 / 6     # 縦線3つ・横線3つのうち、真ん中の縦線だけ違う
+    assert scores["cer"] is None                 # 表の文字は CER では数えない（セルで見る）
+
+
+def test_math_tex_and_code_indent():
+    assert tex_tokens(r"y &= \frac{a}{b}") == ["y", "=", r"\frac", "{", "a", "}", "{", "b", "}"]  # & は数えない
+    assert indent_counts("def f():\nreturn 1", "def f():\n    return 1") == (1, 2)  # 2行目の字下げが消えている
+    gt = Page(page=1, width=1, height=1, unit="pt", elements=[Element(kind="text", bbox=A, text="x", label="math", tex=r"x^{2}")])
+    pred = Page(page=1, width=1, height=1, unit="pt", elements=[Element(kind="text", bbox=A, text="x", label="math", tex=r"x^{3}")])
+    counts = Counts()
+    count_page(pred, gt, counts)
+    assert summarize(counts)["math_ter"] == 1 / 5  # x ^ { 2 } の5トークンのうち1つ違う
+
+
+def test_label_scores():
+    gt = Page(page=1, width=1, height=1, unit="pt", elements=[
+        Element(kind="text", bbox=A, text="1 はじめに", label="heading"),
+        Element(kind="text", bbox=B, text="本文", label="paragraph"),
+        Element(kind="text", bbox=C, text="1", label="other"),
+    ])
+    pred = Page(page=1, width=1, height=1, unit="pt", elements=[
+        Element(kind="text", bbox=A, text="1 はじめに", label="paragraph"),  # 見出しを段落と間違えた
+        Element(kind="text", bbox=B, text="本文", label="paragraph"),
+        Element(kind="text", bbox=D, text="ゴミ", label="paragraph"),        # 誤検出。ページ番号は見逃し
+    ])
+    counts = Counts()
+    count_page(pred, gt, counts)
+    scores = label_scores(counts)
+    assert scores["heading"]["found_rate"] == 1.0 and scores["heading"]["recall"] == 0.0
+    assert scores["paragraph"]["recall"] == 1.0 and scores["paragraph"]["precision"] == 1 / 3  # 段落と予測した3つのうち1つ
+    assert scores["other"]["found_rate"] == 0.0 and scores["other"]["f1"] == 0.0             # 一度も予測していない

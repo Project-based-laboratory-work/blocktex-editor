@@ -9,7 +9,7 @@ from datetime import datetime
 from pathlib import Path
 
 from common.ir import LABELS, IRDocument, load_ir, save_ir
-from evaluation.metrics import IOU_THRESHOLD, Counts, confusion_matrix, count_document, ratio_or_none, summarize
+from evaluation.metrics import IOU_THRESHOLD, Counts, confusion_matrix, count_document, label_scores, ratio_or_none, summarize
 from evaluation.models import ModelSpec, load_registry, predict
 
 RESULTS_DIR = Path(__file__).parent / "data" / "results"  # data/ は .gitignore 済み
@@ -86,6 +86,19 @@ FINDING_METRICS = {
     "cer": ("文字の誤り率（CER）", False),
     "deco_f1": ("装飾（太字・斜体・下線）のF1", True),
 }
+# 表・数式・コードの指標は、1文書に1つくらいしか無く切り口ごとだと数が少なすぎるので、切り口の比較には使わない
+# （ブロックの種類ごとの成績 by_label と、全体の値で見る）
+FINDING_MAX_SLICES = 12   # 切り口の文章は、差の大きい順にこの数まで
+FINDING_LABEL_MIN = 5         # ブロックの種類ごとの文章にするのは、正解がこの数以上ある種類だけ
+FINDING_LABEL_STRONG = 0.85   # 種類ごとの F1（ラベルを出さないモデルは見つけた割合）がこれ以上なら強み
+FINDING_LABEL_WEAK = 0.5      # これ以下なら弱み
+
+# ブロックの種類（ラベル）の読み方
+LABEL_NAMES = {
+    "heading": "見出し", "paragraph": "段落", "list": "箇条書き", "math": "数式", "caption": "キャプション",
+    "table": "表", "figure": "図", "other": "ページ番号など", "code": "コード", "title": "タイトル",
+    "author": "著者", "date": "日付",
+}
 FINDING_MIN_CASES = 5     # ケースがこれより少ない切り口は、偶然の差かもしれないので文章にしない
 FINDING_MIN_DIFF = 0.05   # 全体との差がこれより小さいときは、強み・弱みとしない
 
@@ -102,6 +115,18 @@ TAG_NAMES = {
     "pages=1": "1ページの文書",
     "pages=2": "2ページの文書",
     "pages=3": "3ページの文書",
+    "has_table=True": "表がある文書",
+    "has_table=False": "表が無い文書",
+    "has_figure=True": "図がある文書",
+    "has_figure=False": "図が無い文書",
+    "has_math=True": "数式がある文書",
+    "has_math=False": "数式が無い文書",
+    "has_code=True": "コードがある文書",
+    "has_code=False": "コードが無い文書",
+    "has_page_number=True": "ページ番号がある文書",
+    "has_page_number=False": "ページ番号が無い文書",
+    "columns=1": "1段組の文書",
+    "columns=2": "2段組の文書",
 }
 
 
@@ -139,6 +164,36 @@ def find_strengths(summary: dict, by_tag: dict[str, dict], tag_cases: dict[str, 
                 "text": f"{TAG_NAMES.get(key, key)}（{n}件）では、{name}が {value:.3f} で、全体の {overall:.3f} より{'良い' if gain > 0 else '悪い'}",
             })
     findings.sort(key=lambda f: abs(f["value"] - f["overall"]), reverse=True)
+    return findings[:FINDING_MAX_SLICES]
+
+
+def find_label_strengths(by_label: dict[str, dict]) -> list[dict]:
+    """ブロックの種類ごとに、よく当てられる（強み）・苦手（弱み）なものを文章にする。
+    ラベルを出すモデルは F1、出さないモデルは「見つけた割合」で見る"""
+    findings = []
+    for label, scores in by_label.items():
+        n = scores["n_gt"]
+        value = scores["f1"] if scores["f1"] is not None else scores["found_rate"]
+        measure = "分類のF1" if scores["f1"] is not None else "見つけた割合"
+        if n < FINDING_LABEL_MIN or value is None:
+            continue
+        if value >= FINDING_LABEL_STRONG:
+            kind = "strength"
+        elif value <= FINDING_LABEL_WEAK:
+            kind = "weakness"
+        else:
+            continue
+        name = LABEL_NAMES.get(label, label)
+        findings.append({
+            "kind": kind,
+            "metric": "label_f1" if scores["f1"] is not None else "found_rate",
+            "slice": f"label={label}",
+            "value": value,
+            "overall": None,
+            "n": n,
+            "text": f"{name}（正解 {n}個）の{measure}が {value:.3f} で、{'よく当てられている' if kind == 'strength' else '苦手'}",
+        })
+    findings.sort(key=lambda f: f["value"], reverse=True)
     return findings
 
 
@@ -149,6 +204,7 @@ def build_report(spec: ModelSpec, dataset_dir: Path, result: DatasetResult, run_
     total_pages = sum(c.pages for c in result.cases)
     summary["sec_per_page"] = ratio_or_none(total_seconds, total_pages)
     by_tag = {key: mask_unsupported(summarize(counts), spec.outputs) for key, counts in result.by_tag.items()}
+    by_label = label_scores(result.total)
     has_labels = "label" in spec.outputs
     return {
         "run_id": run_id,
@@ -159,7 +215,8 @@ def build_report(spec: ModelSpec, dataset_dir: Path, result: DatasetResult, run_
         "summary": summary,
         "by_tag": by_tag,
         "tag_cases": result.tag_cases,
-        "findings": find_strengths(summary, by_tag, result.tag_cases),
+        "by_label": by_label,
+        "findings": find_strengths(summary, by_tag, result.tag_cases) + find_label_strengths(by_label),
         "confusion": {"labels": LABELS, "matrix": confusion_matrix(result.total.label_pairs, LABELS)} if has_labels else None,
         "errors": sum(1 for c in result.cases if c.error is not None),
         "cases": [

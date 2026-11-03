@@ -15,7 +15,7 @@ from evaluation.ground_truth import (
     union_bbox,
 )
 from evaluation.marks import Mark, read_marks
-from evaluation.synth_doc import PREAMBLE, SourceBlock, mark, random_document, title_blocks
+from evaluation.synth_doc import FEATURES, SourceBlock, document_files, mark, preamble, random_document, title_blocks
 
 # サンプルPDF（sample_data/mark_test.tex）から取った実際の値
 GLYPHS = [
@@ -111,7 +111,7 @@ def test_build_ground_truth_splits_block_across_pages(has_tex, tmp_path):
         SourceBlock(0, "heading", 1, rf"\section{{{mark('b0s')}Long{mark('b0e')}}}"),
         SourceBlock(1, "paragraph", None, r"\vspace*{15cm}" + "\n\n" + f"{mark('b1s')}{long_text}{mark('b1e')}"),
     ]
-    tex = PREAMBLE % {"size": "11pt"} + "\n\n".join(b.tex for b in blocks) + "\n\\end{document}\n"
+    tex = preamble("11pt") + "\n\n".join(b.tex for b in blocks) + "\n\\end{document}\n"
     doc = build_ground_truth(str(compile_tex(tex, tmp_path)), blocks, source="long.pdf")
     assert [len(p.elements) for p in doc.pages] == [2, 1]  # 1ページ目: 見出し + 段落の前半、2ページ目: 段落の後半
     first_half = doc.pages[0].elements[1]
@@ -133,10 +133,40 @@ def test_build_ground_truth_with_title_and_decoration(has_tex, tmp_path):
     paragraph = SourceBlock(3, "paragraph", None, "", decorations=[("b3d0", "italic")])
     paragraph.tex = f"{mark('b3s')}Plain words and {mark('b3d0s')}\\textit{{slanted words}}{mark('b3d0e')} here.{mark('b3e')}"
     blocks.append(paragraph)
-    tex = PREAMBLE % {"size": "11pt"} + "\n\n".join(b.tex for b in blocks if b.tex) + "\n\\end{document}\n"
+    tex = preamble("11pt") + "\n\n".join(b.tex for b in blocks if b.tex) + "\n\\end{document}\n"
     doc = build_ground_truth(str(compile_tex(tex, tmp_path)), blocks, source="doc.pdf")
     assert validate(doc) == []  # runs をつなげると text になる、なども確かめられる
     elements = doc.pages[0].elements
     assert [el.label for el in elements] == ["title", "author", "date", "paragraph"]
     italic = [run.text for run in elements[3].runs if run.italic]
     assert italic == ["slanted words"]
+
+
+@pytest.mark.parametrize("lang, seed", [("ja", 1), ("en", 2)])
+def test_build_ground_truth_with_every_feature(has_tex, tmp_path, lang, seed):
+    features = set(FEATURES)
+    tex, blocks = random_document(random.Random(seed), lang, features)
+    pdf = compile_tex(tex, tmp_path, document_files(blocks))
+    doc = build_ground_truth(str(pdf), blocks, source="doc.pdf", two_column=True)
+    assert validate(doc) == []
+    elements = [el for page in doc.pages for el in page.elements]
+    by_label = {el.label: el for el in elements}
+    for label in ("title", "table", "figure", "math", "code", "caption", "other"):
+        assert label in by_label, label
+
+    table = by_label["table"]
+    source_table = next(b for b in blocks if b.label == "table")
+    assert table.kind == "table" and table.cells == source_table.cells and table.row_rules == source_table.row_rules
+    codes = [el for el in elements if el.label == "code"]
+    if len(codes) == 1:  # 段・ページをまたがなければ、字下げごとソースのとおり（またぐとPDFの文字から取る）
+        assert codes[0].text == next(b for b in blocks if b.label == "code").text
+    assert all(el.text for el in codes)
+    assert by_label["math"].tex is not None
+    assert by_label["figure"].kind == "figure" and by_label["figure"].text is None
+    # ページ番号は各ページに1つ、その文字はページの番号
+    numbers = [(page.page, el.text) for page in doc.pages for el in page.elements if el.label == "other"]
+    assert numbers == [(page.page, str(page.page)) for page in doc.pages]
+    # 2段組なので、タイトル以外の要素は左右どちらかの段に収まる（段をまたがない）
+    for el in elements:
+        if el.label not in ("title", "author", "date", "other"):
+            assert el.bbox[2] <= 0.52 or el.bbox[0] >= 0.48, (el.label, el.bbox)

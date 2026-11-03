@@ -1,16 +1,19 @@
 """
 予測したラベル付きIRと正解のラベル付きIRを比べる評価指標。
 """
+import re
 from dataclasses import dataclass, field
 from difflib import SequenceMatcher
 
-from common.ir import Bbox, IRDocument, Page, Run
+from common.ir import Bbox, Element, IRDocument, Page, Run
 from common.text import edit_distance
 
 DECORATION_MARKS = ("bold", "italic", "underline")  # common/ir.py の Run の装飾
 # 文中の装飾を採点するラベル。見出しやタイトルは書体ごと太字で印刷されるが、エディタでは装飾（runs）ではなく
 # ブロックの種類で表すので、採点しない
 DECORATED_LABELS = ("paragraph", "list", "caption")
+# 文字の誤り率（CER）を数えないラベル。表の中身は cells で持つ抽出器が多いので、セルの正解率（table_cell_acc）で別に見る
+CER_EXCLUDED_LABELS = ("table",)
 
 
 def area(bbox: Bbox) -> float:
@@ -127,6 +130,72 @@ class Counts:
     deco_matched: int = 0   # 装飾（太字・斜体・下線）が正しく付いた文字の数
     deco_preds: int = 0     # 予測で装飾が付いた文字の数
     deco_gts: int = 0       # 正解で装飾が付いた文字の数
+    # ブロックの種類（ラベル）ごとの数。正解のラベル（無ければ kind）ごと
+    gt_labels: dict[str, int] = field(default_factory=dict)     # 正解の要素の数
+    found_labels: dict[str, int] = field(default_factory=dict)  # 正解の要素のうち、予測と対応した数（ラベルは問わない）
+    pred_labels: dict[str, int] = field(default_factory=dict)   # 予測の要素の数（予測のラベルごと。ラベルを出すモデルだけ）
+    # 表（正解も予測も cells などを持つ組だけ）
+    table_pairs: int = 0
+    table_shape_ok: int = 0  # 行数・列数が一致した表の数
+    cell_correct: int = 0    # 正解のセルのうち、同じ位置の予測のセルの文字が一致した数
+    cell_total: int = 0
+    align_correct: int = 0   # 列の揃え（l / c / r）が一致した数
+    align_total: int = 0
+    rule_correct: int = 0    # 罫線（縦・横の境目ごとの有無）が一致した数
+    rule_total: int = 0
+    # 数式（正解も予測も tex を持つ組だけ）。トークン単位の編集距離
+    math_errors: int = 0
+    math_tokens: int = 0
+    # コード（正解が code の組）。行ごとの字下げ（行頭の空白の数）が一致した数
+    indent_correct: int = 0
+    indent_total: int = 0
+
+
+def add_count(counter: dict[str, int], key: str, n: int = 1) -> None:
+    counter[key] = counter.get(key, 0) + n
+
+
+def same_cell(pred: str, gt: str) -> bool:
+    return normalize_text(pred) == normalize_text(gt)
+
+
+def table_counts(pred: Element, gt: Element, counts: Counts) -> None:
+    """表の中身（セル・列の揃え・罫線）を、同じ位置どうしで比べて counts に足す。予測に無い項目は数えない（対象外）"""
+    if gt.cells is None or pred.cells is None:
+        return
+    counts.table_pairs += 1
+    counts.table_shape_ok += int(len(pred.cells) == len(gt.cells) and all(len(p) == len(g) for p, g in zip(pred.cells, gt.cells)))
+    for r, row in enumerate(gt.cells):
+        for c, cell in enumerate(row):
+            counts.cell_total += 1
+            counts.cell_correct += int(r < len(pred.cells) and c < len(pred.cells[r]) and same_cell(pred.cells[r][c], cell))
+    if gt.aligns is not None and pred.aligns is not None:
+        counts.align_total += len(gt.aligns)
+        counts.align_correct += sum(int(k < len(pred.aligns) and pred.aligns[k] == a) for k, a in enumerate(gt.aligns))
+    for gt_rules, pred_rules in ((gt.col_rules, pred.col_rules), (gt.row_rules, pred.row_rules)):
+        if gt_rules is not None and pred_rules is not None:
+            counts.rule_total += len(gt_rules)
+            counts.rule_correct += sum(int(k < len(pred_rules) and pred_rules[k] == v) for k, v in enumerate(gt_rules))
+
+
+TEX_TOKEN = re.compile(r"\\[A-Za-z]+|\\.|\S")  # \frac、\{、1文字（math_ocr/tokenizer.py と同じ区切り方）
+
+
+def tex_tokens(tex: str) -> list[str]:
+    """LaTeXをトークンに分ける。& は揃えの位置なので数えない"""
+    return [t for t in TEX_TOKEN.findall(tex) if t != "&"]
+
+
+def indent_width(line: str) -> int:
+    return len(line) - len(line.lstrip(" "))
+
+
+def indent_counts(pred_text: str, gt_text: str) -> tuple[int, int]:
+    """(字下げが一致した行の数, 正解の行の数)。行は上から順に対応させる（予測の行が足りなければ不一致）"""
+    gt_lines = gt_text.split("\n")
+    pred_lines = pred_text.split("\n")
+    correct = sum(int(k < len(pred_lines) and indent_width(pred_lines[k]) == indent_width(line)) for k, line in enumerate(gt_lines))
+    return correct, len(gt_lines)
 
 
 def decorated_text(runs: list[Run] | None, mark: str) -> str:
@@ -153,11 +222,26 @@ def count_page(pred: Page, gt: Page, counts: Counts) -> None:
     counts.n_pairs += len(pairs)
     counts.n_preds += len(pred.elements)
     counts.n_gts += len(gt.elements)
+    for el in gt.elements:
+        add_count(counts.gt_labels, el.label or el.kind)
+    for el in pred.elements:
+        if el.label is not None:
+            add_count(counts.pred_labels, el.label)
 
     for i, j in pairs:
         p = pred.elements[i]
         g = gt.elements[j]
         counts.iou_sum += iou(p.bbox, g.bbox)
+        add_count(counts.found_labels, g.label or g.kind)
+        table_counts(p, g, counts)
+        if g.tex is not None and p.tex is not None:
+            gt_tokens = tex_tokens(g.tex)
+            counts.math_errors += edit_distance(tex_tokens(p.tex), gt_tokens)
+            counts.math_tokens += len(gt_tokens)
+        if g.label == "code" and g.text is not None and p.text is not None:
+            correct, total = indent_counts(p.text, g.text)
+            counts.indent_correct += correct
+            counts.indent_total += total
 
         if p.label is not None and g.label is not None:
             counts.label_pairs.append((g.label, p.label))
@@ -169,7 +253,7 @@ def count_page(pred: Page, gt: Page, counts: Counts) -> None:
             counts.deco_matched += matched
             counts.deco_preds += n_pred
             counts.deco_gts += n_gt
-        if g.text is not None:
+        if g.text is not None and g.label not in CER_EXCLUDED_LABELS:
             pred_text = p.text or ""
             errors, n = char_errors(pred_text, g.text)
             counts.text_errors += errors
@@ -204,7 +288,43 @@ def summarize(counts: Counts) -> dict[str, float | None]:
         scores["deco_f1"] = None
     else:
         scores["deco_f1"] = safe_div(2 * (deco_precision or 0.0) * (deco_recall or 0.0), (deco_precision or 0.0) + (deco_recall or 0.0))
+    scores["table_shape_acc"] = ratio_or_none(counts.table_shape_ok, counts.table_pairs)
+    scores["table_cell_acc"] = ratio_or_none(counts.cell_correct, counts.cell_total)
+    scores["table_align_acc"] = ratio_or_none(counts.align_correct, counts.align_total)
+    scores["table_rule_acc"] = ratio_or_none(counts.rule_correct, counts.rule_total)
+    scores["math_ter"] = ratio_or_none(counts.math_errors, counts.math_tokens)
+    scores["code_indent_acc"] = ratio_or_none(counts.indent_correct, counts.indent_total)
     return scores
+
+
+def label_scores(counts: Counts) -> dict[str, dict[str, float | int | None]]:
+    """ブロックの種類（正解のラベル）ごとの成績。
+    found_rate: 正解のうち、ラベルを問わず見つけた割合（枠の検出）
+    recall / precision / f1: ラベルまで合っていた組で数えたもの（ラベルを出さないモデルでは None）"""
+    correct: dict[str, int] = {}
+    for gt_label, pred_label in counts.label_pairs:
+        if gt_label == pred_label:
+            add_count(correct, gt_label)
+    has_labels = bool(counts.pred_labels)
+    result = {}
+    for label in sorted(set(counts.gt_labels) | set(counts.pred_labels)):
+        n_gt, n_pred, ok = counts.gt_labels.get(label, 0), counts.pred_labels.get(label, 0), correct.get(label, 0)
+        recall = ratio_or_none(ok, n_gt) if has_labels else None
+        precision = ratio_or_none(ok, n_pred) if has_labels else None
+        f1 = None
+        if recall is not None and precision is not None:
+            f1 = safe_div(2 * recall * precision, recall + precision)
+        elif recall is not None and has_labels:
+            f1 = 0.0  # 予測が1つも無いラベル（一度も出さなかった）
+        result[label] = {
+            "n_gt": n_gt,
+            "n_pred": n_pred,
+            "found_rate": ratio_or_none(counts.found_labels.get(label, 0), n_gt),
+            "recall": recall,
+            "precision": precision,
+            "f1": f1,
+        }
+    return result
 
 
 def count_document(pred: IRDocument, gt: IRDocument, counts: Counts) -> None:

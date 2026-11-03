@@ -18,10 +18,34 @@ make_dataset.py                       run.py                                    
 `ai/` で実行する。データセットを作るには uplatex と dvipdfmx（TeX Live）が要る。
 
 ```bash
-python -m evaluation.make_dataset --out evaluation/data/synth_v2 --docs 40     # データセットを作る（40件で約1分）
-python -m evaluation.run --model rule_based --dataset evaluation/data/synth_v2  # 採点する（成績と強み・弱みが出る）
-python -m pytest evaluation                                                     # テスト
+python -m evaluation.make_dataset --out evaluation/data/synth_all --docs 40 --features all   # 全部入りのデータセット（約1分半）
+python -m evaluation.run --model rule_based --dataset evaluation/data/synth_all              # 採点する（成績と強み・弱みが出る）
+python -m pytest evaluation                                                                  # テスト
 ```
+
+### 機能ごとに評価する
+
+`--features` で文書に入れるものを選び、`--rate` でそれぞれを入れる文書の割合を決める（既定 0.5）。
+
+| feature | 入るもの | 正解に入るもの | tags |
+|---|---|---|---|
+| `title` | `\maketitle` のタイトル・著者・日付 | `title` / `author` / `date` | `has_title` |
+| `decoration` | 段落・箇条書きの中の太字・斜体（英語だけ）・下線 | 要素の `runs` | `has_decoration` |
+| `table` | 表（列の揃え・罫線の種類がランダム）とキャプション | `kind="table"`、`cells` / `aligns` / `col_rules` / `row_rules`、`caption` | `has_table` |
+| `figure` | 図（画像のPNG、ときどき枠線だけの図）とキャプション | `kind="figure"`、`caption` | `has_figure` |
+| `math` | 別行立ての数式（`align*`、1〜3行） | `label="math"`、正解のLaTeX `tex` | `has_math` |
+| `code` | コード（`verbatim` / `lstlisting`、字下げあり） | `label="code"`、字下げを保った `text` | `has_code` |
+| `two_column` | 2段組 | 段ごとに分けた要素 | `columns` |
+| `page_number` | ページ番号 | `label="other"` | `has_page_number` |
+
+```bash
+# 1つの機能だけを、全文書に入れたデータセット（10件で約15秒）
+python -m evaluation.make_dataset --out evaluation/data/synth_table --docs 10 --features table --rate 1
+# 全部入り。各機能は半分くらいの文書に入るので、「表がある文書 / 無い文書」などで比べられる
+python -m evaluation.make_dataset --out evaluation/data/synth_all --docs 40 --features all
+```
+
+`--features` を指定しなければ、以前と同じ文書（ときどきタイトル、文中の装飾あり、表などは無し）になる。
 
 サイトで見る・サイトから評価を実行するときは、サーバーを `npm run dev` で起動してから `web/eval.html` を開く
 （Dockerのサーバーにはイメージの中に `ai/` が入っていないので、評価の窓口は使えない）。
@@ -36,15 +60,20 @@ cd server && npm run dev   # listening on :8080 と出たら web/eval.html を�
 ## データセット（make_dataset.py）
 
 ```
-<out>/manifest.json               全ケースの一覧と tags（lang / pages / has_list / has_title / has_decoration）
+<out>/manifest.json               全ケースの一覧と tags（lang / pages / has_list / has_title / has_decoration、--features で選んだものの tags）
 <out>/cases/<id>/input.pdf        モデルに渡すPDF
 <out>/cases/<id>/gt.labeled.json  正解（ラベル付きIR、label_source: "auto"）
 <out>/cases/<id>/page-<n>.png     ページの画像（サイトの下絵。100dpi）
 <out>/cases/<id>/source.tex       元のTeX（確認用）
 ```
 
-- 文書は [synth_doc.py](synth_doc.py) がランダムに作る（日本語 / 英語を交互）。見出し・段落・箇条書き、ときどきタイトル・著者・日付（`\maketitle`）、文中の太字・斜体・下線（斜体は英語だけ。jsarticle の日本語は斜体にならないため）
+- 文書は [synth_doc.py](synth_doc.py) がランダムに作る（日本語 / 英語を交互）。見出し・段落・箇条書きはいつも入り、ほかは `--features` で選ぶ
 - **正解は目印で作る**（色は使わない、チームの方針）。各ブロックの始まりと終わりに `\special{pdf:dest}` の目印を置き（[marks.py](marks.py)）、目印の間にある文字の位置を包む枠を正解の bbox にする（[ground_truth.py](ground_truth.py)）。ラベル・見出しレベルは文書を作ったときに分かっている。文中の装飾も、装飾した語の前後の目印から `runs` にする
+  - 表・図・コードは、目印をブロックの上と下の別の行に置き、その間だけを集める。表・図は範囲の中の罫線・画像も枠に含める
+  - 表の `cells`・揃え・罫線、数式の `tex`、コードの文字（字下げごと）は、PDFからではなく文書を作ったときの値を使う
+  - 数式は分数の分子・分母などがベースラインからずれるので、範囲を上下に 14pt 広げる
+  - 2段組では、範囲を段ごとに分けてその段の文字だけを集める。段・ページをまたぐブロックは、段・ページごとの要素になる
+  - ページ番号は、フッターに置いた目印（`pn<ページ>s` / `pn<ページ>e`）から `label="other"` にし、その文字はほかのブロックに入れない
 - フォントや PyMuPDF のブロックの区切り方に頼らないので、特定の抽出器だけが有利になることがない
 - [block_classifier/doc_gen.py](../block_classifier/doc_gen.py) とは別に作っている。学習データと同じ作り方の文書で評価すると、block_classifier の点数が実力より高く出るため
 - 古いデータセットにページの画像を足すだけなら `python -m evaluation.images evaluation/data/synth_v1`
@@ -78,17 +107,32 @@ OCRのライブラリが入っていない環境では、そのモデルの評�
 | `level_acc` | 見出し同士の組のうち見出しレベルが一致した割合 |
 | `cer` / `cer_ja` / `cer_en` | 文字の誤り率（編集距離 ÷ 正解の文字数、空白・改行は数えない）。言語別は文字の読み取りだけを見て、並び順の違いは数えない |
 | `deco_precision` / `deco_recall` / `deco_f1` | 段落・箇条書き・キャプションの太字・斜体・下線が、正しい文字に付いたか（見出しは書体ごと太字なので採点しない） |
+| `table_shape_acc` | 当たった表のうち、行数・列数が一致した割合 |
+| `table_cell_acc` / `table_align_acc` / `table_rule_acc` | 同じ位置どうしで比べた、セルの文字・列の揃え・罫線の有無の正解率（表の文字は CER では数えない） |
+| `math_ter` | 数式の LaTeX のトークン誤り率（`&` は数えない）。`tex` を出すモデルだけ |
+| `code_indent_acc` | コードの各行の字下げ（行頭の空白の数）が一致した割合 |
 | `sec_per_page` | 1ページにかかった秒数 |
 
 `None`（サイトでは「—」）は対象外。比べるものが無かったか、モデルがそれを出さない。
 
+**ブロックの種類ごとの成績**（`report.json` の `by_label`）も出す。正解のラベルごとに、
+
+| 項目 | 内容 |
+|---|---|
+| `found_rate` | その種類の正解のうち、ラベルを問わず枠が対応した割合（見つけられたか） |
+| `recall` / `precision` / `f1` | ラベルまで合っていたものだけで数えた分類の成績。precision の分母は、その種類と予測したブロック全部 |
+
 ## 強み・弱み（run.py）
 
-切り口（tags。`lang=en` など）ごとの成績を全体と比べ、**5件以上**の切り口で**0.05以上**の差があるものを、差の大きい順に文章にする
-（`report.json` の `findings`）。サイトでは、同じデータセットで評価した各モデルの最新の実行の中での順位も出す。
+`report.json` の `findings` に、次の2種類を文章で出す。
+
+- **切り口ごと**：tags（`lang=en`、`has_table=True` など）ごとの成績を全体と比べ、**5件以上**の切り口で**0.05以上**の差があるものを、差の大きい順に12個まで
+- **ブロックの種類ごと**：正解が5個以上ある種類で、分類の F1（ラベルを出さないモデルは見つけた割合）が 0.85 以上なら強み、0.5 以下なら弱み
+
+サイトでは、同じデータセットで評価した各モデルの最新の実行の中での順位も出す。
 
 ## 未対応
 
-- 表・図・数式・コードのブロック（表の `cells` / `aligns` / `col_rules` / `row_rules` / `col_widths` の採点）。文書の生成と、罫線や画像を含めた正解の枠の取り方が要る
-- 2段組の文書（目印の範囲で文字を集めるときに、段を分ける必要がある）
-- ページ番号などの `other`（ページ番号にも目印を付ける必要がある。今は `\pagestyle{empty}` で出していない）
+- 表の列幅（`col_widths`。セル内で折り返す列）と、セルを結合した表
+- 段をまたぐ表・図（`table*` / `figure*`）と、ヘッダー（柱）
+- 数式の正解の `text`（PDFの文字を並べたもので、分数などは行が分かれる）。数式は `tex` の TER で見る

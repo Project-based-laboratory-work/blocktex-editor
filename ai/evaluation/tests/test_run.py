@@ -2,7 +2,7 @@ import json
 
 from common.ir import LABELS
 from evaluation.models import ModelSpec, load_registry
-from evaluation.run import build_report, evaluate_dataset, find_strengths, main, mask_unsupported, tag_keys
+from evaluation.run import build_report, evaluate_dataset, find_label_strengths, find_strengths, main, mask_unsupported, tag_keys
 
 
 def test_tag_keys():
@@ -76,3 +76,27 @@ def test_find_strengths_needs_enough_cases_and_a_clear_difference():
 def test_main_quiet_prints_only_run_id(small_dataset, tmp_path, capsys):
     run_dir = main(["--model", "rule_based", "--dataset", str(small_dataset), "--out", str(tmp_path), "--quiet"])
     assert capsys.readouterr().out.strip() == run_dir.name  # サーバーが run_id を受け取るため
+
+
+def test_find_label_strengths():
+    by_label = {
+        "table": {"n_gt": 10, "f1": 0.95, "found_rate": 1.0},
+        "list": {"n_gt": 20, "f1": 0.1, "found_rate": 0.2},
+        "code": {"n_gt": 2, "f1": 0.0, "found_rate": 0.0},        # 2個しかないので文章にしない
+        "heading": {"n_gt": 30, "f1": 0.7, "found_rate": 1.0},    # 強みでも弱みでもない
+        "other": {"n_gt": 8, "f1": None, "found_rate": 0.25},     # ラベルを出さないモデルは見つけた割合で見る
+    }
+    findings = find_label_strengths(by_label)
+    assert [(f["slice"], f["kind"], f["metric"]) for f in findings] == [
+        ("label=table", "strength", "label_f1"),
+        ("label=other", "weakness", "found_rate"),
+        ("label=list", "weakness", "label_f1"),
+    ]
+    assert findings[0]["text"].startswith("表（正解 10個）")
+
+
+def test_report_has_per_label_scores(small_dataset):
+    spec = load_registry()["rule_based"]
+    report = build_report(spec, small_dataset, evaluate_dataset(spec, small_dataset), run_id="test-run")
+    assert report["by_label"]["heading"]["n_gt"] > 0
+    assert set(report["by_label"]["heading"]) == {"n_gt", "n_pred", "found_rate", "recall", "precision", "f1"}
