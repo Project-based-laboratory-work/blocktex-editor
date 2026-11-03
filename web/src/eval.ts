@@ -122,6 +122,7 @@
         { key: 'precision', name: 'Precision', better: 'high', help: '出したブロックのうち、正解と重なった割合（誤検出が多いと下がる）' },
         { key: 'recall', name: 'Recall', better: 'high', help: '正解のブロックのうち、見つけられた割合（見逃しが多いと下がる）' },
         { key: 'miou', name: '枠の位置 mIoU', better: 'high', help: '当たったブロックの、正解との重なり具合（IoU）の平均' },
+        { key: 'order_acc', name: '読み順', better: 'high', help: '当たったブロックを2つずつ比べて、予測の並び順が正解と同じだった割合' },
         { key: 'label_acc', name: 'ラベル正解率', better: 'high', help: '当たったブロックのうち、ラベル（見出し・段落…）が合っていた割合' },
         { key: 'level_acc', name: '見出しレベル正解率', better: 'high', help: '見出し同士の組のうち、見出しレベル（1〜3）が合っていた割合' },
         { key: 'cer', name: '文字誤り率 CER', better: 'low', help: '直す必要のある文字の数 ÷ 正解の文字数（空白・改行は数えない）' },
@@ -132,17 +133,19 @@
         { key: 'table_cell_acc', name: '表のセル', better: 'high', help: '正解のセルのうち、同じ位置のセルの文字が一致した割合' },
         { key: 'table_align_acc', name: '表の揃え', better: 'high', help: '列の揃え（左・中央・右）が一致した割合' },
         { key: 'table_rule_acc', name: '表の罫線', better: 'high', help: '縦線・横線の有無（境目ごと）が一致した割合' },
+        { key: 'table_width_acc', name: '表の列幅', better: 'high', help: '幅を指定した（セルの中で折り返す）列の幅が、正解とページの幅の3%以内だった割合。列幅を出すモデルだけ' },
         { key: 'math_ter', name: '数式 TER', better: 'low', help: '数式のLaTeXのトークン誤り率（直す必要のあるトークン ÷ 正解のトークン数）。LaTeXを出すモデルだけ' },
         { key: 'code_indent_acc', name: 'コードの字下げ', better: 'high', help: 'コードの各行の字下げ（行頭の空白の数）が正解と同じだった割合' },
         { key: 'sec_per_page', name: '秒/ページ', better: 'low', help: '1ページを読むのにかかった時間' },
     ];
     const METRIC_BY_KEY = new Map(METRICS.map((m) => [m.key, m]));
-    const LIST_METRICS = ['f1', 'miou', 'label_acc', 'cer', 'deco_f1', 'sec_per_page'];
+    const LIST_METRICS = ['f1', 'miou', 'order_acc', 'label_acc', 'cer', 'deco_f1', 'sec_per_page'];
 
     // 「能力の内訳」の横棒。どれも 0〜1 で、長いほど良いように直して並べる
     const ABILITY_AXES: { name: string; key: string; invert: boolean }[] = [
         { name: 'ブロックの検出', key: 'f1', invert: false },
         { name: '枠の位置', key: 'miou', invert: false },
+        { name: '読み順', key: 'order_acc', invert: false },
         { name: 'ラベル', key: 'label_acc', invert: false },
         { name: '見出しレベル', key: 'level_acc', invert: false },
         { name: '文字（全体）', key: 'cer', invert: true },
@@ -183,6 +186,11 @@
         'has_page_number=False': 'ページ番号なし',
         'columns=1': '1段組',
         'columns=2': '2段組',
+        'has_header=True': 'ヘッダーあり',
+        'has_header=False': 'ヘッダーなし',
+        'label_source=manual': '正解: 人が付けた',
+        'label_source=prelabel': '正解: 下書きのまま',
+        'label_source=auto': '正解: 自動',
     };
 
     // 混同行列の濃さ（青の1色で、薄い → 濃い）
@@ -454,7 +462,7 @@
     }
 
     function statsCard(report: Report): HTMLElement {
-        const keys = ['f1', 'precision', 'recall', 'miou', 'label_acc', 'cer', 'deco_f1', 'sec_per_page'];
+        const keys = ['f1', 'precision', 'recall', 'miou', 'order_acc', 'label_acc', 'cer', 'deco_f1', 'sec_per_page'];
         const tiles = keys.map((key) => {
             const info = METRIC_BY_KEY.get(key)!;
             const tile = h('div', { class: 'stat' }, h('div', { class: 'label' }, info.name), h('div', { class: `value${report.summary[key] == null ? ' na' : ''}` }, format(key, report.summary[key])));
@@ -576,7 +584,7 @@
     }
 
     function featureCard(report: Report): HTMLElement {
-        const keys = ['table_shape_acc', 'table_cell_acc', 'table_align_acc', 'table_rule_acc', 'math_ter', 'code_indent_acc'];
+        const keys = ['table_shape_acc', 'table_cell_acc', 'table_align_acc', 'table_rule_acc', 'table_width_acc', 'math_ter', 'code_indent_acc'];
         const tiles = keys.map((key) => {
             const info = METRIC_BY_KEY.get(key)!;
             const value = report.summary[key] ?? null;
