@@ -68,6 +68,14 @@ TABLE_REGION_PADDING = 2.0
 TABLE_RULE_MIN_COVERAGE = 0.5
 # 列の揃えの判定で、セルの文字の幅の差がこの値(pt)以下なら、どの揃えとも決められない（左寄せにする）
 ALIGN_TOLERANCE = 1.0
+# 背景の塗りとみなす明るさの下限（0〜1）。Word の網掛け段落などの、見えない背景の端を罫線と間違えないため
+BACKGROUND_MIN_BRIGHTNESS = 0.9
+# 塗りで描いた線の太さの上限(pt)。これより太い塗りは面として扱う
+FILLED_RULE_MAX_THICKNESS = 1.5
+# 背景の中の文字を列に分けるとき、列の間とみなす隙間の下限（文字の高さに対する比率）。単語の間の空白より広く取る
+BOX_COLUMN_GAP_RATIO = 0.8
+# ページのこの割合以上を覆う背景は、ページ全体の背景なので表の候補にしない
+BOX_MAX_PAGE_RATIO = 0.8
 
 
 @dataclass
@@ -334,12 +342,89 @@ def _table_block(page: pdfplumber.page.Page, page_no: int, bbox: Bbox, rows: lis
     return table
 
 
+def _is_light(color) -> bool:
+    """グレーかRGBの色が、背景とみなせるほど明るいか。"""
+    components = color if isinstance(color, (tuple, list)) else (color,)
+    return len(components) in (1, 3) and all(isinstance(c, (int, float)) and c >= BACKGROUND_MIN_BRIGHTNESS for c in components)
+
+
+def _is_background_rect(obj: dict) -> bool:
+    """pdfplumber の図形が、枠線の無い薄い背景の塗りか。"""
+    return (
+        obj["object_type"] == "rect"
+        and obj.get("fill")
+        and not obj.get("stroke")
+        and min(obj["x1"] - obj["x0"], obj["bottom"] - obj["top"]) > FILLED_RULE_MAX_THICKNESS
+        and _is_light(obj.get("non_stroking_color"))
+    )
+
+
+def _box_column_lines(words: list[dict], bbox: Bbox) -> list[float]:
+    """全部の行を通して文字の無い縦の隙間を、列の境目にする。"""
+    heights = sorted(w["bottom"] - w["top"] for w in words)
+    min_gap = heights[len(heights) // 2] * BOX_COLUMN_GAP_RATIO
+    spans = sorted((w["x0"], w["x1"]) for w in words)
+    lines = [bbox[0]]
+    right = spans[0][1]
+    for x0, x1 in spans[1:]:
+        if x0 - right >= min_gap:
+            lines.append((right + x0) / 2)
+        right = max(right, x1)
+    return [*lines, bbox[2]]
+
+
+def _box_row_lines(words: list[dict], bbox: Bbox) -> list[float]:
+    """縦に重ならない文字の間を、行の境目にする。"""
+    lines = [bbox[1]]
+    bottom = None
+    for word in sorted(words, key=lambda w: w["top"]):
+        if bottom is not None and word["top"] >= bottom:
+            lines.append((bottom + word["top"]) / 2)
+        bottom = word["bottom"] if bottom is None else max(bottom, word["bottom"])
+    return [*lines, bbox[3]]
+
+
+def _extract_tables_in_boxes(
+    page: pdfplumber.page.Page, visible: pdfplumber.page.Page, page_no: int, found_bboxes: list[Bbox]
+) -> list[TableBlock]:
+    """
+    薄い背景で囲まれた範囲（Word の網掛け段落など）を、文字の並びから表にする。
+    ただの囲み（コードや文章）を表にしないため、2行×2列以上に分かれるものだけを表とみなす。
+    """
+    result = []
+    max_area = page.width * page.height * BOX_MAX_PAGE_RATIO
+    boxes = [(r["x0"], r["top"], r["x1"], r["bottom"]) for r in page.rects if _is_background_rect(r)]
+    boxes = [b for b in boxes if (b[2] - b[0]) * (b[3] - b[1]) < max_area]
+    # 行ごとの背景より先に、それを囲む外側の背景を見る
+    for bbox in sorted(boxes, key=lambda b: (b[2] - b[0]) * (b[3] - b[1]), reverse=True):
+        if any(_overlaps(bbox, found) for found in found_bboxes):
+            continue
+        crop = visible.crop(bbox, strict=False)
+        words = crop.extract_words()
+        if not words:
+            continue
+        settings = {
+            "vertical_strategy": "explicit",
+            "horizontal_strategy": "explicit",
+            "explicit_vertical_lines": _box_column_lines(words, bbox),
+            "explicit_horizontal_lines": _box_row_lines(words, bbox),
+        }
+        for table in crop.find_tables(table_settings=settings):
+            rows = [(row, [cell or "" for cell in texts]) for row, texts in zip(table.rows, table.extract())]
+            if len(rows) < 2 or max(len(texts) for _, texts in rows) < 2:
+                continue
+            result.append(_table_block(visible, page_no, bbox, rows))
+            found_bboxes = [*found_bboxes, bbox]
+    return result
+
+
 def _extract_table_blocks(page: pdfplumber.page.Page, page_no: int) -> list[TableBlock]:
     result = []
-    for table in page.find_tables():
+    visible = page.filter(lambda obj: not _is_background_rect(obj))
+    for table in visible.find_tables():
         rows = [(row, [cell or "" for cell in texts]) for row, texts in zip(table.rows, table.extract())]
-        result.append(_table_block(page, page_no, table.bbox, rows))
-    return result
+        result.append(_table_block(visible, page_no, table.bbox, rows))
+    return result + _extract_tables_in_boxes(page, visible, page_no, [t.bbox for t in result])
 
 
 def _overlaps(a: Bbox, b: Bbox) -> bool:
@@ -423,10 +508,20 @@ def _extract_figure_blocks(
             figures.append(FigureBlock(page=page_no, bbox=tuple(rect), source="image"))
 
     page_area = page.rect.width * page.rect.height
-    for drawing in page.get_drawings():
+    drawings = page.get_drawings()
+    backgrounds = [
+        tuple(d["rect"])
+        for d in drawings
+        if d["type"] == "f" and d.get("fill") and _is_light(d["fill"]) and min(d["rect"].width, d["rect"].height) > FILLED_RULE_MAX_THICKNESS
+    ]
+    for drawing in drawings:
         rect = drawing["rect"]
         if rect.width < min_size and rect.height < min_size:
             continue  # 罫線・下線
+        if tuple(rect) in backgrounds:
+            continue  # 文字の背景
+        if min(rect.width, rect.height) <= FILLED_RULE_MAX_THICKNESS and any(_is_inside(tuple(rect), b) for b in backgrounds):
+            continue  # 背景を囲む枠線
         if rect.width * rect.height >= page_area * page_ratio:
             continue  # ページ枠・背景
         if any(_is_inside(tuple(rect), table_bbox) for table_bbox in table_bboxes):
