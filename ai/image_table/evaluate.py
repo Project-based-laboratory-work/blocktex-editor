@@ -4,7 +4,8 @@
     python -m image_table.evaluate image_table/data/val --checkpoint image_table/checkpoints/split/best.pt
 
   - 行（列）の正解率: 正解の行（列）のうち、予測の行（列）と範囲が IoU 0.5 以上で1対1に重なった割合
-  - 形が合った表: 行の数・列の数が両方とも正解と同じで、すべての行・列が重なった表の割合（マス目が全部正しい）
+  - 形が合った表: 行の数・列の数が両方とも正解と同じで、すべての行・列が重なった表の割合（マス目が全部正しい）。
+    位置の正解が無いデータ（team_tables.py で作る、評価用データと同じ作り方の表）では、行の数・列の数が合った表の割合
 
 ルールベース: 縦（横）の位置ごとに、文字の画素があるかを数える（射影）。罫線（端から端まで続く線）は文字から除く。
 文字の無い位置が続くところで区切る。列は、単語の間の空白で切らないよう、文字の高さより狭い空白では区切らない。
@@ -114,23 +115,28 @@ def main() -> None:
         name = os.path.splitext(os.path.basename(path))[0]
         with Image.open(os.path.join(args.dir, "images", f"{name}.png")) as image:
             image.load()
-        kinds = [label["style"], "折り返しあり" if label["wrap_col"] is not None else "折り返しなし"]
+        wrap = label["wrap_col"] is not None if "wrap_col" in label else label["wrap"]
+        kinds = [label["style"], "折り返しあり" if wrap else "折り返しなし"]
         for n, fn in zip(names, [rule_predict, lambda im: predict(model, im)]):
             started = time.perf_counter()
             rows, cols = fn(image)
             elapsed = time.perf_counter() - started
-            mr, mc = matched(rows, label["rows"]), matched(cols, label["cols"])
-            ok = len(rows) == len(label["rows"]) and len(cols) == len(label["cols"]) and mr == len(rows) and mc == len(cols)
+            if "rows" in label:
+                mr, mc = matched(rows, label["rows"]), matched(cols, label["cols"])
+                ok = len(rows) == len(label["rows"]) and len(cols) == len(label["cols"]) and mr == len(rows) and mc == len(cols)
+                more = {"rows": mr, "rows_total": len(label["rows"]), "cols": mc, "cols_total": len(label["cols"])}
+            else:  # 位置の正解が無いデータ（team_tables.py）は、行の数・列の数だけ比べる
+                ok, more = len(rows) == len(label["cells"]) and len(cols) == len(label["cells"][0]), {}
             for counter in [stats[n], *(by_kind[n][k] for k in kinds)]:
-                counter.update(rows=mr, rows_total=len(label["rows"]), cols=mc, cols_total=len(label["cols"]), ok=ok, tables=1)
+                counter.update(ok=ok, tables=1, **more)
             stats[n]["seconds"] += elapsed
 
     print(f"{args.dir}: {len(ds)} 個の表\n")
     print(f"{'':<24} {'行の正解率':>8} {'列の正解率':>8} {'形が合った表':>10} {'ms/表':>7}")
     for n in names:
         s = stats[n]
-        print(f"{n:<20} {s['rows'] / s['rows_total']:>10.3f} {s['cols'] / s['cols_total']:>10.3f} "
-              f"{s['ok'] / s['tables']:>12.3f} {s['seconds'] / s['tables'] * 1000:>8.1f}")  # fmt: skip
+        rows, cols = ((f"{s['rows'] / s['rows_total']:.3f}", f"{s['cols'] / s['cols_total']:.3f}") if s["rows_total"] else ("-", "-"))
+        print(f"{n:<20} {rows:>10} {cols:>10} {s['ok'] / s['tables']:>12.3f} {s['seconds'] / s['tables'] * 1000:>8.1f}")
     print("\n種類ごとの「形が合った表」の割合")
     kinds = sorted(by_kind[names[1]])
     print(f"{'':<14}" + "".join(f"{k:>12}" for k in kinds))

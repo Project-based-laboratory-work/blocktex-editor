@@ -208,9 +208,10 @@ def build_doc(args: tuple[Path, int, int]) -> int:
                 if not rows or not cols:
                     continue
                 # 表の部分 = セルと罫線を囲む四角 + ランダムな余白
-                area = pymupdf.Rect(cols[0][0], rows[0][0], cols[-1][1], rows[-1][1])
-                for d in page.get_drawings():
-                    area |= d["rect"]
+                # 罫線は高さ（幅）0の四角なので、Rect の結合では無視される。座標で広げる
+                boxes = [(cols[0][0], rows[0][0], cols[-1][1], rows[-1][1])] + [tuple(d["rect"]) for d in page.get_drawings()]
+                area = pymupdf.Rect(min(b[0] for b in boxes), min(b[1] for b in boxes),
+                                    max(b[2] for b in boxes), max(b[3] for b in boxes))  # fmt: skip
                 if area.x1 > page.rect.x1 - 5:
                     continue  # ページからはみ出した表
                 pad = [rng.uniform(1, 12) for _ in range(4)]
