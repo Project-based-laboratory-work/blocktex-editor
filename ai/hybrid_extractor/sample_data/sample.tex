@@ -1,0 +1,134 @@
+% hybrid_extractor の動作確認用サンプル。
+% IR版3（common/README.md）の項目がひと通り出るように書いている。
+%
+% PDFにする（ai/hybrid_extractor/sample_data/ で実行）:
+%   uplatex sample.tex
+%   uplatex sample.tex     ← 2回目。表・図の番号や参照を確定させる
+%   dvipdfmx sample.dvi    → sample.pdf
+%
+% どの部分が、IRのどの項目を確かめるためのものかは、各所のコメントに書いた。
+
+\documentclass[uplatex,a4paper,11pt]{jsarticle}
+\usepackage[dvipdfmx]{graphicx}
+\usepackage{amsmath,amssymb}
+\usepackage{booktabs}  % 縦線の無い表（\toprule など）
+\usepackage{array}     % 表の列の指定を増やす
+
+% label: title / author / date
+\title{ハイブリッド抽出器のためのサンプル文書}
+\author{谷本 龍信}
+\date{2026年11月8日}
+
+\begin{document}
+\maketitle
+
+% label: heading（level 1）
+\section{はじめに}
+
+% label: paragraph（2行以上になる、普通の段落）
+この文書は、PDFから文字を取り出してブロックに分ける抽出器と、そのブロックの種類を当てる分類器を、
+開発しながら確かめるためのサンプルである。見出し・段落・箇条書き・数式・表・図・コードを、
+それぞれ少なくとも1つずつ含むように書いている。
+
+% label: paragraph ＋ runs（太字・下線。日本語の書体には斜体が無いので、斜体は英語で入れる）
+段落の中には、\textbf{太字の語}や\underline{下線を引いた語}が混ざることがある。
+英語では \textit{italic words} も使われる。抽出器は、こうした装飾が段落のどの文字に付いているかを
+runs として出す。
+
+% label: heading（level 2）
+\subsection{箇条書き}
+
+% label: list（記号の付いた箇条書きと、番号の付いた箇条書き）
+抽出器が確かめるべきことは、次のとおりである。
+\begin{itemize}
+  \item 文字の大きさとフォントを取り出せること
+  \item 行を正しくつないで段落にできること。この項目はわざと長くして、2行に折り返されるようにしている
+  \item 表と図の領域を見つけられること
+\end{itemize}
+
+作業の順番は次のとおりである。
+\begin{enumerate}
+  \item PDFを開いて、文字を取り出す
+  \item 文字をブロックにまとめる
+  \item ブロックの種類を決める
+\end{enumerate}
+
+% label: heading（level 3）
+\subsubsection{文中の数式}
+
+% label: paragraph（文中の数式。段落の文字のままになる）
+文中に $E = mc^2$ や $a_i + b_i$ のような数式が入ることもある。これは別行立ての数式とは分けて扱う。
+
+\section{数式とコード}
+
+% label: math（別行立ての数式、2行）
+別行立ての数式の例を示す。
+\begin{align*}
+  f(x) &= \sum_{i=1}^{n} a_i x^i \\
+  \int_0^1 x^2 \, dx &= \frac{1}{3}
+\end{align*}
+
+% label: code（字下げを含むコード。text には行頭の空白を残す）
+コードの例を示す。
+\begin{verbatim}
+def main():
+    for page in doc:
+        if page.number == 0:
+            print(page.get_text())
+\end{verbatim}
+
+\section{表と図}
+
+% kind: table ＋ cells / aligns / col_rules / row_rules
+% 列の揃えは 左・中央・右。縦線は全部、横線は上・見出しの下・下だけ（行の間には無い）
+表\ref{tab:grid}は、罫線のある表の例である。
+\begin{table}[htbp]
+  \centering
+  \caption{罫線のある表}  % label: caption
+  \label{tab:grid}
+  \begin{tabular}{|l|c|r|}
+    \hline
+    項目 & 担当 & 工数 \\
+    \hline
+    抽出器 & 谷本 & 15時間 \\
+    分類器 & 谷本 & 20時間 \\
+    評価 & 加茂 & 8時間 \\
+    \hline
+  \end{tabular}
+\end{table}
+
+% kind: table（縦線の無い表。booktabs）＋ col_widths（2列目はセルの中で折り返す幅指定の列）
+表\ref{tab:booktabs}は、縦線の無い表と、セルの中で文字を折り返す列の例である。
+\begin{table}[htbp]
+  \centering
+  \caption{縦線の無い表}
+  \label{tab:booktabs}
+  \begin{tabular}{lp{5cm}}
+    \toprule
+    手法 & 説明 \\
+    \midrule
+    ルールベース & 文字の大きさや太字などの決まりで、ブロックの種類を決める。学習はいらない \\
+    自作AI & 正解の付いた文書から学習して、ブロックの種類を当てる \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+% kind: figure ＋ caption（画像ファイルを使わず、枠線だけの図にしている）
+図\ref{fig:box}は、図の例である。
+\begin{figure}[htbp]
+  \centering
+  \fbox{\rule{0pt}{3cm}\hspace{0.5\linewidth}}
+  \caption{枠線だけの図}
+  \label{fig:box}
+\end{figure}
+
+\section{おわりに}
+
+% label: paragraph（2ページ目に続く文章。ページをまたいだときのブロックを確かめる）
+この文書を使えば、抽出器を書き換えるたびに同じ入力で結果を比べられる。
+ランダムに作る評価用のデータセットとは違い、中身が毎回同じなので、どこが変わったのかを目で確かめやすい。
+評価用のデータセットで点数を測り、このサンプルで原因を探す、という使い分けをする。
+ページ番号は、jsarticle の既定のとおり各ページの下の中央に出る。
+% ↑ ページ番号は label: other
+
+\end{document}
