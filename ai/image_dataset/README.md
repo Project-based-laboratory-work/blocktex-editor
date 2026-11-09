@@ -1,6 +1,6 @@
 # image_dataset — 画像の構造化器のための学習データ生成
 
-画像（スクリーンショット・写真）から文書の構造（見出し・段落・数式・表…）を判定する**構造化器**の、
+画像（PDFビューアなどの画面のスクリーンショット）から文書の構造（見出し・段落・数式・表…）を判定する**構造化器**の、
 学習データを自動で大量に作る。作るのは「画像」と「その画像の正解ブロック」の組。
 
 | | 内容 |
@@ -33,7 +33,7 @@ image_dataset（ここ）                         構造化器の担当（easyoc
 cd ai
 pip install pymupdf pdfplumber matplotlib pillow opencv-python-headless numpy pytest   # または pip install -r requirements.txt
 
-python -m image_dataset.build --out image_dataset/data/train --docs 2000 --seed 0   # 学習用（約7分・約600MB）
+python -m image_dataset.build --out image_dataset/data/train --docs 2000 --seed 0   # 学習用（画像約5600枚・約700MB）
 python -m image_dataset.build --out image_dataset/data/val --docs 300 --seed 1      # 検証用（seed を変える）
 python -m image_dataset.preview image_dataset/data/train --n 20                     # 正解を色分けして描く → data/train/preview/
 python -m pytest image_dataset/tests
@@ -48,7 +48,7 @@ python -m pytest image_dataset/tests
 | `--docs` | 20 | 作る文書の数。1文書は1〜4ページくらいで、1ページから画像を作る |
 | `--seed` | 0 | 乱数の種。**学習用と検証用で必ず変える**（同じ文書が両方に入らないように） |
 | `--variants` | 1 | 1ページから作る画像の数。崩し方を変えて何枚も作る |
-| `--styles` | `clean=1,screenshot=2,photo=2` | 崩し方と、その割合。`photo` だけなら `--styles photo` |
+| `--styles` | `clean=1,screenshot=4` | 崩し方と、その割合。入力はスクリーンショットを想定するので、写真風（`photo`）は既定では作らない。写真風も作るなら `--styles clean=1,screenshot=4,photo=2` |
 | `--dpi MIN MAX` | 90 200 | PDFを画像にするときの解像度の範囲（文字の大きさが変わる） |
 | `--workers` | 6 | 並列に作る数 |
 
@@ -64,25 +64,26 @@ python -m pytest image_dataset/tests
 
 ```json
 {
-  "source": "doc_000000_p1_v0.jpg",
+  "source": "doc_000000_p1_v0.png",
   "extractor": "image_dataset",
-  "params": {"doc": "doc_000000", "page": 1, "variant": 0, "seed": 0, "dpi": 100.9, "style": "photo",
-             "paper": [244, 244, 244], "angle": -0.36, "skew": 0.03, "margin": 85, "desk": [200, 200, 195],
-             "lighting": 0.112, "blur": 0.67, "noise": 1.71, "scale": 0.916, "jpeg_quality": 82},
+  "params": {"doc": "doc_000000", "page": 1, "variant": 0, "seed": 0, "dpi": 117.3, "style": "screenshot",
+             "background": [255, 253, 245],
+             "viewer": {"background": [50, 54, 57], "margins": [112, 75, 114, 43], "border": [10, 14, 17]},
+             "scale": 0.735},
   "pages": [{
-    "page": 1, "width": 919, "height": 1236, "unit": "px",
+    "page": 1, "width": 880, "height": 1096, "unit": "px",
     "elements": [
-      {"kind": "text", "bbox": [0.16997, 0.20752, 0.29728, 0.22492], "text": "1 変換の比較", "label": "heading", "level": 1, "label_source": "auto"},
-      {"kind": "text", "bbox": [0.19695, 0.23714, 0.63482, 0.28762], "text": "• さらに、特徴についてアルゴリズムの精度をシステムとして評価した。\n• 抽出\n• データと数式として述べる。", "label": "list", "label_source": "auto"},
-      {"kind": "table", "bbox": [0.42546, 0.40534, 0.56736, 0.4661], "text": "計算量 記号 誤差\n32.4 11.5 58.7\n33.5 19.0 1.6", "label": "table", "label_source": "auto"},
-      {"kind": "text", "bbox": [0.46844, 0.55453, 0.52427, 0.58131], "text": "P : δ →t\n{p, i, iu}", "label": "math", "tex": "P : \\delta \\to t \\\\\n\\{ p , i , i_{u} \\}", "label_source": "auto"}
+      {"kind": "text", "bbox": [0.19682, 0.19589, 0.32716, 0.21314], "text": "1 変換の比較", "label": "heading", "level": 1, "label_source": "auto"},
+      {"kind": "text", "bbox": [0.21955, 0.22874, 0.67784, 0.27892], "text": "• さらに、特徴についてアルゴリズムの精度をシステムとして評価した。\n• 抽出\n• データと数式として述べる。", "label": "list", "label_source": "auto"},
+      {"kind": "table", "bbox": [0.41966, 0.44033, 0.57864, 0.52874], "text": "誤差 XY-cut XY-cut\n84.5 24.3 73.1\n11.7 22.0 79.5\n33.3 81.6 10.1\n14.6 69.8 4.5", "label": "table", "label_source": "auto"},
+      {"kind": "text", "bbox": [0.45909, 0.60474, 0.5392, 0.64161], "text": "( )\nl\n× 5\nj + 1", "label": "math", "tex": "\\binom{l}{j + 1} \\times 5", "label_source": "auto"}
     ]
   }]
 }
 ```
 
 - `bbox` は他のIRと同じく 0〜1 に正規化した値（左上原点）。px に戻すときは `common.ir.denormalize_bbox(bbox, width, height)`
-- `params` に、どう崩したか（style・角度・ぼかし・JPEG品質など）が全部入っている。「写真風だけ成績が悪い」などを調べるときに使う
+- `params` に、どう崩したか（style・切り出し・ダークモード・ビューアの背景・縮小・JPEG品質など）が全部入っている。「ダークモードだけ成績が悪い」などを調べるときに使う
 - `level` は見出しのレベル（`\section`=1, `\subsection`=2, `\subsubsection`=3）、`tex` は数式の元のLaTeX
 - `text` はPDFに書かれている文字そのもの（OCRの結果ではない）。OCRの文字誤り率を測る正解にも使える
 
@@ -120,8 +121,8 @@ print(summarize(counts))   # precision / recall / f1（段落の切り方）, la
 | style | 何をするか |
 |---|---|
 | `clean` | 何もしない。PDFをそのまま画像にしたもの |
-| `screenshot` | 半分の確率でページの一部だけを切り出す（ブロックの間で切るので、ブロックを途中で切らない）。30%でダークモード、30%で背景色（セピア・灰色など）。0.5〜1倍に縮小。半分の確率でJPEG（品質50〜95） |
-| `photo` | 70%で紙の色。±3度の傾きと、斜めから撮ったようなゆがみ（周りに机の色が写る）。明るさのむら、ぼかし、ノイズ。0.6〜1倍に縮小。JPEG（品質60〜90） |
+| `screenshot` | PDFビューアの画面を撮ったスクリーンショット風。半分の確率でページの一部だけを切り出す（ブロックの間で切るので、ブロックを途中で切らない）。30%でダークモード、30%で背景色（セピア・灰色など）。60%でビューアの背景（ページの周りの灰色。画面の端で切れていない側だけ上下にも付く）と、半分の確率でページの縁の線。0.5〜1倍に縮小。半分の確率でJPEG（品質50〜95、送ったときの圧縮） |
+| `photo` | （既定では作らない）紙を撮った写真風。70%で紙の色。±3度の傾きと、斜めから撮ったようなゆがみ（周りに机の色が写る）。明るさのむら、ぼかし、ノイズ。0.6〜1倍に縮小。JPEG（品質60〜90） |
 
 傾け・ゆがみでは、bbox の四隅を同じ変換で動かし、それを囲む四角を新しい bbox にしている。
 そのため写真風では、bbox の周りに少し余白が増え、隣のブロックと少し重なることがある。
@@ -135,7 +136,7 @@ print(summarize(counts))   # precision / recall / f1（段落の切り方）, la
 - **表**は `kind="table"`。`text` はセルの文字を行ごとにつなげたもの（`cells` は入れていない）。キャプションは別のブロック（`caption`）
 - **図**は `kind="figure"`、`text` なし。今の文書生成では、図は中身が空の枠（`\fbox`）
 - **ページをまたぐ段落**は、ページごとに別の正解になる（画像が1ページずつなので）。2段組で段をまたぐものも段ごとに分かれる
-- **タイトル・著者・日付**は `other`（block_classifier に合わせている）。**ページ番号**も `other`
+- **タイトル・著者・日付**は `title` / `author` / `date`（文書生成の `doc_gen.py` が付けるラベルのまま）。**ページ番号**は `other`
 - 並び順は文書の中の順（TeXに書いた順）。ただし表と図は、キャプションが上にあっても表・図が先に来る
 
 ## 分かっている制限・今後の課題
