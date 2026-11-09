@@ -3,8 +3,10 @@
 
 崩し方（style）は3通り:
   - clean:      何もしない（PDFをそのまま画像にしたもの）
-  - screenshot: 画面のスクリーンショット風。ページの一部だけを切り出す、ダークモード、背景色、縮小、ときどきJPEG
-  - photo:      紙を撮った写真風。紙の色、明るさのむら、傾き・ゆがみ（周りに机が写る）、ぼかし、ノイズ、JPEG
+  - screenshot: PDFビューアの画面のスクリーンショット風。ページの一部だけを切り出す、ダークモード、背景色、
+                ビューアの背景（ページの周りの灰色など）と枠、画面の解像度への縮小、ときどきJPEG（送ったときの圧縮）
+  - photo:      紙を撮った写真風。紙の色、明るさのむら、傾き・ゆがみ（周りに机が写る）、ぼかし、ノイズ、JPEG。
+                入力はスクリーンショットを想定するので、既定では作らない（build の --styles で指定すれば作れる）
 
 どれをどのくらい崩したかは params に記録する（正解のIRの params に入る）。
 傾け・ゆがみでは、bbox の四隅を同じ変換で動かし、それを囲む軸に平行な四角を新しい bbox にする
@@ -26,6 +28,8 @@ DARK_BACKGROUNDS = [(30, 30, 30), (40, 42, 54), (24, 26, 27), (45, 45, 48), (0, 
 DARK_FOREGROUNDS = [(230, 230, 230), (212, 212, 212), (248, 248, 242), (200, 200, 200)]
 # 明るい背景（セピアのビューア・薄い灰色・紙の色）
 LIGHT_BACKGROUNDS = [(250, 244, 230), (244, 244, 244), (238, 236, 225), (255, 253, 245), (232, 236, 240)]
+# PDFビューアで、ページの周りに見える背景（暗い灰色・明るい灰色・白に近い灰色）
+VIEWER_BACKGROUNDS = [(82, 86, 89), (64, 64, 64), (50, 54, 57), (128, 128, 128), (204, 204, 204), (230, 230, 230), (240, 240, 240)]
 # 写真で紙の周りに写るもの（机など）
 DESK_COLORS = [(120, 90, 60), (60, 60, 60), (200, 200, 195), (150, 120, 90), (30, 30, 35)]
 
@@ -93,6 +97,28 @@ def dark_mode(image: np.ndarray, background: tuple[int, int, int], foreground: t
 def tint(image: np.ndarray, color: tuple[int, int, int]) -> np.ndarray:
     """白いところを color にする（紙の色・ビューアの背景色）。黒い文字は黒いまま"""
     return (image.astype(np.float32) * (np.array(color, np.float32) / 255)).clip(0, 255).astype(np.uint8)
+
+
+def viewer_frame(
+    image: np.ndarray,
+    boxes: np.ndarray,
+    background: tuple[int, int, int],
+    margins: tuple[int, int, int, int],
+    border: tuple[int, int, int] | None,
+) -> tuple[np.ndarray, np.ndarray]:
+    """ページの周りに、ビューアの背景を付ける。margins は (左, 上, 右, 下) の px。
+    border を指定すると、ページの縁に1pxの線を引く（ビューアのページの枠・影）"""
+    left, top, right, bottom = margins
+    height, width = image.shape[:2]
+    page = image
+    if border is not None:
+        page = image.copy()
+        page[[0, -1], :] = border
+        page[:, [0, -1]] = border
+    framed = np.empty((height + top + bottom, width + left + right, 3), np.uint8)
+    framed[:] = background
+    framed[top : top + height, left : left + width] = page
+    return framed, boxes + np.array([left, top, left, top], dtype=float)
 
 
 def scale(image: np.ndarray, boxes: np.ndarray, factor: float) -> tuple[np.ndarray, np.ndarray]:
@@ -163,9 +189,13 @@ def augment(image: np.ndarray, boxes: list[Bbox], style: str, rng: random.Random
     quality = None
 
     if style == "screenshot":
+        full_height = image.shape[0]
+        cut_top = cut_bottom = False  # 画面の上端・下端でページが切れているか
         if rng.random() < 0.5 and len(boxes) > 0:
             image, arr, keep, crop_params = crop(image, arr, rng, min_share=0.3)
             params.update(crop_params)
+            _, t, _, b = crop_params["crop"]
+            cut_top, cut_bottom = t > 0, b < full_height
         r = rng.random()
         if r < 0.3:
             background, foreground = rng.choice(DARK_BACKGROUNDS), rng.choice(DARK_FOREGROUNDS)
@@ -175,6 +205,18 @@ def augment(image: np.ndarray, boxes: list[Bbox], style: str, rng: random.Random
             color = rng.choice(LIGHT_BACKGROUNDS)
             image = tint(image, color)
             params["background"] = color
+        if rng.random() < 0.6:  # ビューアの画面ごと撮った（ページの周りに背景が写る）
+            height, width = image.shape[:2]
+            side = int(width * rng.uniform(0.02, 0.25))  # 画面の横幅がページより広い分（左右ほぼ同じ）
+            left, right = side, max(0, side + rng.randint(-3, 3))
+            # 上下は、ページが画面の端で切れていなければ、ページの間の背景が見える
+            top = 0 if cut_top else int(height * rng.uniform(0.01, 0.06))
+            bottom = 0 if cut_bottom else int(height * rng.uniform(0.01, 0.06))
+            margins = (left, top, right, bottom)
+            background = rng.choice(VIEWER_BACKGROUNDS)
+            border = tuple(max(c - 40, 0) for c in background) if rng.random() < 0.5 else None
+            image, arr = viewer_frame(image, arr, background, margins, border)
+            params["viewer"] = {"background": background, "margins": list(margins), "border": border}
         factor = rng.uniform(0.5, 1.0)
         image, arr = scale(image, arr, factor)
         params["scale"] = round(factor, 3)
