@@ -84,3 +84,50 @@ def test_build_one_document(tmp_path):
     blocks = json.loads((tmp_path / "labels" / "doc_000000.json").read_text(encoding="utf-8"))["blocks"]
     assert all(block["label"] in FINE_LABELS for block in blocks)
     assert counts.get("heading", 0) > 0 and counts.get("paragraph", 0) > 0
+
+
+# ---- ir_adapter（PDF → ラベル付きIR）----
+
+from block_classifier.ir_adapter import Item, join_lines, merge_fragments, split_heading  # noqa: E402
+
+
+def test_split_heading_removes_number_and_sets_level():
+    assert split_heading("1 はじめに") == ("はじめに", 1)
+    assert split_heading("図の検討 1.1") == ("図の検討", 2)  # pdf_extract で番号が後ろに回った場合
+    assert split_heading("まとめ") == ("まとめ", None)
+
+
+def test_math_fragments_merge_within_a_row_but_not_across_lines():
+    row = [
+        Item("math", (250, 449, 294, 460), "f(x) =", 10.9),
+        Item("math", (297, 438, 313, 449), "n ∑", 7.6),  # ∑ の上の範囲（小さい文字）
+        Item("math", (298, 464, 312, 472), "i=1", 7.6),  # ∑ の下の範囲
+        Item("math", (315, 447, 333, 461), "aixi", 10.9),
+    ]
+    next_line = Item("math", (250, 463.5, 340, 478), "y = 1", 10.9)  # align* の2行目（隙間 2.6pt）
+    merged = merge_fragments([*row, Item("paragraph", (72, 500, 500, 512), "本文", 10.0)], "math")
+    assert sum(item.label == "math" for item in merged) == 1
+
+    two_lines = merge_fragments([Item("math", (250, 449, 330, 461), "x = 1", 10.9), next_line], "math")
+    assert len(two_lines) == 2
+
+
+def test_join_lines_builds_paragraphs():
+    lines = [
+        Item("paragraph", (85, 100, 520, 110), "　段落の1行目", 10.0),  # 字下げ
+        Item("paragraph", (72, 112, 520, 122), "2行目", 10.0),
+        Item("paragraph", (72, 124, 300, 134), "最後の行。", 10.0),  # 途中で終わる
+        Item("paragraph", (85, 136, 520, 146), "　次の段落", 10.0),
+    ]
+    paragraphs = join_lines(lines)
+    assert [p.text for p in paragraphs] == ["　段落の1行目\n2行目\n最後の行。", "　次の段落"]
+
+
+def test_balance_braces_makes_ocr_output_compilable():
+    from block_classifier.ir_adapter import balance_braces
+
+    assert balance_braces(r"5.45}\geq x") == r"5.45\geq x"  # 対応しない } は捨てる
+    assert balance_braces(r"\frac{n}{n_{2") == r"\frac{n}{n_{2}}"  # 閉じていない { は閉じる
+    assert balance_braces(r"\left(\frac{a}{b}") == r"\left(\frac{a}{b} \right."
+    assert balance_braces(r"x^{2}") == r"x^{2}"  # 正しいものはそのまま
+    assert balance_braces(r"(n_{n}-\bar") == r"(n_{n}-"  # 末尾の書きかけの命令は取り除く

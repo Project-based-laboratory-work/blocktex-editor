@@ -29,7 +29,8 @@ from image_dataset.augment import STYLES, augment
 from image_dataset.render import TruthBlock, render_document, render_page
 
 NAME = "image_dataset"
-DEFAULT_STYLE_WEIGHTS = {"clean": 1, "screenshot": 2, "photo": 2}
+# 入力はスクリーンショットを想定するので、写真風（photo）は既定では作らない
+DEFAULT_STYLE_WEIGHTS = {"clean": 1, "screenshot": 4}
 
 
 def _pick_style(rng: random.Random, weights: dict[str, float]) -> str:
@@ -115,7 +116,7 @@ def main() -> None:
         "--styles",
         type=parse_styles,
         default=DEFAULT_STYLE_WEIGHTS,
-        help="崩し方と重み。例: clean=1,screenshot=2,photo=2 / photo だけなら photo",
+        help="崩し方と重み。既定は clean=1,screenshot=4。写真風も作るなら clean=1,screenshot=4,photo=2",
     )
     parser.add_argument("--dpi", type=float, nargs=2, default=(90, 200), metavar=("MIN", "MAX"), help="画像にするときの解像度の範囲")
     parser.add_argument("--workers", type=int, default=6)

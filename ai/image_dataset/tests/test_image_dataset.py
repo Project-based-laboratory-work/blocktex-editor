@@ -7,7 +7,7 @@ import numpy as np
 import pytest
 
 from common.ir import load_ir, validate
-from image_dataset.augment import STYLES, augment, crop, gaps, scale, warp
+from image_dataset.augment import STYLES, augment, crop, gaps, scale, viewer_frame, warp
 from image_dataset.build import DEFAULT_STYLE_WEIGHTS, build_one, parse_styles
 
 # 縦に並んだ3つのブロック（幅200 × 高さ300 の画像）
@@ -41,6 +41,19 @@ def test_warp_without_moving_corners_only_adds_margin():
     image, boxes = warp(IMAGE, BOXES, corners, margin=10, border=(0, 0, 0))
     assert image.shape[:2] == (320, 220)
     np.testing.assert_allclose(boxes, BOXES + 10, atol=1e-3)
+
+
+def test_viewer_frame_adds_background_and_moves_boxes():
+    image, boxes = viewer_frame(IMAGE, BOXES, (82, 86, 89), (30, 5, 20, 10), border=(40, 40, 40))
+    assert image.shape[:2] == (300 + 5 + 10, 200 + 30 + 20)
+    np.testing.assert_allclose(boxes, BOXES + [30, 5, 30, 5])
+    assert tuple(image[0, 0]) == (82, 86, 89)  # ページの外はビューアの背景
+    assert tuple(image[5, 30]) == (40, 40, 40)  # ページの縁は枠の色
+    assert tuple(image[50, 100]) == (255, 255, 255)  # ページの中はそのまま
+
+
+def test_default_styles_are_screenshots():
+    assert "photo" not in DEFAULT_STYLE_WEIGHTS
 
 
 @pytest.mark.parametrize("style", STYLES)
