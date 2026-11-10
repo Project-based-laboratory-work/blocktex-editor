@@ -84,6 +84,7 @@ Transformer（4-3）との精度比較の基準として使う。
 | [image_rule_based/](image_rule_based/README.md) | 画像の構造化器のルールベース（OCRのIRに見出し・段落・キャプションのラベルを付ける。PDF版 rule_based の画像版） |
 | [image_classifier/](image_classifier/README.md) | 画像の構造化器のAI版（OCRの段落に12種類のラベルを付ける。image_rule_based と入れ替えて使える） |
 | [image_layout/](image_layout/README.md) | 画像のレイアウト解析AI（画像からブロックの四角とラベルを直接出す。表・図・コードの位置も出せる） |
+| [image_table/](image_table/README.md) | 表の画像AI（行・列の区切りをAIで当て、セルの中身・罫線・揃えを付けてIRの表にする） |
 | [evaluation/](evaluation/README.md) | モデルの評価。正解付きのデータセットを作り、登録したモデルを採点する（結果は `web/eval.html` で見る） |
 | [models/](models/README.md) | アプリから選択できる、配布用モデルの置き場 |
 
