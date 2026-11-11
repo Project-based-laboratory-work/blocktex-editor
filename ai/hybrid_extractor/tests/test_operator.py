@@ -49,3 +49,16 @@ def test_decide_block_below_threshold(monkeypatch):
     # 誰も THRESHOLD（0.5）に届かなければ段落
     monkeypatch.setattr(operator_rules, "LABEL_EXPERTS", [Expert("unsure", "list", lambda b, i: 0.3)])
     assert decide_block(block("★ 項目"), INFO).label == "paragraph"
+
+
+# ---- 文中の数式の専門家 ----
+
+
+def test_inline_math_expert_can_be_swapped(monkeypatch):
+    # オペレータは INLINE_MATH_EXPERT に聞く。AI版に差し替えると、その答えが使われる
+    from hybrid_extractor.experts import INLINE_MATH_EXPERTS, InlineMathExpert
+
+    assert operator_rules.INLINE_MATH_EXPERT is INLINE_MATH_EXPERTS["rule"]
+    fake = InlineMathExpert("fake", lambda chars: [(0, 1)])
+    monkeypatch.setattr(operator_rules, "INLINE_MATH_EXPERT", fake)
+    assert operator_rules.INLINE_MATH_EXPERT.find([{"c": "x"}]) == [(0, 1)]

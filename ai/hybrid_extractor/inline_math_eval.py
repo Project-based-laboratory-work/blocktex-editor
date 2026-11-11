@@ -7,7 +7,8 @@
 流れ:
     1. 文中の数式をたくさん含む文書（TeX）を作る。数式の前後に目印（\\special{pdf:dest}）を置く
     2. PDF にして、目印の間の文字を「正解の数式の範囲」、TeX に書いた数式を「正解の LaTeX」にする
-    3. 見つける: 抽出器のブロックから inline_math_spans で数式の範囲を探し、正解の範囲と比べる（適合率・再現率）
+    3. 見つける: 抽出器のブロックから、文中の数式の専門家（--finder。既定はルール版）で数式の範囲を探し、
+       正解の範囲と比べる（適合率・再現率）
     4. 読む: 正解の範囲の文字を、それぞれの読む係に渡して、LaTeX を比べる（トークン誤り率・完全一致率・1式あたりの時間）
        見つける段階の失敗と分けるため、ここでは正解の範囲を渡す
     5. 通し: 見つけた範囲を読んだ結果も比べる（見つける＋読む）
@@ -39,7 +40,8 @@ from evaluation.marks import read_marks
 from evaluation.metrics import tex_tokens
 from hybrid_extractor.doc_gen import WORDS, preamble, random_style
 from hybrid_extractor.extract import extract_blocks, page_lines, union_all
-from hybrid_extractor.math_reader import ACCENTS, inline_math_spans, make_reader, shown
+from hybrid_extractor.experts import INLINE_MATH_EXPERTS, InlineMathExpert
+from hybrid_extractor.math_reader import ACCENTS, make_reader, shown
 
 # 正解の数式の文字を集める範囲（目印のベースラインからの上・下、pt）。文字の種類で変える:
 #   ふつうの文字: 文字の中心が [-10, +5] にある。広すぎると、行の間の狭い文書（article の 10pt は 12pt 送り）で上下の行の文字が混ざる
@@ -202,7 +204,7 @@ def glyph_key(g: dict) -> tuple:
 
 
 def make_case(args: tuple[int, int, str, str]) -> dict | None:
-    """1文書を作って PDF を保存し、正解（数式ごとの範囲と LaTeX）と、見つけた範囲を返す"""
+    """1文書を作って PDF を保存し、正解（数式ごとの範囲・文字・LaTeX）を返す"""
     index, seed, lang, out = args
     rng = random.Random(seed * 1_000_003 + index)
     tex, items, style = inline_document(rng, lang)
@@ -224,16 +226,22 @@ def make_case(args: tuple[int, int, str, str]) -> dict | None:
             page, glyphs = found
             gts.append({**item, "page": page, "bbox": union_all([g["bbox"] for g in shown(glyphs)]),
                         "glyph_keys": [glyph_key(g) for g in glyphs]})
+    return {"id": doc_id, "lang": lang, "cls": style.cls, "latin": style.latin, "gts": gts, "n_items": len(items)}
+
+
+def find_spans(pages: list, finder: InlineMathExpert) -> list[dict]:
+    """文中の数式の専門家（finder）で、全部の文字のブロックから数式の範囲を探す"""
     preds = []
-    for page in extract_blocks(str(pdf_path)):
+    for page in pages:
         for b in page.blocks:
-            for start, end in inline_math_spans(b.chars):
+            if b.kind != "text":
+                continue
+            for start, end in finder.find(b.chars):
                 glyphs = shown(b.chars[start:end])
                 if glyphs:
                     preds.append({"page": page.page, "bbox": union_all([g["bbox"] for g in glyphs]), "start": start,
                                   "end": end, "block_bbox": b.bbox})
-    return {"id": doc_id, "lang": lang, "cls": style.cls, "latin": style.latin, "gts": gts, "preds": preds,
-            "n_items": len(items)}
+    return preds
 
 
 # ---- 採点 ----
@@ -296,20 +304,23 @@ class Score:
         }
 
 
-def evaluate(cases: list[dict], out: Path, readers: dict) -> dict:
-    """読む係ごとに、正解の範囲を読む（読む）と、見つけた範囲を読む（通し）を採点する"""
+def evaluate(cases: list[dict], out: Path, readers: dict, finder: InlineMathExpert | None = None) -> dict:
+    """文中の数式の専門家（finder）の見つけ方と、読む係ごとに、正解の範囲を読む（読む）と、見つけた範囲を読む（通し）を採点する"""
+    finder = finder or INLINE_MATH_EXPERTS["rule"]
     read_scores = {name: Score() for name in readers}
     by_kind = {name: defaultdict(Score) for name in readers}
     e2e_scores = {name: Score() for name in readers}
     n_gt = n_pred = n_pair = 0
     for case in cases:
         pdf = out / "pdfs" / f"{case['id']}.pdf"
+        pages = extract_blocks(str(pdf))
+        case["preds"] = find_spans(pages, finder)
         pairs = match_spans(case["gts"], case["preds"])
         n_gt += len(case["gts"])
         n_pred += len(case["preds"])
         n_pair += len(pairs)
         with pymupdf.open(pdf) as doc:
-            blocks = {p.page: p.blocks for p in extract_blocks(str(pdf))}
+            blocks = {p.page: p.blocks for p in pages}
             for gt in case["gts"]:
                 page = doc[gt["page"] - 1]
                 keys = set(map(tuple, gt["glyph_keys"]))
@@ -332,6 +343,7 @@ def evaluate(cases: list[dict], out: Path, readers: dict) -> dict:
     precision = n_pair / n_pred if n_pred else 0.0
     recall = n_pair / n_gt if n_gt else 0.0
     return {
+        "finder": finder.name,
         "detect": {"n_gt": n_gt, "n_pred": n_pred, "n_pair": n_pair, "precision": round(precision, 4),
                    "recall": round(recall, 4),
                    "f1": round(2 * precision * recall / (precision + recall), 4) if precision + recall else 0.0},
@@ -343,7 +355,7 @@ def evaluate(cases: list[dict], out: Path, readers: dict) -> dict:
 
 def print_report(report: dict) -> None:
     d = report["detect"]
-    print(f"\n見つける: 正解 {d['n_gt']} / 見つけた {d['n_pred']} / 対応 {d['n_pair']}  "
+    print(f"\n見つける（{report['finder']}）: 正解 {d['n_gt']} / 見つけた {d['n_pred']} / 対応 {d['n_pair']}  "
           f"適合率 {d['precision']:.3f}  再現率 {d['recall']:.3f}  F1 {d['f1']:.3f}")
     for section, title in (("read", "読む（正解の範囲を渡す）"), ("end_to_end", "通し（見つけた範囲を読む）")):
         print(f"\n{title}")
@@ -365,6 +377,8 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--seed", type=int, default=7, help="学習データ（0〜2）と重ならない種にする")
     parser.add_argument("--workers", type=int, default=8)
     parser.add_argument("--math-checkpoint", help="math_ocr の重み。あれば ocr と rule+ocr も比べる")
+    parser.add_argument("--finder", default="rule", choices=sorted(INLINE_MATH_EXPERTS),
+                        help="文中の数式の専門家（見つける段階）。AI版を作ったら experts.INLINE_MATH_EXPERTS に足して選ぶ")
     args = parser.parse_args(argv)
 
     out = Path(args.out)
@@ -379,9 +393,9 @@ def main(argv: list[str] | None = None) -> None:
     if args.math_checkpoint:
         readers["ocr"] = make_reader("ocr", args.math_checkpoint)
         readers["rule+ocr"] = make_reader("rule+ocr", args.math_checkpoint)
-    report = evaluate(cases, out, readers)
+    report = evaluate(cases, out, readers, INLINE_MATH_EXPERTS[args.finder])
     report["settings"] = {"docs": len(cases), "seed": args.seed, "readers": list(readers),
-                          "math_checkpoint": args.math_checkpoint}
+                          "math_checkpoint": args.math_checkpoint, "finder": args.finder}
     (out / "report.json").write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
     print_report(report)
 

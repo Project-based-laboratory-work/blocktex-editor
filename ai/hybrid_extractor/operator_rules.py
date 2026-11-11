@@ -24,11 +24,11 @@ import os
 from dataclasses import dataclass
 
 from common.ir import IRDocument, save_ir, validate
-from hybrid_extractor.experts import RULE_EXPERTS, DocInfo, Expert, text_of
+from hybrid_extractor.experts import INLINE_MATH_EXPERTS, RULE_EXPERTS, DocInfo, Expert, InlineMathExpert, text_of
 import pymupdf
 
 from hybrid_extractor.extract import Block, Continues, PageBlocks, extract_blocks, rule_continues, runs_with_math
-from hybrid_extractor.math_reader import MathReader, inline_math_spans, make_reader
+from hybrid_extractor.math_reader import MathReader, make_reader
 from hybrid_extractor.rules import (
     body_font,
     body_size,
@@ -41,6 +41,8 @@ from hybrid_extractor.rules import (
 
 NAME = "hybrid_operator"
 INLINE_MATH_LABELS = ("paragraph", "list", "caption")  # 文中の数式を探すブロック
+# 文中の数式の専門家（段落の中の $...$ の範囲を見つける）。AI版に入れ替えるときはここを差し替える
+INLINE_MATH_EXPERT: InlineMathExpert = INLINE_MATH_EXPERTS["rule"]
 THRESHOLD = 0.5  # 専門家の自信がこれ以上なら、その答えを採る
 
 # 聞く順番。自信が同じときは前の専門家を優先する
@@ -117,7 +119,7 @@ def read_math(pdf_path: str, decided: list[list[tuple[Block, Decision]]], reader
                 if decision.label == "math":
                     block.tex = reader.read(page, block.chars)
                 elif decision.label in INLINE_MATH_LABELS:
-                    spans = inline_math_spans(block.chars)
+                    spans = INLINE_MATH_EXPERT.find(block.chars)
                     if spans:
                         read = {span: reader.read(page, block.chars[span[0]:span[1]]) for span in spans}
                         block.runs = runs_with_math(block.chars, block.decorations, read)

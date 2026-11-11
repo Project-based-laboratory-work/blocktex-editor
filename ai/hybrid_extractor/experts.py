@@ -1,10 +1,19 @@
-"""ラベルの専門家。1ブロックを見て「自分のラベルである自信（0〜1）」を答える。
+"""専門家たち。
+
+ラベルの専門家: 1ブロックを見て「自分のラベルである自信（0〜1）」を答える。
 
 最初は全員ルール版（自信は 1.0 か 0.0）。Step 8 で、1人ずつ自作AIの専門家に入れ替える。
 入れ替えるときは、同じ形の Expert を作って operator_rules.py の LABEL_EXPERTS に入れるだけでよい。
 
     Expert(name="list_rule", label="list", judge=関数)
         judge(ブロック, 文書の情報) → 自信 0〜1
+
+文中の数式の専門家: 段落などのブロックの文字の並びを見て、文中の数式（$...$）の範囲を答える。
+最初はルール版（math_reader.inline_math_spans）。AI版を作ったら INLINE_MATH_EXPERTS に足し、
+比較実験（inline_math_eval.py の --finder）でルール版と比べる。
+
+    InlineMathExpert(name="inline_math_rule", find=関数)
+        find(ブロックの文字の並び) → 数式の範囲 [(start, end), ...]（文字の並びの添字。end は含まない）
 """
 
 import re
@@ -12,6 +21,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 
 from hybrid_extractor.extract import Block
+from hybrid_extractor.math_reader import inline_math_spans
 
 SECTION_NUMBER = re.compile(r"^(\d+(?:\.\d+)*)\.?\s")
 HEADING_SIZE_RATIO = 1.15   # 本文の文字サイズのこの倍以上なら見出し
@@ -70,4 +80,19 @@ RULE_EXPERTS = {
     "math": Expert("math_rule", "math", math_rule),
     "list": Expert("list_rule", "list", list_rule),
     "heading": Expert("heading_rule", "heading", heading_rule),
+}
+
+
+# ---- 文中の数式の専門家 ----
+
+
+@dataclass
+class InlineMathExpert:
+    name: str                                               # 専門家の名前
+    find: Callable[[list[dict]], list[tuple[int, int]]]     # ブロックの文字の並び → 数式の範囲の一覧
+
+
+# 名前 → 文中の数式の専門家。比較実験の --finder で選ぶ。AI版を作ったらここに足す
+INLINE_MATH_EXPERTS = {
+    "rule": InlineMathExpert("inline_math_rule", inline_math_spans),
 }
