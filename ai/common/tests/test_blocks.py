@@ -193,3 +193,22 @@ def test_title_block_is_made_even_if_only_part_exists():
     blocks = convert(text("paragraph", "本文"), text("title", "Title Only"))
     assert blocks[0] == {"id": blocks[0]["id"], "type": "title", "text": "Title Only", "author": "", "date": ""}
     assert convert(text("paragraph", "本文"))[0]["type"] == "paragraph"  # 無ければ作らない
+
+
+def test_inline_math_becomes_math_segment():
+    # Run.tex（版4）はエディタの文中の数式になる。行をまたいでも数式は1つのまま
+    runs = [Run("速さ "), Run("v\n0", tex="v_{0}"), Run(" と "), Run("x2", tex="x^{2}"), Run(" を使う。")]
+    block = convert(text("paragraph", "".join(r.text for r in runs), runs=runs))[0]
+    assert block["content"] == [
+        {"type": "text", "text": "速さ "},
+        {"type": "math", "tex": "v_{0}"},
+        {"type": "text", "text": " と "},
+        {"type": "math", "tex": "x^{2}"},
+        {"type": "text", "text": " を使う。"},
+    ]
+
+
+def test_adjacent_same_inline_math_stay_separate():
+    runs = [Run("x", tex="x"), Run("x", tex="x")]
+    block = convert(text("paragraph", "xx", runs=runs))[0]
+    assert block["content"] == [{"type": "math", "tex": "x"}, {"type": "math", "tex": "x"}]
