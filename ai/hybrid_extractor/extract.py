@@ -115,12 +115,43 @@ def area(box: tuple) -> float:
 # =====================================================================
 
 
+BIG_SYMBOLS = set("∑∏∫∮√")
+
+
+def is_big_symbol(c: str, font: str) -> bool:
+    """枠がずれやすい大きい記号か（CMEX のフォントの文字と、∑ ∫ √ など）"""
+    return c in BIG_SYMBOLS or "CMEX" in font
+
+
+def char_key(ch: dict) -> tuple:
+    return (ch["c"], round(ch["origin"][0], 2), round(ch["origin"][1], 2))
+
+
+def accurate_boxes(page: pymupdf.Page) -> dict[tuple, tuple]:
+    """大きい記号の、文字の形から計算した正確な枠（TEXT_ACCURATE_BBOXES）。{(文字, 原点x, 原点y): 枠}。
+
+    ふつうの枠（フォント全体の高さで決まる）は、CMEX などのフォントの大きい記号では、実際に描かれる位置より
+    10pt ほど上にずれる（∑ が数式の上の行に入ってしまう）。全部の文字を正確な枠にすると行の高さが文字によって
+    変わり、行の間のすき間の判定がずれるので、大きい記号だけ差し替える"""
+    boxes = {}
+    flags = pymupdf.TEXTFLAGS_RAWDICT | pymupdf.TEXT_ACCURATE_BBOXES
+    for block in page.get_text("rawdict", flags=flags)["blocks"]:
+        for line in block.get("lines", []):
+            for span in line["spans"]:
+                for ch in span["chars"]:
+                    if is_big_symbol(ch["c"], span["font"]):
+                        boxes[char_key(ch)] = tuple(ch["bbox"])
+    return boxes
+
+
 def page_lines(page: pymupdf.Page) -> list[dict]:
     """1ページの行を、{"text", "bbox", "size", "chars"} の辞書のリストにして返す。
 
     chars は1文字ずつの {"c", "bbox", "font", "size", "flags", "baseline"}。装飾（runs）や字下げの判定に使う。
+    大きい記号（∑ ∫ √ と CMEX のかっこ）の枠だけは、文字の形から計算した正確な枠にする（accurate_boxes を参照）
     """
     lines = []
+    accurate = accurate_boxes(page)
     d = page.get_text("rawdict")
     for block in d["blocks"]:
         if block["type"] != 0:
@@ -132,8 +163,11 @@ def page_lines(page: pymupdf.Page) -> list[dict]:
             for span in line["spans"]:
                 for ch in span["chars"]:
                     text += ch["c"]                      # ① text に文字をつなげる
+                    bbox = tuple(ch["bbox"])
+                    if is_big_symbol(ch["c"], span["font"]):
+                        bbox = accurate.get(char_key(ch), bbox)
                     chars.append({
-                        "c": ch["c"], "bbox": tuple(ch["bbox"]), "font": span["font"], "size": span["size"],
+                        "c": ch["c"], "bbox": bbox, "font": span["font"], "size": span["size"],
                         "flags": span["flags"], "baseline": span["origin"][1],
                     })
                 size = max(size, span["size"])           # ② 今の size と span のサイズの、大きい方
@@ -186,32 +220,66 @@ def reading_order(boxes: list[tuple], page_width: float, two_column: bool) -> li
 # =====================================================================
 
 
+def is_math_piece(line: dict, other: dict) -> bool:
+    """line が、数式のかけらだけの行か（分数の分子・∑ の範囲・枠が上にずれた ∫ など）。
+    見えている文字が全部、数式のフォントか、other の文字より小さい（添字・何乗根の数字）"""
+    shown = [ch for ch in line["chars"] if ch["bbox"] is not None and not ch["c"].isspace()]
+    return bool(shown) and all(MATH_FONT.search(ch["font"]) or ch["size"] < other["size"] * 0.8 for ch in shown)
+
+
+def near_row(piece: dict, row: dict) -> bool:
+    """数式のかけら piece が、row の縦の範囲（文字の大きさの 0.6 倍だけ上下に広げる）に中心を持つか"""
+    cy = (piece["bbox"][1] + piece["bbox"][3]) / 2
+    pad = 0.6 * row["size"]
+    return row["bbox"][1] - pad <= cy <= row["bbox"][3] + pad
+
+
 def merge_rows(lines: list[dict], page_width: float, two_column: bool) -> list[dict]:
     """同じ高さに並ぶ行を、横に1つにつなぐ。返す行は {"bbox", "size", "parts"}（parts は左から並べた line）。
+    文中の数式のかけら（PyMuPDF が別の行にした分子・∫ など）も、近くの行につなぐ。
     2段組では、左右の段の行はつながない"""
     rows: list[dict] = []
     for line in lines:
-        target = None
+        candidates = []
         for row in rows[-3:]:  # 直前の数行だけ見る（同じ高さの line は続けて出てくる）
-            if not same_row(row, line):
+            piece = (is_math_piece(line, row) and near_row(line, row)) or (
+                all(is_math_piece(part, line) for part in row["parts"]) and near_row(row, line))
+            if not (same_row(row, line) or piece):
                 continue
             if two_column and {column_of(row["bbox"], page_width), column_of(line["bbox"], page_width)} == {1, 2}:
                 continue
             gap = max(line["bbox"][0] - row["bbox"][2], row["bbox"][0] - line["bbox"][2])
             if gap <= 3 * max(row["size"], line["size"]):
-                target = row
-                break
+                candidates.append(row)
+        # 候補が複数あれば、縦の中心が一番近い行（上下どちらの行の添字かを間違えないように）
+        line_cy = (line["bbox"][1] + line["bbox"][3]) / 2
+        target = min(candidates, key=lambda r: abs((r["bbox"][1] + r["bbox"][3]) / 2 - line_cy), default=None)
         if target is not None:
             target["parts"].append(line)
             target["bbox"] = union_bbox(target["bbox"], line["bbox"])
             target["size"] = max(target["size"], line["size"])
+            target["chars"] = target["chars"] + line["chars"]
         else:
-            rows.append({"bbox": line["bbox"], "size": line["size"], "parts": [line]})
+            rows.append({"bbox": line["bbox"], "size": line["size"], "parts": [line], "chars": list(line["chars"])})
     for row in rows:
         row["parts"].sort(key=lambda part: part["bbox"][0])
-        row["chars"] = row_chars(row["parts"])
+        main = max(row["parts"], key=lambda part: part["bbox"][2] - part["bbox"][0])
+        pieces = [part for part in row["parts"] if part is not main and is_math_piece(part, main)
+                  and part["bbox"][0] < main["bbox"][2] and part["bbox"][2] > main["bbox"][0]]
+        chars = row_chars([part for part in row["parts"] if not any(part is p for p in pieces)])
+        for piece in pieces:
+            chars = insert_piece(chars, piece["chars"])
+        row["chars"] = chars
         row["text"] = "".join(ch["c"] for ch in row["chars"])
     return rows
+
+
+def insert_piece(chars: list[dict], piece: list[dict]) -> list[dict]:
+    """行の文字の並びに、数式のかけら（分子など）の文字を、横の位置に合わせてまとめて差し込む"""
+    x0 = min(ch["bbox"][0] for ch in piece if ch["bbox"] is not None)
+    at = next((k for k, ch in enumerate(chars) if ch["bbox"] is not None and (ch["bbox"][0] + ch["bbox"][2]) / 2 > x0),
+              len(chars))
+    return chars[:at] + piece + chars[at:]
 
 
 def row_chars(parts: list[dict]) -> list[dict]:

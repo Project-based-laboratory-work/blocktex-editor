@@ -67,8 +67,22 @@ def test_equation_number_is_dropped():
     assert read(glyphs) == "E=m"
 
 
-def test_sqrt_is_left_to_ocr():
+def test_sqrt_without_bar_is_left_to_ocr():
+    # 根号の横線が見つからなければ読まない（rule+ocr なら OCR に回る）
     assert read([g("√", 0, font="CMSY10"), g("x", 6)]) is None
+
+
+def test_stacked_scripts_are_sub_then_sup():
+    # e の右に上付き 2 と下付き 0 が重なっている → TeX の書き方どおり e_{0}^{2}
+    assert read([g("e", 0), g("2", 5, size=7, baseline=96), g("0", 5.2, size=7, baseline=101.6)]) == "e_{0}^{2}"
+
+
+def test_inline_sum_scripts_are_on_the_right():
+    # 文中の ∑ は、上限・下限が右横に添字として付く
+    sigma = {"c": "∑", "bbox": (0, 91, 10, 103), "font": "CMSY10", "size": 10.0, "flags": 0, "baseline": 100}
+    glyphs = [sigma, g("n", 10.5, size=7, baseline=95), g("i", 10.5, size=7, baseline=102),
+              g("=", 13, size=7, baseline=102, font="CMR7"), g("1", 16, size=7, baseline=102, font="CMR7"), g("x", 21)]
+    assert read(glyphs) == r"\sum_{i=1}^{n}x"
 
 
 def test_fallback_reader():
@@ -111,6 +125,12 @@ def test_inline_math_spans():
     chars = text_chars("式 ") + [g("E", 30), g(" ", 40, font="CMR10"), g("=", 50, font="CMR10"), g(" ", 60, font="CMR10"),
                                  g("m", 70), g("c", 80), g("2", 90, size=7, baseline=96, font="CMR7")] + text_chars("です")
     assert inline_math_spans(chars) == [(2, 9)]
+
+
+def test_inline_math_spans_include_function_name():
+    # 「sin x」の sin は立体（数式のフォントではない）だが、数式に入れる
+    chars = text_chars("式 ") + [g(c, 20 + k * 5, font="CMR10") for k, c in enumerate("sin")] + [g(" ", 35, font="CMR10"), g("x", 40)]
+    assert inline_math_spans(chars) == [(2, 7)]
 
 
 def test_inline_math_spans_stop_at_words():
@@ -156,3 +176,20 @@ def test_sample_math(sample_pdf):
     # math="none" なら読まない
     plain = predict(str(sample_pdf), math="none")
     assert all(el.tex is None for page in plain.pages for el in page.elements)
+
+
+# ---- 対応させたい記号の一覧（math_ocr v2 が読める記号）でのまとめた確認 ----
+
+
+def test_rule_reader_on_symbol_list(tmp_path):
+    """比較実験（inline_math_eval）と同じ作り方の文書2つで、ルールが文中の数式をほとんど正しく読めること。
+    一覧の項目（アクセント・\\binom・\\mathbb・\\dots・\\lim など）が読めなくなったら、ここで気づける"""
+    if shutil.which("uplatex") is None:
+        pytest.skip("uplatex が無い")
+    from hybrid_extractor.inline_math_eval import evaluate, make_case
+
+    (tmp_path / "pdfs").mkdir()
+    cases = [make_case((i, 7, ["ja", "en"][i % 2], str(tmp_path))) for i in range(2)]
+    report = evaluate(cases, tmp_path, {"rule": make_reader("rule")})
+    assert report["read"]["rule"]["exact"] >= 0.9
+    assert report["detect"]["recall"] >= 0.8
