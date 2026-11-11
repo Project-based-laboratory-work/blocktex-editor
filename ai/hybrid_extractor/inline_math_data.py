@@ -18,6 +18,7 @@ docs/<id>.json の形:
          "font_size": 10.0,                                                         ← ブロックの文字サイズ（一番多いもの）
          "chars": [
             {"c": "x", "font": "CMMI10", "size": 10.0, "bbox": [...], "baseline": 0.123,  ← bbox・baseline は 0〜1
+             "flags": 6,          ← PyMuPDF の文字の印（2: 斜体、16: 太字）
              "space": false,      ← 抽出器が入れた空白・改行（PDFの文字ではない）
              "math": 1,           ← 正解: 数式の文字なら 1
              "math_id": 3,        ← 正解: どの数式か（数式でなければ null）。隣の文字と同じ数式かが分かる
@@ -67,7 +68,7 @@ def make_doc(args: tuple[int, int, str, str]) -> dict | None:
                 continue
             ids = char_labels(b.chars, owner)
             predicted = [0] * len(b.chars)
-            for start, end in rule.find(b.chars):
+            for start, end in rule.find(b.chars, w, h):
                 predicted[start:end] = [1] * (end - start)
             chars = []
             for ch, math_id, r in zip(b.chars, ids, predicted):
@@ -78,6 +79,7 @@ def make_doc(args: tuple[int, int, str, str]) -> dict | None:
                     "size": round(ch["size"], 2),
                     "bbox": None if synthetic else list(normalize_bbox(ch["bbox"], w, h)),
                     "baseline": None if synthetic else round(ch["baseline"] / h, 5),
+                    "flags": ch["flags"],
                     "space": synthetic,
                     "math": int(math_id is not None),
                     "math_id": math_id,

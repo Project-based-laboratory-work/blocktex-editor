@@ -66,6 +66,11 @@ cd hybrid_extractor/sample_data && uplatex sample.tex && uplatex sample.tex && d
 | [math_reader.py](math_reader.py) | 数式を読む係（PDFの文字 / ルールで組み立て / math_ocr / ルール＋math_ocr）と、文中の数式の範囲を探す |
 | [inline_math_eval.py](inline_math_eval.py) | 文中の数式の比較実験（見つける専門家と読む係を、正確さと処理時間で比べる） |
 | [inline_math_data.py](inline_math_data.py) | 文中の数式の専門家（AI版）の学習データ。段落の1文字ずつに「数式か」の正解 |
+| [features.py](features.py) | AI の専門家の特徴（区切り31・ラベル52・1文字27）。学習データと使うときで同じ関数を通す |
+| [nn.py](nn.py) / [train.py](train.py) | モデル（MLP・小さい Transformer）と学習、ルール版との比較 |
+| [ai_experts.py](ai_experts.py) | 学習した重み（checkpoints/）を読んで専門家にする。オペレータの AI モード（`predict_ai`、`--ai`）が使う |
+| [make_eval_dataset.py](make_eval_dataset.py) | 評価サイト用の、見た目をばらつかせたデータセット（ルールと AI の差を見る） |
+| [AI.md](AI.md) | **自作AIのアルゴリズムの説明と結果** |
 | [doc_gen.py](doc_gen.py) | 学習用のランダムな文書（TeX）を作る。評価用とは別の作り方 |
 | [build_dataset.py](build_dataset.py) | 学習データ（ブロック＋正解のラベル＋ルールの答え）を作る |
 | [sample_data/sample.tex](sample_data/sample.tex) | 開発用の固定サンプル（IR版3の項目がひと通り入る） |
@@ -202,7 +207,16 @@ AIの効果は、作りをばらつかせた学習データの検証用・テス
 
 割りすぎは、項目の間が広い箇条書き・行番号つきのコード・数式に多い。つなぎすぎは、字下げの無い段落（`\noindent`）どうし。
 
-## 計画（自作AIの部分）
+## 自作AIの専門家（結果の要約。詳しくは [AI.md](AI.md)）
+
+| 専門家 | ルール版 | AI版 |
+|---|---|---|
+| 区切り（テスト用、正解率） | 0.919 | **0.986** |
+| ラベル（テスト用、オペレータで決めた正解率） | 0.821 | **0.982** |
+| 文中の数式（比較実験、見つける F1） | 0.872 | **0.888** |
+| 評価サイト hybrid_varied（検出F1 / ラベル） | 0.881 / 0.898 | **0.986 / 0.983** |
+
+## 計画（自作AIの部分。当初の計画）
 
 | Step | 内容 |
 |---|---|

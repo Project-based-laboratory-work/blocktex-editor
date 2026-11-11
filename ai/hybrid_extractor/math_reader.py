@@ -426,14 +426,17 @@ def split_lines(gs: list[dict]) -> list[list[dict]]:
 
 
 def drop_equation_number(gs: list[dict]) -> list[dict]:
-    """右端に離れて置かれた式番号「(1)」を除く"""
+    """右端に離れて置かれた式番号「(1)」「(2.3)」を除く。
+    文字を後ろから1つずつ見る（下ごしらえでまとめた \\frac{a}{b} などは何文字もある1文字なので、文字列の位置では数えない）"""
     ordered = sorted(gs, key=lambda g: g["bbox"][0])
-    text = "".join(g["c"] for g in ordered)
-    m = re.search(r"\(\d+(\.\d+)?\)$", text)
-    if not m:
+    if len(ordered) < 4 or ordered[-1]["c"] != ")":
         return gs
-    number = ordered[m.start():]
-    rest = ordered[:m.start()]
+    k = len(ordered) - 2
+    while k >= 0 and re.fullmatch(r"[0-9.]", ordered[k]["c"]):
+        k -= 1
+    if k < 0 or k == len(ordered) - 2 or ordered[k]["c"] != "(":
+        return gs
+    number, rest = ordered[k:], ordered[:k]
     if rest and number[0]["bbox"][0] - rest[-1]["bbox"][2] > main_size(gs) * 3:
         return rest
     return gs

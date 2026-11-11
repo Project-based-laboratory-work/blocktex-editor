@@ -59,6 +59,6 @@ def test_inline_math_expert_can_be_swapped(monkeypatch):
     from hybrid_extractor.experts import INLINE_MATH_EXPERTS, InlineMathExpert
 
     assert operator_rules.INLINE_MATH_EXPERT is INLINE_MATH_EXPERTS["rule"]
-    fake = InlineMathExpert("fake", lambda chars: [(0, 1)])
+    fake = InlineMathExpert("fake", lambda chars, width, height: [(0, 1)])
     monkeypatch.setattr(operator_rules, "INLINE_MATH_EXPERT", fake)
-    assert operator_rules.INLINE_MATH_EXPERT.find([{"c": "x"}]) == [(0, 1)]
+    assert operator_rules.INLINE_MATH_EXPERT.find([{"c": "x"}], 595.0, 842.0) == [(0, 1)]

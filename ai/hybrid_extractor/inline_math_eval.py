@@ -40,7 +40,7 @@ from evaluation.marks import read_marks
 from evaluation.metrics import tex_tokens
 from hybrid_extractor.doc_gen import WORDS, preamble, random_style
 from hybrid_extractor.extract import extract_blocks, page_lines, union_all
-from hybrid_extractor.experts import INLINE_MATH_EXPERTS, InlineMathExpert
+from hybrid_extractor.experts import INLINE_MATH_EXPERTS, INLINE_MATH_FINDERS, InlineMathExpert, get_inline_expert
 from hybrid_extractor.math_reader import ACCENTS, make_reader, shown
 
 # 正解の数式の文字を集める範囲（目印のベースラインからの上・下、pt）。文字の種類で変える:
@@ -236,7 +236,7 @@ def find_spans(pages: list, finder: InlineMathExpert) -> list[dict]:
         for b in page.blocks:
             if b.kind != "text":
                 continue
-            for start, end in finder.find(b.chars):
+            for start, end in finder.find(b.chars, page.width, page.height):
                 glyphs = shown(b.chars[start:end])
                 if glyphs:
                     preds.append({"page": page.page, "bbox": union_all([g["bbox"] for g in glyphs]), "start": start,
@@ -377,8 +377,8 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--seed", type=int, default=7, help="学習データ（0〜2）と重ならない種にする")
     parser.add_argument("--workers", type=int, default=8)
     parser.add_argument("--math-checkpoint", help="math_ocr の重み。あれば ocr と rule+ocr も比べる")
-    parser.add_argument("--finder", default="rule", choices=sorted(INLINE_MATH_EXPERTS),
-                        help="文中の数式の専門家（見つける段階）。AI版を作ったら experts.INLINE_MATH_EXPERTS に足して選ぶ")
+    parser.add_argument("--finder", default="rule", choices=INLINE_MATH_FINDERS,
+                        help="文中の数式の専門家（見つける段階）。ai は train.py inline で学習した重みを使う")
     args = parser.parse_args(argv)
 
     out = Path(args.out)
@@ -393,7 +393,7 @@ def main(argv: list[str] | None = None) -> None:
     if args.math_checkpoint:
         readers["ocr"] = make_reader("ocr", args.math_checkpoint)
         readers["rule+ocr"] = make_reader("rule+ocr", args.math_checkpoint)
-    report = evaluate(cases, out, readers, INLINE_MATH_EXPERTS[args.finder])
+    report = evaluate(cases, out, readers, get_inline_expert(args.finder))
     report["settings"] = {"docs": len(cases), "seed": args.seed, "readers": list(readers),
                           "math_checkpoint": args.math_checkpoint, "finder": args.finder}
     (out / "report.json").write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")

@@ -13,12 +13,13 @@
 比較実験（inline_math_eval.py の --finder）でルール版と比べる。
 
     InlineMathExpert(name="inline_math_rule", find=関数)
-        find(ブロックの文字の並び) → 数式の範囲 [(start, end), ...]（文字の並びの添字。end は含まない）
+        find(ブロックの文字の並び, ページの幅, ページの高さ) → 数式の範囲 [(start, end), ...]
+        （文字の並びの添字。end は含まない。ページの大きさは、AI版が文字の位置を 0〜1 に直すのに使う）
 """
 
 import re
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from hybrid_extractor.extract import Block
 from hybrid_extractor.math_reader import inline_math_spans
@@ -35,6 +36,8 @@ class DocInfo:
     """文書全体から分かる情報（専門家が「本文と比べてどうか」を見るのに使う）"""
     body_size: float  # 本文の文字サイズ
     body_font: str    # 本文の書体
+    # AI の専門家が読む特徴（ブロックの id → features.block_features）。オペレータの AI モードが前もって作る
+    features: dict[int, list[float]] = field(default_factory=dict)
 
 
 @dataclass
@@ -89,10 +92,19 @@ RULE_EXPERTS = {
 @dataclass
 class InlineMathExpert:
     name: str                                               # 専門家の名前
-    find: Callable[[list[dict]], list[tuple[int, int]]]     # ブロックの文字の並び → 数式の範囲の一覧
+    find: Callable[[list[dict], float, float], list[tuple[int, int]]]  # (文字の並び, 幅, 高さ) → 数式の範囲の一覧
 
 
-# 名前 → 文中の数式の専門家。比較実験の --finder で選ぶ。AI版を作ったらここに足す
+# 名前 → 文中の数式の専門家。比較実験の --finder で選ぶ
 INLINE_MATH_EXPERTS = {
-    "rule": InlineMathExpert("inline_math_rule", inline_math_spans),
+    "rule": InlineMathExpert("inline_math_rule", lambda chars, width, height: inline_math_spans(chars)),
 }
+INLINE_MATH_FINDERS = ("rule", "ai")
+
+
+def get_inline_expert(name: str) -> InlineMathExpert:
+    """名前から文中の数式の専門家を返す。"ai" は学習した重み（checkpoints/inline_math.pt）を読む（torch が要る）"""
+    if name == "ai":
+        from hybrid_extractor.ai_experts import inline_expert
+        return inline_expert()
+    return INLINE_MATH_EXPERTS[name]

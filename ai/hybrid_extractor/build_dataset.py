@@ -38,6 +38,7 @@ docs/<id>.json の形:
         "pairs": [{"prev": 0, "next": 1, "same": true, "rule_same": true, "prev_group_kind": "text"}, ...]
                  隣り合う2行。same が正解（同じブロックの続きか。どちらかの行が正解と重ならなければ null）、
                  rule_same がルール（rule_continues）の答え
+        "ctx":   {"width", "height", "body", "two_column", "margins", "rights"}  ページの情報（features.ctx_record）
 """
 
 import argparse
@@ -56,17 +57,8 @@ import pymupdf
 from common.ir import IRDocument, normalize_bbox
 from evaluation.ground_truth import build_ground_truth, compile_tex
 from hybrid_extractor.doc_gen import document_files, random_document
-from hybrid_extractor.extract import (
-    LIST_HEAD,
-    PageRows,
-    extract_blocks,
-    group_kind,
-    group_rows,
-    page_rows,
-    row_font,
-    row_kind,
-    visible,
-)
+from hybrid_extractor.extract import PageRows, extract_blocks, group_kind, group_rows, page_rows
+from hybrid_extractor.features import block_record, ctx_record, row_record
 from hybrid_extractor.rules import label_pages
 
 MIN_OVERLAP = 0.5  # ブロックの面積のこの割合以上が正解の要素と重なっていれば、その要素のラベルを付ける
@@ -105,7 +97,8 @@ def owner(gt: IRDocument, page_no: int, bbox: tuple) -> int | None:
 
 
 def row_records(gt: IRDocument, page_no: int, pr: PageRows) -> tuple[list[dict], list[dict]]:
-    """区切りの専門家の学習データ: 行の一覧と、隣り合う2行の組（正解で同じブロックか・ルールでつないだか）"""
+    """区切りの専門家の学習データ: 行の一覧と、隣り合う2行の組（正解で同じブロックか・ルールでつないだか）。
+    行の記録は features.row_record（実際に使うときと同じ関数）で作る"""
     ctx = pr.ctx
     rule_group: dict[int, int] = {}
     for g, group in enumerate(group_rows(pr.rows, ctx)):
@@ -113,19 +106,9 @@ def row_records(gt: IRDocument, page_no: int, pr: PageRows) -> tuple[list[dict],
             rule_group[id(row)] = g
     rows, owners = [], []
     for row in pr.rows:
-        bbox = normalize_bbox(row["bbox"], ctx.width, ctx.height)
-        owners.append(owner(gt, page_no, bbox))
-        rows.append({
-            "bbox": list(bbox),
-            "text": row["text"],
-            "size": round(row["size"], 2),
-            "font": row_font(row),
-            "kind": row_kind(row),          # "text" / "math" / "code"
-            "list_head": bool(LIST_HEAD.match(row["text"].lstrip())),
-            "indented": ctx.indented(row),  # 段の左端より字下げされている
-            "column": ctx.column(row["bbox"]),
-            "n_chars": len(visible(row["chars"])),
-        })
+        record = row_record(row, ctx)
+        owners.append(owner(gt, page_no, tuple(record["bbox"])))
+        rows.append(record)
     pairs = []
     for i in range(1, len(pr.rows)):
         a, b = owners[i - 1], owners[i]
@@ -155,36 +138,28 @@ def make_doc(args: tuple[int, int, str, str]) -> dict | None:
         pages = extract_blocks(str(pdf))
         rule_labels = label_pages(pages)
         with pymupdf.open(pdf) as opened:
-            rows_by_page = [row_records(gt, p.number + 1, page_rows(p)) for p in opened]
+            page_infos = [page_rows(p) for p in opened]
+            rows_by_page = [row_records(gt, p.number + 1, pr) for p, pr in zip(opened, page_infos)]
+            ctx_by_page = [ctx_record(pr.ctx) for pr in page_infos]
         shutil.copy(pdf, out_dir / "pdfs" / f"{doc_id}.pdf")
 
     record_pages = []
     counts: Counter = Counter()
-    for page, labeled, (rows, pairs) in zip(pages, rule_labels, rows_by_page):
+    for page, labeled, (rows, pairs), ctx in zip(pages, rule_labels, rows_by_page, ctx_by_page):
         records = []
         for block, rule_label in labeled:
             bbox = normalize_bbox(block.bbox, page.width, page.height)
             label, level, ratio = match_labels(gt, page.page, bbox)
             counts[label or "(none)"] += 1
             records.append({
-                "kind": block.kind,
-                "bbox": list(bbox),
-                "text": block.text,
-                "font_size": block.font_size,
-                "bold": block.bold,
-                "font": block.font,
-                "mono_ratio": block.mono_ratio,
-                "math_ratio": block.math_ratio,
-                "n_rows": block.n_rows,
-                "first_indent": block.first_indent,
-                "list_head": block.list_head,
+                **block_record(block, page.width, page.height),
                 "label": label,
                 "level": level,
                 "overlap": ratio,
                 "rule_label": rule_label,
             })
         record_pages.append({"page": page.page, "width": page.width, "height": page.height, "blocks": records,
-                             "rows": rows, "pairs": pairs})
+                             "rows": rows, "pairs": pairs, "ctx": ctx})
 
     doc = {"id": doc_id, "lang": lang, "style": asdict(style), "pages": record_pages}
     (out_dir / "docs" / f"{doc_id}.json").write_text(json.dumps(doc, ensure_ascii=False), encoding="utf-8")

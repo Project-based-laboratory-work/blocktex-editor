@@ -30,7 +30,8 @@ NAME = "hybrid_extractor"
 PtBox = tuple[float, float, float, float]  # (x0, y0, x1, y1)。pt、左上が原点
 
 # ---- フォント名から分かること ----
-MONO_FONT = re.compile(r"CMTT|Typewriter|Mono|Courier|lmtt|Consola|Menlo|Inconsolata", re.IGNORECASE)
+# 等幅の書体。txtt は newtx パッケージの等幅（\\ttfamily）、Cursor は TeX Gyre の等幅
+MONO_FONT = re.compile(r"CMTT|Typewriter|Mono|Courier|lmtt|txtt|Cursor|Consola|Menlo|Inconsolata", re.IGNORECASE)
 MATH_FONT = re.compile(r"CMMI|CMSY|CMEX|CMBSY|MSAM|MSBM|EUFM|EUSM|RSFS|Math", re.IGNORECASE)
 BOLD_FONT = re.compile(r"Bold|Black|Heavy|Semibold|Demi|CMBX|CMB\d", re.IGNORECASE)
 # 和文の太字（\textbf）はゴシック体になるので、本文が明朝体のページではゴシック体を太字とみなす
@@ -667,6 +668,7 @@ class PageContext:
     height: float                 # ページの高さ
     two_column: bool
     margins: dict[int, float]     # 段ごとの左端（一番多くの行が始まる位置）。0: 1段組 / 1: 左の段 / 2: 右の段
+    rights: dict[int, float] = field(default_factory=dict)  # 段ごとの右端（行の右端の一番右）
 
     def column(self, box: tuple) -> int:
         return column_of(box, self.width) if self.two_column else 0
@@ -683,7 +685,11 @@ def page_context(rows: list[dict], width: float, height: float, two_column: bool
         x = round(row["bbox"][0])
         starts.setdefault(col, {})[x] = starts.setdefault(col, {}).get(x, 0) + 1
     margins = {col: float(max(xs, key=lambda x: xs[x])) for col, xs in starts.items()}
-    return PageContext(body_size(rows), width, height, two_column, margins)
+    rights: dict[int, float] = {}
+    for row in rows:
+        col = column_of(row["bbox"], width) if two_column else 0
+        rights[col] = max(rights.get(col, 0.0), row["bbox"][2])
+    return PageContext(body_size(rows), width, height, two_column, margins, rights)
 
 
 def group_kind(row: dict) -> str:
@@ -791,6 +797,44 @@ def block_chars(group: list[dict], code: bool) -> list[dict]:
             chars.extend(space_char() for _ in range(indent))
         chars.extend(row["chars"])
     return chars
+
+
+def reindent_code(block: "Block") -> None:
+    """コードと決まったブロックの文字を、字下げ付きで作り直す（ブロックを書き換える）。
+    行の書体が等幅と判定できなくても、ラベルがコードなら字下げを戻すため（オペレータがラベルを決めたあとに呼ぶ）。
+    行頭の小さい数字（lstlisting の numbers=left の行番号）は取り除く"""
+    rows: list[list[dict]] = [[]]
+    for ch in block.chars:
+        if ch["c"] == "\n" and ch["bbox"] is None:
+            rows.append([])
+        elif ch["bbox"] is not None:          # 前に足した字下げの空白（位置の無い文字）は捨てて作り直す
+            rows[-1].append(ch)
+    cleaned = []
+    for row in rows:
+        shown = [ch for ch in row if not ch["c"].isspace()]
+        if not shown:
+            continue
+        big = max(ch["size"] for ch in shown if not ch["c"].isdigit()) if any(not ch["c"].isdigit() for ch in shown) else 0
+        k = 0
+        while k < len(row) and (row[k]["c"].isspace() or (row[k]["c"].isdigit() and row[k]["size"] < big * 0.85)):
+            k += 1                            # 行番号（小さい数字）と、その後ろの空白
+        if k < len(row):
+            cleaned.append(row[k:])
+    if not cleaned:
+        return
+    left = min(row[0]["bbox"][0] for row in cleaned)
+    widths = [ch["bbox"][2] - ch["bbox"][0] for row in cleaned for ch in row if not ch["c"].isspace()]
+    char_width = statistics.median(widths) if widths else 1.0
+    chars: list[dict] = []
+    for k, row in enumerate(cleaned):
+        if k > 0:
+            chars.append({**space_char(), "c": "\n"})
+        chars.extend(space_char() for _ in range(round((row[0]["bbox"][0] - left) / char_width)))
+        chars.extend(row)
+    block.chars = chars
+    block.decorations = [()] * len(chars)
+    block.text = "".join(ch["c"] for ch in chars)
+    block.runs = None
 
 
 def runs_with_math(chars: list[dict], decorations: list[tuple[str, ...]],
