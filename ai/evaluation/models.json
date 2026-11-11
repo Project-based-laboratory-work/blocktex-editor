@@ -8,6 +8,15 @@
         "params": {}
     },
     {
+        "id": "hybrid_rules",
+        "name": "hybrid_extractor（ルールだけ）",
+        "entry": "hybrid_extractor.rules:predict",
+        "input": "pdf",
+        "outputs": ["bbox", "text", "label", "runs"],
+        "params": {},
+        "note": "hybrid_extractor のベースライン。自作AIと比べる基準"
+    },
+    {
         "id": "tesseract",
         "name": "Tesseract（文字の読み取りだけ）",
         "entry": "evaluation.adapters:tesseract",
