@@ -70,6 +70,7 @@ cd hybrid_extractor/sample_data && uplatex sample.tex && uplatex sample.tex && d
 | [nn.py](nn.py) / [train.py](train.py) | モデル（MLP・小さい Transformer）と学習、ルール版との比較 |
 | [ai_experts.py](ai_experts.py) | 学習した重み（checkpoints/）を読んで専門家にする。オペレータの AI モード（`predict_ai`、`--ai`）が使う |
 | [make_eval_dataset.py](make_eval_dataset.py) | 評価サイト用の、見た目をばらつかせたデータセット（ルールと AI の差を見る） |
+| [real_reports.py](real_reports.py) | 本物のレポート（TeX のソースがあるもの）に目印を入れてコンパイルし直し、正解付きの評価データセットにする（DocBank と同じ考え方） |
 | [AI.md](AI.md) | **自作AIのアルゴリズムの説明と結果** |
 | [doc_gen.py](doc_gen.py) | 学習用のランダムな文書（TeX）を作る。評価用とは別の作り方 |
 | [build_dataset.py](build_dataset.py) | 学習データ（ブロック＋正解のラベル＋ルールの答え）を作る |
@@ -226,6 +227,34 @@ AIの効果は、作りをばらつかせた学習データの検証用・テス
 | 8' | 文中の数式の専門家（AI）: 段落の1文字ずつ「数式か」（系列ラベリング）。目標: 比較実験で、見つける F1 がルール版の 0.872 を超える |
 | 9 | オペレータの調整: 呼ぶ専門家の決め方、しきい値を検証用データで決める |
 | 10 | 比べる: ルールだけ / 専門家＋オペレータ（テスト用データ・評価用データセット・本物のPDF） |
+
+## 本物のレポートでの評価（real_reports.py）
+
+授業で提出したレポート4本（`docs/reports/`、git の管理外。計約160ページ）の TeX に目印を入れて、正解付きにした。
+
+```bash
+python -m hybrid_extractor.real_reports --reports ../docs/reports --out evaluation/data/real_reports   # 約1分
+python -m evaluation.run --model hybrid_operator --dataset evaluation/data/real_reports
+python -m evaluation.run --model hybrid_ai --dataset evaluation/data/real_reports
+```
+
+- コードはスコープ（listings）に合わせ、minted の `\codefile` を同じ見た目の `lstlisting` にする（自分たちのコピーの上だけ）
+- 見出し・段落・箇条書き・コード・図・表・キャプション・タイトル・著者・日付・目次・ページ番号に目印を置く。
+  迷うものの決め方（アルゴリズムの枠の題名、`\paragraph`、目次）は real_reports.py の先頭に書いた
+- LuaLaTeX の文書（`ltjsarticle`）は、`\special{pdf:dest}` の代わりに `\pdfextension dest` で同じ名前の目印を置く
+- 4本とも、どの正解にも入らない文字・2つ以上の正解に入る文字が0個になることを確かめた
+- 目印の行（コード・図・表の上下）のぶん、ページ数が少し増える（元の 12・49・48・42 → 12・51・50・45）
+
+| | ルール（hybrid_operator） | AI（hybrid_ai） | 初代（rule_based） |
+|---|---|---|---|
+| 検出 適合率 / 再現率 / F1 | 0.147 / 0.762 / 0.247 | 0.250 / 0.858 / 0.387 | 0.147 / 0.623 / 0.237 |
+| ラベル正解率 | 0.881 | 0.818 | 0.393 |
+| コードの字下げ | 0.781 | 0.279 | 0.973 |
+
+**検出がとても低いのは、ほぼコードのせい**（正解のコード1つが、ルールでは平均21個、AI では13個に割れる。ほかのラベルはだいたい1対1）:
+1. uplatex の3本は `\usepackage[T1]{fontenc}` なので、コードの書体が `SFTT`（cm-super の等幅）。等幅と分からず、1行ずつ段落になる。
+   行番号（`SFRM0500`）も別のブロックになる
+2. compiler（LuaLaTeX）は `LMMono` で等幅と分かるが、`columns=fixed` で桁をそろえた大きな空きで、1行が左右に割れる
 
 ## 分かっている課題
 
