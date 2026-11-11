@@ -1,12 +1,27 @@
 # hybrid_extractor — ルールベース＋自作AIのPDF抽出器
 
-PDFから文字・表・図をブロックとして取り出し（抽出器・ルール）、ブロックの種類（見出し・段落・数式…）を当てる（分類器・ルール＋自作AI）。
+PDFから文字・表・図をブロックとして取り出し、ブロックの種類（見出し・段落・数式…）を当てる。
+**ルールのオペレータ**が、小さい**専門家**（ルール版 → 1人ずつ自作AIに入れ替える）に聞いて決める。
 
 ```
-PDF ─ extract.py（ルール）─▶ ブロック（文字・位置・大きさ・書体、表のセル、図の範囲）
-    ─ rules.py（ルール）───▶ ラベル付きIR（ベースライン。確実に分かるもの: 表・図・キャプション・ページ番号）
-    ─ 自作AI（Step 6〜）───▶ ラベル付きIR（ルールが苦手なもの: 番号の無い見出し、記号の違う箇条書き、行番号つきのコード…）
+PDF ─ extract.py ─▶ 行 ─ 区切りの専門家「次の行は今のブロックの続きか」─▶ ブロック
+                                                                            │
+    ┌───────────────────────────────────────────────────────────────────────┘
+    └▶ operator_rules.py（ルールのオペレータ）
+         1. 表・図の領域 → table / figure
+         2. 確実な決まり → caption / title・author・date / other（ページ番号・ヘッダー）
+         3. 手がかりで聞く専門家を選ぶ（等幅フォントがあればコードの専門家、など）
+         4. ラベルの専門家（experts.py）に「自分のラベルである自信 0〜1」を聞き、一番自信のある答え。
+            誰も 0.5 に届かなければ paragraph
+       ─▶ ラベル付きIR
 ```
+
+| 専門家 | 見るもの | 答え | 今 |
+|---|---|---|---|
+| 区切りの専門家 | 今のブロックと次の行 | 続きである自信 | ルール版（`extract.rule_continues`） |
+| コード / 数式 / 箇条書き / 見出しの専門家 | 1ブロック | 自分のラベルである自信 | ルール版（`experts.RULE_EXPERTS`） |
+
+専門家が全員ルール版のときは、`rules.py`（hybrid_rules）と同じ答えになる（テストで確かめている）。
 
 入出力はチーム共通のIR（[common/README.md](../common/README.md)）。評価は [evaluation/](../evaluation/README.md) に `hybrid_rules` として登録している。
 
@@ -19,8 +34,11 @@ PDF ─ extract.py（ルール）─▶ ブロック（文字・位置・大き�
 python -m hybrid_extractor.extract hybrid_extractor/sample_data/sample.pdf hybrid_extractor/data/sample.ir.json
 # 抽出＋ルール分類（ラベル付きIR ②）
 python -m hybrid_extractor.rules hybrid_extractor/sample_data/sample.pdf hybrid_extractor/data/sample.labeled.json
+# オペレータ＋専門家（--trace で、ブロックごとにどの専門家がどう答えたかを表示）
+python -m hybrid_extractor.operator_rules hybrid_extractor/sample_data/sample.pdf hybrid_extractor/data/sample.op.json --trace
 # 評価用データセットで採点（既存の rule_based と比べる）
 python -m evaluation.run --model hybrid_rules --dataset evaluation/data/synth_all
+python -m evaluation.run --model hybrid_operator --dataset evaluation/data/synth_all
 # 学習データを作る（12並列で 40文書 15秒くらい）
 python -m hybrid_extractor.build_dataset --out hybrid_extractor/data/train --docs 1500 --seed 0
 python -m hybrid_extractor.build_dataset --out hybrid_extractor/data/val --docs 300 --seed 1
@@ -41,7 +59,9 @@ cd hybrid_extractor/sample_data && uplatex sample.tex && uplatex sample.tex && d
 |---|---|
 | [look.py](look.py) | PDFの中身をのぞく練習用（Step 1） |
 | [extract.py](extract.py) | 抽出器。行 → 横につなぐ → 表・図 → 縦につないでブロックにする |
-| [rules.py](rules.py) | ルール分類器（ベースライン） |
+| [rules.py](rules.py) | ルール分類器（ベースライン）。オペレータも、確実な決まり（キャプション・タイトル部分・ページ番号）をここから使う |
+| [experts.py](experts.py) | ラベルの専門家（ルール版）。AIの専門家も同じ形（`Expert`）で作る |
+| [operator_rules.py](operator_rules.py) | ルールのオペレータ。聞く専門家を選び、答えをまとめる |
 | [doc_gen.py](doc_gen.py) | 学習用のランダムな文書（TeX）を作る。評価用とは別の作り方 |
 | [build_dataset.py](build_dataset.py) | 学習データ（ブロック＋正解のラベル＋ルールの答え）を作る |
 | [sample_data/sample.tex](sample_data/sample.tex) | 開発用の固定サンプル（IR版3の項目がひと通り入る） |
@@ -95,6 +115,28 @@ AIの効果は、作りをばらつかせた学習データの検証用・テス
 | title / author / date / figure | | 1.000 | |
 
 ここが自作AIの目標: **ルールの 0.775 を超え、とくに list・code・heading・table を当てる**。
+
+### 区切り（行と行をつなぐか）のルールの成績
+
+学習データの各ページの `pairs`（隣り合う2行の組）で数えた。検証用 8,762組のうち、正解で「つなぐ」は 52.8%。
+
+| | 学習用 | 検証用 |
+|---|---|---|
+| ルールの区切りの正解率 | 0.903 | 0.902 |
+| 割りすぎ（本当は続きなのに分けた） | 3,825 | 782 |
+| つなぎすぎ（本当は別なのにつないだ） | 411 | 78 |
+
+割りすぎは、項目の間が広い箇条書き・行番号つきのコード・数式に多い。つなぎすぎは、字下げの無い段落（`\noindent`）どうし。
+
+## 計画（自作AIの部分）
+
+| Step | 内容 |
+|---|---|
+| 6 | データを知る・特徴づくり（専門家みんなで使う） |
+| 7 | 区切りの専門家（AI）: 2行は続きか。二値分類。目標: 検証用でルールの 0.902 を超え、割りすぎを減らす |
+| 8 | ラベルの専門家（AI）: 箇条書き → コード → 見出し → 表… を1人ずつ。目標: ルールのラベル正解率 0.775 を超える |
+| 9 | オペレータの調整: 呼ぶ専門家の決め方、しきい値を検証用データで決める |
+| 10 | 比べる: ルールだけ / 専門家＋オペレータ（テスト用データ・評価用データセット・本物のPDF） |
 
 ## 分かっている課題
 

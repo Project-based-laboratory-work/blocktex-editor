@@ -17,6 +17,15 @@
         "note": "hybrid_extractor のベースライン。自作AIと比べる基準"
     },
     {
+        "id": "hybrid_operator",
+        "name": "hybrid_extractor（オペレータ＋専門家）",
+        "entry": "hybrid_extractor.operator_rules:predict",
+        "input": "pdf",
+        "outputs": ["bbox", "text", "label", "runs"],
+        "params": {},
+        "note": "ルールのオペレータが専門家に聞いてラベルを決める。専門家を自作AIに入れ替えていく"
+    },
+    {
         "id": "tesseract",
         "name": "Tesseract（文字の読み取りだけ）",
         "entry": "evaluation.adapters:tesseract",

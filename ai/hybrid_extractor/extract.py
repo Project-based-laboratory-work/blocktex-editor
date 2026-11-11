@@ -18,6 +18,7 @@ import argparse
 import os
 import re
 import statistics
+from collections.abc import Callable
 from dataclasses import dataclass, field
 
 import pymupdf
@@ -587,71 +588,102 @@ def is_tiny(row: dict) -> bool:
     return len(shown) <= 3 and all(ch["c"].isascii() or MATH_FONT.search(ch["font"]) for ch in shown)
 
 
-def group_rows(rows: list[dict], body: float, page_width: float, two_column: bool) -> list[list[dict]]:
-    """読み順に並んだ行を、上から順に縦につないでブロックにする。
+@dataclass
+class PageContext:
+    """ページ全体から分かる情報。区切りの専門家が、行と行をつなぐかを決めるときに使う"""
+    body: float                   # 本文の文字サイズ
+    width: float                  # ページの幅
+    height: float                 # ページの高さ
+    two_column: bool
+    margins: dict[int, float]     # 段ごとの左端（一番多くの行が始まる位置）。0: 1段組 / 1: 左の段 / 2: 右の段
+
+    def column(self, box: tuple) -> int:
+        return column_of(box, self.width) if self.two_column else 0
+
+    def indented(self, row: dict) -> bool:
+        """段の左端より字下げされている行（段落の1行目など）"""
+        return row["bbox"][0] > self.margins.get(self.column(row["bbox"]), row["bbox"][0]) + INDENT * self.body
+
+
+def page_context(rows: list[dict], width: float, height: float, two_column: bool) -> PageContext:
+    starts: dict[int, dict[int, int]] = {}
+    for row in rows:
+        col = column_of(row["bbox"], width) if two_column else 0
+        x = round(row["bbox"][0])
+        starts.setdefault(col, {})[x] = starts.setdefault(col, {}).get(x, 0) + 1
+    margins = {col: float(max(xs, key=lambda x: xs[x])) for col, xs in starts.items()}
+    return PageContext(body_size(rows), width, height, two_column, margins)
+
+
+def group_kind(row: dict) -> str:
+    """ブロックの1行目から決める、ブロックの種類（"text" / "list" / "math" / "code"）。つなぎ方の決まりが変わる"""
+    kind = row_kind(row)
+    return "list" if kind == "text" and LIST_HEAD.match(row["text"].lstrip()) else kind
+
+
+def rule_continues(group: list[dict], gkind: str, row: dict, ctx: PageContext) -> float:
+    """区切りの専門家（ルール版）: row が、今のブロック group の続きである自信（0〜1）。ルールなので 1.0 か 0.0。
 
     つなぐ条件（直前の行とのすき間が小さい、が前提）:
     - 数式: 数式の行・小さい断片の行どうし
     - コード: 等幅フォントの行どうし
     - 箇条書き: 次の項目（• で始まる）か、字下げされた続きの行
-    - 段落: 文字の大きさがほぼ同じで、字下げされていない（字下げは新しい段落の1行目）
+    - 段落: 文字の大きさ・書体がほぼ同じで、字下げされていない（字下げは新しい段落の1行目）
     """
-    # 段ごとの左端（一番多くの行が始まる位置）。段落の1行目の字下げは、これと比べて見つける
-    starts: dict[int, dict[int, int]] = {}
-    for row in rows:
-        col = column_of(row["bbox"], page_width) if two_column else 0
-        x = round(row["bbox"][0])
-        starts.setdefault(col, {})[x] = starts.setdefault(col, {}).get(x, 0) + 1
-    margins = {col: float(max(xs, key=lambda x: xs[x])) for col, xs in starts.items()}
+    body = ctx.body
+    kind = row_kind(row)
+    is_list_head = bool(LIST_HEAD.match(row["text"].lstrip()))
+    prev = group[-1]
+    box = union_all([r["bbox"] for r in group])
+    gap = row["bbox"][1] - prev["bbox"][3]
+    # 横の範囲が重なっているか。数式は ∫ や添字が左右に少しはみ出すので、文字3つ分まで離れていてよい
+    reach = 3 * body if gkind == "math" else 0.0
+    same_column = row["bbox"][0] < box[2] + reach and row["bbox"][2] > box[0] - reach
+    if ctx.two_column and {column_of(row["bbox"], ctx.width), column_of(box, ctx.width)} == {1, 2}:
+        same_column = False
+    # すき間の上限は、本文と、その行の文字の大きい方で測る（コードの等幅フォントは本文より少し大きい）
+    unit = max(body, prev["size"], row["size"]) if gkind != "math" else body
+    ok = False
+    if gkind == "math" and same_column and -2 * body <= gap:
+        ok = gap <= MATH_GAP * body and (kind == "math" or is_tiny(row))
+    elif same_column and -0.5 * body <= gap:
+        # 書体が変わったら別のブロック（本文と同じくらいの大きさの見出しを、段落とつながないため）
+        fonts = {row_font(row), row_font(prev)}
+        same_font = len(fonts) == 1 or "" in fonts
+        size_ok = max(row["size"], prev["size"]) <= SIZE_RATIO * min(row["size"], prev["size"])
+        if gkind == "math":
+            ok = False
+        elif gkind == "code":
+            ok = gap <= LINE_GAP * unit and kind == "code"
+        elif gkind == "list" and kind == "text":
+            # 箇条書きの項目の間は、行の間より少し広い（\itemsep）
+            limit = (LIST_GAP if is_list_head else LINE_GAP) * unit
+            continues = is_list_head or row["bbox"][0] > group[0]["bbox"][0] + 0.3 * body
+            ok = gap <= limit and size_ok and same_font and continues
+        elif kind == "text" and gap <= LINE_GAP * unit:
+            # 字下げされた行は新しい段落の1行目。段の左端と、このブロックの左端の両方と比べる
+            left = min(r["bbox"][0] for r in group)
+            new_paragraph = ctx.indented(row) or row["bbox"][0] > left + INDENT * body
+            ok = size_ok and same_font and not is_list_head and not new_paragraph
+    return 1.0 if ok else 0.0
 
-    def indented(row: dict) -> bool:
-        col = column_of(row["bbox"], page_width) if two_column else 0
-        return row["bbox"][0] > margins.get(col, row["bbox"][0]) + INDENT * body
 
+# 区切りの専門家の形: (今のブロック, ブロックの種類, 次の行, ページの情報) → 続きである自信 0〜1
+Continues = Callable[[list[dict], str, dict, PageContext], float]
+
+
+def group_rows(rows: list[dict], ctx: PageContext, continues: Continues = rule_continues,
+               threshold: float = 0.5) -> list[list[dict]]:
+    """読み順に並んだ行を、上から順に縦につないでブロックにする。
+    つなぐかどうかは区切りの専門家（continues）に聞き、自信が threshold 以上ならつなぐ"""
     groups: list[list[dict]] = []
     kinds: list[str] = []
     for row in rows:
-        kind = row_kind(row)
-        is_list_head = bool(LIST_HEAD.match(row["text"].lstrip()))
-        if groups:
-            group, gkind = groups[-1], kinds[-1]
-            prev = group[-1]
-            box = union_all([r["bbox"] for r in group])
-            gap = row["bbox"][1] - prev["bbox"][3]
-            # 横の範囲が重なっているか。数式は ∫ や添字が左右に少しはみ出すので、文字3つ分まで離れていてよい
-            reach = 3 * body if gkind == "math" else 0.0
-            same_column = row["bbox"][0] < box[2] + reach and row["bbox"][2] > box[0] - reach
-            if two_column and {column_of(row["bbox"], page_width), column_of(box, page_width)} == {1, 2}:
-                same_column = False
-            # すき間の上限は、本文と、その行の文字の大きい方で測る（コードの等幅フォントは本文より少し大きい）
-            unit = max(body, prev["size"], row["size"]) if gkind != "math" else body
-            ok = False
-            if gkind == "math" and same_column and -2 * body <= gap:
-                ok = gap <= MATH_GAP * body and (kind == "math" or is_tiny(row))
-            elif same_column and -0.5 * body <= gap:
-                # 書体が変わったら別のブロック（本文と同じくらいの大きさの見出しを、段落とつながないため）
-                fonts = {row_font(row), row_font(prev)}
-                same_font = len(fonts) == 1 or "" in fonts
-                size_ok = max(row["size"], prev["size"]) <= SIZE_RATIO * min(row["size"], prev["size"])
-                if gkind == "math":
-                    ok = False
-                elif gkind == "code":
-                    ok = gap <= LINE_GAP * unit and kind == "code"
-                elif gkind == "list" and kind == "text":
-                    # 箇条書きの項目の間は、行の間より少し広い（\itemsep）
-                    limit = (LIST_GAP if is_list_head else LINE_GAP) * unit
-                    continues = is_list_head or row["bbox"][0] > group[0]["bbox"][0] + 0.3 * body
-                    ok = gap <= limit and size_ok and same_font and continues
-                elif kind == "text" and gap <= LINE_GAP * unit:
-                    # 字下げされた行は新しい段落の1行目。段の左端と、このブロックの左端の両方と比べる
-                    left = min(r["bbox"][0] for r in group)
-                    new_paragraph = indented(row) or row["bbox"][0] > left + INDENT * body
-                    ok = size_ok and same_font and not is_list_head and not new_paragraph
-            if ok:
-                group.append(row)
-                continue
+        if groups and continues(groups[-1], kinds[-1], row, ctx) >= threshold:
+            groups[-1].append(row)
+            continue
         groups.append([row])
-        kinds.append("list" if kind == "text" and is_list_head else kind)
+        kinds.append(group_kind(row))
     return groups
 
 
@@ -765,10 +797,19 @@ def page_is_gothic(rows: list[dict]) -> bool:
 # =====================================================================
 
 
-def extract_page(page: pymupdf.Page) -> list[Block]:
-    """1ページ分のブロック（読み順）"""
+@dataclass
+class PageRows:
+    """表・図を取り除いたあとの、1ページの行（読み順）と、表・図"""
+    rows: list[dict]
+    ctx: PageContext
+    tables: list[Table]
+    figures: list[PtBox]
+    underlines: list[tuple[float, float, float]]
+
+
+def page_rows(page: pymupdf.Page) -> PageRows:
+    """1ページの行（横につないだもの、読み順）。表・図の中の行は除く。区切りの専門家の学習データにも使う"""
     width = page.rect.width
-    page_no = page.number + 1
     lines = page_lines(page)
     two_column = is_two_column([line["bbox"] for line in lines], width)
     order = reading_order([line["bbox"] for line in lines], width, two_column)
@@ -781,12 +822,23 @@ def extract_page(page: pymupdf.Page) -> list[Block]:
     figures = find_figures(page, rows, tables)
     taken = [t.bbox for t in tables] + figures
     rows = [r for r in rows if not any(inside(center(r["bbox"]), box, 1.0) for box in taken)]
+    ctx = page_context(rows, width, page.rect.height, two_column)
+    ctx.body = body  # 本文の文字サイズは、表・図の中の文字も含めて数える（取り除く前と同じ値にする）
+    return PageRows(rows, ctx, tables, figures, seg.horizontal)
+
+
+def extract_page(page: pymupdf.Page, continues: Continues = rule_continues) -> list[Block]:
+    """1ページ分のブロック（読み順）。continues は区切りの専門家（行と行をつなぐかを決める）"""
+    page_no = page.number + 1
+    pr = page_rows(page)
+    rows, ctx, tables, figures = pr.rows, pr.ctx, pr.tables, pr.figures
+    width, two_column = ctx.width, ctx.two_column
 
     gothic_is_bold = not page_is_gothic(rows)
     blocks: list[Block] = []
-    for group in group_rows(rows, body, width, two_column):
+    for group in group_rows(rows, ctx, continues):
         gkind = row_kind(group[0])
-        blocks.append(make_block(page_no, group, gkind, gothic_is_bold, seg.horizontal))
+        blocks.append(make_block(page_no, group, gkind, gothic_is_bold, pr.underlines))
     for t in tables:
         text = "\n".join(" ".join(c for c in row if c) for row in t.cells)
         blocks.append(Block(page=page_no, kind="table", bbox=t.bbox, text=text, table=t, n_rows=len(t.cells)))
@@ -805,12 +857,13 @@ class PageBlocks:
     blocks: list[Block]
 
 
-def extract_blocks(pdf_path: str) -> list[PageBlocks]:
-    """PDFの全ページを読んで、ページごとのブロックを返す（分類器はこれを使う）"""
+def extract_blocks(pdf_path: str, continues: Continues = rule_continues) -> list[PageBlocks]:
+    """PDFの全ページを読んで、ページごとのブロックを返す（分類器はこれを使う）。
+    continues で区切りの専門家を差し替えられる（既定はルール版）"""
     pages = []
     with pymupdf.open(pdf_path) as doc:
         for page in doc:
-            pages.append(PageBlocks(page.number + 1, page.rect.width, page.rect.height, extract_page(page)))
+            pages.append(PageBlocks(page.number + 1, page.rect.width, page.rect.height, extract_page(page, continues)))
     return pages
 
 

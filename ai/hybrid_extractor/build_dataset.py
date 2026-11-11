@@ -31,6 +31,13 @@ docs/<id>.json の形:
       ]
     }
     label が null のブロックは、どの正解ともあまり重ならなかったもの（学習・評価には使わない）。
+
+    区切りの専門家（行と行をつなぐか）の学習データも、各ページに入れる:
+        "rows":  [{"bbox", "text", "size", "font", "kind", "list_head", "indented", "column", "n_chars"}, ...]
+                 表・図を除いた行（横につないだもの）を読み順に。kind は "text" / "math" / "code"
+        "pairs": [{"prev": 0, "next": 1, "same": true, "rule_same": true, "prev_group_kind": "text"}, ...]
+                 隣り合う2行。same が正解（同じブロックの続きか。どちらかの行が正解と重ならなければ null）、
+                 rule_same がルール（rule_continues）の答え
 """
 
 import argparse
@@ -44,10 +51,22 @@ from concurrent.futures import ProcessPoolExecutor
 from dataclasses import asdict
 from pathlib import Path
 
+import pymupdf
+
 from common.ir import IRDocument, normalize_bbox
 from evaluation.ground_truth import build_ground_truth, compile_tex
 from hybrid_extractor.doc_gen import document_files, random_document
-from hybrid_extractor.extract import extract_blocks
+from hybrid_extractor.extract import (
+    LIST_HEAD,
+    PageRows,
+    extract_blocks,
+    group_kind,
+    group_rows,
+    page_rows,
+    row_font,
+    row_kind,
+    visible,
+)
 from hybrid_extractor.rules import label_pages
 
 MIN_OVERLAP = 0.5  # ブロックの面積のこの割合以上が正解の要素と重なっていれば、その要素のラベルを付ける
@@ -75,6 +94,51 @@ def match_labels(gt: IRDocument, page_no: int, bbox: tuple) -> tuple[str | None,
     return best.label, best.level, round(best_ratio, 3)
 
 
+def owner(gt: IRDocument, page_no: int, bbox: tuple) -> int | None:
+    """行（正規化した bbox）が、どの正解の要素に入っているか（要素の添字）。どれにも半分以上入らなければ None"""
+    best, best_ratio = None, 0.0
+    for k, el in enumerate(gt.pages[page_no - 1].elements):
+        r = overlap_ratio(bbox, el.bbox)
+        if r > best_ratio:
+            best, best_ratio = k, r
+    return best if best_ratio >= MIN_OVERLAP else None
+
+
+def row_records(gt: IRDocument, page_no: int, pr: PageRows) -> tuple[list[dict], list[dict]]:
+    """区切りの専門家の学習データ: 行の一覧と、隣り合う2行の組（正解で同じブロックか・ルールでつないだか）"""
+    ctx = pr.ctx
+    rule_group: dict[int, int] = {}
+    for g, group in enumerate(group_rows(pr.rows, ctx)):
+        for row in group:
+            rule_group[id(row)] = g
+    rows, owners = [], []
+    for row in pr.rows:
+        bbox = normalize_bbox(row["bbox"], ctx.width, ctx.height)
+        owners.append(owner(gt, page_no, bbox))
+        rows.append({
+            "bbox": list(bbox),
+            "text": row["text"],
+            "size": round(row["size"], 2),
+            "font": row_font(row),
+            "kind": row_kind(row),          # "text" / "math" / "code"
+            "list_head": bool(LIST_HEAD.match(row["text"].lstrip())),
+            "indented": ctx.indented(row),  # 段の左端より字下げされている
+            "column": ctx.column(row["bbox"]),
+            "n_chars": len(visible(row["chars"])),
+        })
+    pairs = []
+    for i in range(1, len(pr.rows)):
+        a, b = owners[i - 1], owners[i]
+        pairs.append({
+            "prev": i - 1,
+            "next": i,
+            "same": None if a is None or b is None else a == b,   # 正解: 同じブロックの続きか
+            "rule_same": rule_group[id(pr.rows[i - 1])] == rule_group[id(pr.rows[i])],
+            "prev_group_kind": group_kind(pr.rows[i - 1]),
+        })
+    return rows, pairs
+
+
 def make_doc(args: tuple[int, int, str, str]) -> dict | None:
     """1文書分を作って保存し、manifest に載せる情報を返す。コンパイルに失敗したら None"""
     index, seed, lang, out = args
@@ -90,11 +154,13 @@ def make_doc(args: tuple[int, int, str, str]) -> dict | None:
         gt = build_ground_truth(str(pdf), blocks, source=f"{doc_id}.pdf", two_column=style.two_column)
         pages = extract_blocks(str(pdf))
         rule_labels = label_pages(pages)
+        with pymupdf.open(pdf) as opened:
+            rows_by_page = [row_records(gt, p.number + 1, page_rows(p)) for p in opened]
         shutil.copy(pdf, out_dir / "pdfs" / f"{doc_id}.pdf")
 
     record_pages = []
     counts: Counter = Counter()
-    for page, labeled in zip(pages, rule_labels):
+    for page, labeled, (rows, pairs) in zip(pages, rule_labels, rows_by_page):
         records = []
         for block, rule_label in labeled:
             bbox = normalize_bbox(block.bbox, page.width, page.height)
@@ -117,7 +183,8 @@ def make_doc(args: tuple[int, int, str, str]) -> dict | None:
                 "overlap": ratio,
                 "rule_label": rule_label,
             })
-        record_pages.append({"page": page.page, "width": page.width, "height": page.height, "blocks": records})
+        record_pages.append({"page": page.page, "width": page.width, "height": page.height, "blocks": records,
+                             "rows": rows, "pairs": pairs})
 
     doc = {"id": doc_id, "lang": lang, "style": asdict(style), "pages": record_pages}
     (out_dir / "docs" / f"{doc_id}.json").write_text(json.dumps(doc, ensure_ascii=False), encoding="utf-8")

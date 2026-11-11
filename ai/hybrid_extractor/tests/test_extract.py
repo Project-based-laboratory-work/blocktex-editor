@@ -145,6 +145,14 @@ def test_sample_blocks(sample_pdf):
     assert code.text.splitlines()[1] == "    for page in doc:"
 
 
+def test_operator_matches_rules(sample_pdf):
+    # 専門家が全員ルール版なら、オペレータの答えは rules.py と同じ
+    from hybrid_extractor.operator_rules import predict as operator_predict
+    a = [el.label for page in predict(str(sample_pdf)).pages for el in page.elements]
+    b = [el.label for page in operator_predict(str(sample_pdf)).pages for el in page.elements]
+    assert a == b
+
+
 def test_sample_labels(sample_pdf):
     doc = predict(str(sample_pdf))
     assert validate(doc) == []

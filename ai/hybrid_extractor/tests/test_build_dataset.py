@@ -45,3 +45,9 @@ def test_make_doc(tmp_path):
     assert (tmp_path / "pdfs" / "00000.pdf").exists()
     labeled = sum(n for label, n in info["counts"].items() if label != "(none)")
     assert labeled >= sum(info["counts"].values()) * 0.8  # ほとんどのブロックに正解が付く
+    # 区切りの専門家のデータ: 隣り合う2行の組は、行の数 - 1 個
+    import json
+    doc = json.loads((tmp_path / "docs" / "00000.json").read_text(encoding="utf-8"))
+    page = doc["pages"][0]
+    assert len(page["pairs"]) == len(page["rows"]) - 1
+    assert {"same", "rule_same", "prev_group_kind"} <= set(page["pairs"][0])
