@@ -8,6 +8,7 @@ from reportlab.lib.styles import ParagraphStyle
 from reportlab.lib.units import mm
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.cidfonts import UnicodeCIDFont
+from reportlab.pdfgen import canvas
 from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
 from rule_based.pdf_extract import _column_align, _rule_flags, extract
@@ -141,3 +142,104 @@ def test_rule_flags_needs_long_enough_lines():
         (131.0, 60.0, 100.0),
     ]
     assert _rule_flags(rows, segments, (0.0, 100.0)) == [True, False, True]
+
+
+def _draw_box(pdf: canvas.Canvas, top: float, rows: list[list[tuple[float, str]]]) -> None:
+    """Word の網掛け段落と同じ形（外側の背景・行ごとの背景・細い塗りの枠線）の囲みを描く。"""
+    x0, x1, height = 85.0, 553.0, 18.0
+    page_height = A4[1]
+    bottom = top + height * len(rows)
+    pdf.setFillGray(0.975)
+    pdf.rect(x0, page_height - bottom, x1 - x0, bottom - top, fill=1, stroke=0)
+    for i in range(len(rows)):
+        pdf.rect(x0 + 5, page_height - (top + (i + 1) * height), x1 - x0 - 10, height, fill=1, stroke=0)
+    pdf.setFillGray(0.8)
+    pdf.rect(x0, page_height - top, x1 - x0, 0.4, fill=1, stroke=0)
+    pdf.rect(x0, page_height - bottom - 0.4, x1 - x0, 0.4, fill=1, stroke=0)
+    pdf.rect(x0 - 0.4, page_height - bottom, 0.4, bottom - top, fill=1, stroke=0)
+    pdf.rect(x1, page_height - bottom, 0.4, bottom - top, fill=1, stroke=0)
+    pdf.setFillGray(0)
+    pdf.setFont("HeiseiKakuGo-W5", 10)
+    for i, row in enumerate(rows):
+        for x, text in row:
+            pdf.drawString(x, page_height - (top + i * height + 13), text)
+
+
+@pytest.fixture(scope="module")
+def boxes_page(tmp_path_factory):
+    path = tmp_path_factory.mktemp("pdf") / "boxes.pdf"
+    pdf = canvas.Canvas(str(path), pagesize=A4)
+    _draw_box(pdf, 100, [[(92, "名前:"), (200, "山田")], [(92, "学籍番号:"), (200, "12345")]])
+    _draw_box(pdf, 200, [[(92, "int main(void) {")], [(92, '    printf("hello world");')], [(92, "}")]])
+    _draw_box(pdf, 300, [[(92, "これは囲みの中の普通の文章で、表ではありません。")], [(92, "二行目も普通の文章が続いています。")]])
+    _draw_box(pdf, 400, [[(92, "一行だけの注意書きです。")]])
+    pdf.save()
+    return extract(str(path))[0]
+
+
+def test_box_with_columns_becomes_table(boxes_page):
+    table, = boxes_page.table_blocks
+    assert table.cells == [["名前:", "山田"], ["学籍番号:", "12345"]]
+    assert table.col_rules == [True, False, True]  # 背景の端は列の境目にも罫線にもしない
+    assert table.row_rules == [True, False, True]
+
+
+def test_box_without_columns_stays_text(boxes_page):
+    assert not boxes_page.figure_blocks  # 背景と枠線が図になると、中の文字が消える
+    kinds = [block.kind for block in classify_page(boxes_page)]
+    assert kinds.count("table") == 1 and "figure" not in kinds
+    texts = {block.text for block in classify_page(boxes_page)}
+    assert "int main(void) {" in texts and "一行だけの注意書きです。" in texts
+
+
+def test_page_background_is_not_a_table(tmp_path):
+    path = tmp_path / "background.pdf"
+    pdf = canvas.Canvas(str(path), pagesize=A4)
+    pdf.setFillGray(0.97)
+    pdf.rect(0, 0, A4[0], A4[1], fill=1, stroke=0)
+    pdf.setFillGray(0)
+    pdf.setFont("HeiseiKakuGo-W5", 10)
+    for i in range(5):
+        pdf.drawString(60, 700 - i * 15, f"左の段の{i}行目")
+        pdf.drawString(330, 700 - i * 15, f"右の段の{i}行目")
+    pdf.save()
+    assert extract(str(path))[0].table_blocks == []
+
+
+def _ruled_table(rows: list[list], line_rows: list[int], col_widths: list[float] | None = None) -> Table:
+    """外枠と縦線があり、line_rows の行の下にだけ横線がある表。"""
+    style = [("FONTNAME", (0, 0), (-1, -1), "HeiseiMin-W3"), ("BOX", (0, 0), (-1, -1), 0.5, colors.black)]
+    style += [("LINEAFTER", (0, 0), (-2, -1), 0.5, colors.black)]
+    style += [("LINEBELOW", (0, r), (-1, r), 0.5, colors.black) for r in line_rows]
+    return Table(rows, colWidths=col_widths, style=TableStyle(style))
+
+
+def _tables_of(path, *tables: Table) -> list:
+    story = []
+    for table in tables:
+        story += [table, Spacer(1, 15 * mm)]
+    SimpleDocTemplate(str(path), pagesize=A4).build(story)
+    return sorted(extract(str(path))[0].table_blocks, key=lambda t: t.bbox[1])
+
+
+def test_rows_without_rules_are_split(tmp_path):
+    header_only, no_inner = _tables_of(
+        tmp_path / "rows.pdf",
+        _ruled_table([["手法", "精度"], ["ルール", "0.81"], ["AI", "0.92"], ["混合", "0.95"]], [0]),
+        _ruled_table([["名前", "山田"], ["番号", "12345"], ["所属", "情報工学"]], []),
+    )
+    assert header_only.cells == [["手法", "精度"], ["ルール", "0.81"], ["AI", "0.92"], ["混合", "0.95"]]
+    assert header_only.row_rules == [True, True, False, False, True]  # 分けた行の間に罫線は足さない
+    assert no_inner.cells == [["名前", "山田"], ["番号", "12345"], ["所属", "情報工学"]]
+
+
+def test_wrapped_cells_are_not_split(tmp_path):
+    text = "赤くて丸い果物。長い説明を入れて、セルの中で折り返すかどうかを確かめる。"
+    one_column, two_columns = _tables_of(
+        tmp_path / "wrap.pdf",
+        _ruled_table([["名前", "説明"], ["りんご", Paragraph(text, BODY)], ["みかん", "短い"]], [0, 1], [25 * mm, WRAP_WIDTH]),
+        _ruled_table([["説明", "備考"], [Paragraph(text, BODY), Paragraph(text, BODY)]], [0], [WRAP_WIDTH, WRAP_WIDTH]),
+    )
+    assert [len(row) for row in one_column.cells] == [2, 2, 2] and len(one_column.cells) == 3
+    assert "\n" in one_column.cells[1][1]
+    assert len(two_columns.cells) == 2  # 両方の列が同じ高さで折り返していても、行に分けない
