@@ -76,6 +76,11 @@ FILLED_RULE_MAX_THICKNESS = 1.5
 BOX_COLUMN_GAP_RATIO = 0.8
 # ページのこの割合以上を覆う背景は、ページ全体の背景なので表の候補にしない
 BOX_MAX_PAGE_RATIO = 0.8
+# 列をまたいで同じ高さの行とみなす、文字の上端の差の上限（文字の高さに対する比率）
+ROW_ALIGN_RATIO = 0.5
+# セル内の折り返しとみなす行の条件。セルの右端までの余りがこの値（文字の高さに対する比率）以下で、この文字数以上あること
+WRAP_RIGHT_MARGIN_RATIO = 2.0
+WRAP_MIN_CHARS = 8
 
 
 @dataclass
@@ -98,6 +103,14 @@ class TableBlock:
     col_rules: list[bool] | None = None  # 縦線の有無。列の境目（左端・列の間・右端）ごとで、列数+1個
     row_rules: list[bool] | None = None  # 横線の有無。行の境目（上端・行の間・下端）ごとで、行数+1個
     col_widths: list[float | None] | None = None  # 折り返している列の幅(pt)。ほかの列は None
+
+
+@dataclass
+class SplitRow:
+    """横線の無い行を分けた結果。pdfplumber の Row と同じ項目を持つ。"""
+
+    bbox: Bbox
+    cells: list[Bbox]
 
 
 @dataclass
@@ -418,11 +431,101 @@ def _extract_tables_in_boxes(
     return result
 
 
+def _chars_in(chars: list[dict], bbox: Bbox) -> list[dict]:
+    """中心が bbox の中にある文字。"""
+    x0, top, x1, bottom = bbox
+    return [ch for ch in chars if x0 <= (ch["x0"] + ch["x1"]) / 2 < x1 and top <= (ch["top"] + ch["bottom"]) / 2 < bottom]
+
+
+def _text_lines(chars: list[dict]) -> list[list[dict]]:
+    """セルの文字を、上から順に文字の行へ分ける。"""
+    lines: list[list[dict]] = []
+    bottom = 0.0
+    for ch in sorted((ch for ch in chars if ch["text"].strip()), key=lambda ch: ch["top"]):
+        if not lines or (ch["top"] + ch["bottom"]) / 2 > bottom:
+            lines.append([])
+            bottom = ch["bottom"]
+        lines[-1].append(ch)
+        bottom = max(bottom, ch["bottom"])
+    return lines
+
+
+def _is_wrapped_line(line: list[dict], cell: Bbox) -> bool:
+    """セルの右端まで埋まっていて、次の行へ折り返したとみなせる文字の行か。"""
+    height = max(ch["bottom"] - ch["top"] for ch in line)
+    return len(line) >= WRAP_MIN_CHARS and cell[2] - max(ch["x1"] for ch in line) <= height * WRAP_RIGHT_MARGIN_RATIO
+
+
+def _row_boundaries(cell_lines: list[list[list[dict]]], cells: list[Bbox]) -> list[float]:
+    """
+    横線の無い行の境目（y座標）を返す。2列以上で同じ高さに文字の行が始まる位置を、新しい行の始まりとする。
+    1列だけで増える文字の行はセル内の折り返しなので分けない。全部の列が前の行から折り返している位置も分けない。
+    """
+    # (上端, 列, 折り返しの続きか, 前の行の下端)
+    starts = []
+    for c, lines in enumerate(cell_lines):
+        # 最後の行まで右端まで埋まっているセルは、同じ長さの値が縦に並んでいるだけで、折り返しではない
+        can_wrap = bool(lines) and not _is_wrapped_line(lines[-1], cells[c])
+        for i, line in enumerate(lines):
+            prev = lines[i - 1] if i > 0 else None
+            continued = prev is not None and can_wrap and _is_wrapped_line(prev, cells[c])
+            starts.append((min(ch["top"] for ch in line), c, continued, max(ch["bottom"] for ch in prev) if prev else None))
+    if not starts:
+        return []
+    starts.sort(key=lambda s: s[0])
+    heights = sorted(ch["bottom"] - ch["top"] for lines in cell_lines for line in lines for ch in line)
+    tolerance = heights[len(heights) // 2] * ROW_ALIGN_RATIO
+
+    groups = [[starts[0]]]
+    for start in starts[1:]:
+        if start[0] - groups[-1][0][0] <= tolerance:
+            groups[-1].append(start)
+        else:
+            groups.append([start])
+
+    # 行の一番上で列がそろっていなければ、下寄せや中央寄せのセルなので、高さがそろっても別の行とは言えない
+    if len({s[1] for s in groups[0]}) < 2:
+        return []
+
+    boundaries = []
+    for group in groups[1:]:
+        if len({s[1] for s in group}) < 2 or all(s[2] for s in group):
+            continue
+        top = group[0][0]
+        above = [s[3] for s in group if s[3] is not None]
+        boundaries.append((max(above) + top) / 2 if above else top)
+    return boundaries
+
+
+def _split_row(page: pdfplumber.page.Page, row, texts: list[str]) -> list[tuple]:
+    """横線が無いために1行にまとまった行を、文字の並びから複数の行に分ける。分けられなければそのまま返す。"""
+    if any(cell is None for cell in row.cells):
+        return [(row, texts)]  # 結合したセルのある行
+    row_chars = _chars_in(page.chars, row.bbox)
+    cell_lines = [_text_lines(_chars_in(row_chars, cell)) for cell in row.cells]
+    boundaries = _row_boundaries(cell_lines, row.cells)
+    if not boundaries:
+        return [(row, texts)]
+
+    x0, top, x1, bottom = row.bbox
+    edges = [top, *boundaries, bottom]
+    result = []
+    for upper, lower in zip(edges, edges[1:]):
+        cells = [(cell[0], upper, cell[2], lower) for cell in row.cells]
+        cell_texts = [pdfplumber.utils.extract_text(_chars_in(row_chars, cell)) for cell in cells]
+        result.append((SplitRow(bbox=(x0, upper, x1, lower), cells=cells), cell_texts))
+    return result
+
+
 def _extract_table_blocks(page: pdfplumber.page.Page, page_no: int) -> list[TableBlock]:
     result = []
     visible = page.filter(lambda obj: not _is_background_rect(obj))
     for table in visible.find_tables():
-        rows = [(row, [cell or "" for cell in texts]) for row, texts in zip(table.rows, table.extract())]
+        rows = [
+            split
+            for row, texts in zip(table.rows, table.extract())
+            for split in _split_row(visible, row, [cell or "" for cell in texts])
+        ]
         result.append(_table_block(visible, page_no, table.bbox, rows))
     return result + _extract_tables_in_boxes(page, visible, page_no, [t.bbox for t in result])
 
