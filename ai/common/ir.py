@@ -18,9 +18,9 @@ from dataclasses import asdict, dataclass, field
 from typing import Any, Literal, get_args
 
 # IRの形を変えたらインクリメントする
-IR_VERSION = 3
-# 読み込める古い版。版2・版3は省略できる項目を足しただけなので、古い版もそのまま読める
-COMPATIBLE_VERSIONS = (1, 2)
+IR_VERSION = 4
+# 読み込める古い版。版2〜版4は省略できる項目を足しただけなので、古い版もそのまま読める
+COMPATIBLE_VERSIONS = (1, 2, 3)
 
 # (x0, y0, x1, y1)。左上原点で、ページの幅・高さで割った0〜1の値
 Bbox = tuple[float, float, float, float]
@@ -54,6 +54,9 @@ class Run:
     bold: bool | None = None  # 付いていれば True。付いていない・判定できないときは None
     italic: bool | None = None
     underline: bool | None = None
+    # 版4: 文中の数式。text はPDFの文字のまま（並びが崩れていてよい）、tex はそのLaTeX（$ は含めない）。
+    # 数式と分かっても読めなかったときは None のまま（text だけ）にする
+    tex: str | None = None
 
 
 @dataclass
@@ -172,6 +175,8 @@ def _validate_runs(where: str, el: Element) -> list[str]:
         for mark in ("bold", "italic", "underline"):
             if getattr(run, mark) not in (None, True, False):
                 problems.append(f"{where}: runs[{k}] の {mark} は true / false にする")
+        if run.tex is not None and not (isinstance(run.tex, str) and run.tex.strip()):
+            problems.append(f"{where}: runs[{k}] の tex は空でない文字列にする（読めなかったら書かない）")
     if "".join(run.text for run in el.runs) != el.text:
         problems.append(f"{where}: runs の text をつなげたものが要素の text と違う")
     return problems

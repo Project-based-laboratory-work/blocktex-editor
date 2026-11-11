@@ -28,8 +28,10 @@ TABLE_CAPTION_PATTERN = re.compile(r"(表|Table)\s*\d")
 
 # 文字の装飾（ir.py の Run と model.ts の TextMarks で同じ名前）
 MARKS = ("bold", "italic", "underline")
-# 1文字と、その文字に付いている装飾（MARKS のうち付いているもの）
+# 1文字と、その文字に付いている装飾（MARKS のうち付いているもの）。
+# 文中の数式（Run.tex）は、数式1つ分の文字をまとめて1つの Char にし、装飾の代わりに MATH_TAG + LaTeX を持たせる
 Char = tuple[str, tuple[str, ...]]
+MATH_TAG = "math:"
 
 # \maketitle のタイトル・著者・日付。まとめて文書の先頭のタイトルブロック1つにする
 TITLE_LABELS = ("title", "author", "date")
@@ -59,7 +61,14 @@ def _chars(el: Element) -> list[Char]:
     """要素の文字を、1文字ずつ装飾と組にする。runs が無い要素は装飾なし。"""
     if el.runs is None:
         return [(c, ()) for c in el.text or ""]
-    return [(c, tuple(mark for mark in MARKS if getattr(run, mark))) for run in el.runs for c in run.text]
+    chars: list[Char] = []
+    for run in el.runs:
+        if run.tex is not None:
+            # 文中の数式は1つの Char にまとめる（行をつなぐ処理で数式が分かれないように。改行は空白にする）
+            chars.append((run.text.replace("\n", " "), (MATH_TAG + run.tex,)))
+        else:
+            chars += [(c, tuple(mark for mark in MARKS if getattr(run, mark))) for c in run.text]
+    return chars
 
 
 def _lines(chars: list[Char]) -> list[list[Char]]:
@@ -115,10 +124,14 @@ def _rich(chars: list[Char]) -> list[dict[str, Any]]:
     装飾が同じで隣り合う文字を1つの text にする。付いている装飾だけキーを持たせる
     （model.ts の TextMarks・normalizeRich と同じ形）。
     """
-    return [
-        {"type": "text", "text": _plain(list(group)), **{mark: True for mark in marks}}
-        for marks, group in groupby(chars, key=lambda ch: ch[1])
-    ]
+    segments: list[dict[str, Any]] = []
+    for marks, group in groupby(chars, key=lambda ch: ch[1]):
+        if marks and marks[0].startswith(MATH_TAG):
+            # 文中の数式は1つずつ（同じ数式が続いても別の数式）。model.ts の InlineSegment の math
+            segments += [{"type": "math", "tex": marks[0][len(MATH_TAG):]} for _ in group]
+        else:
+            segments.append({"type": "text", "text": _plain(list(group)), **{mark: True for mark in marks}})
+    return segments
 
 
 def _heading_levels(elements: list[Element]) -> dict[int, int]:
