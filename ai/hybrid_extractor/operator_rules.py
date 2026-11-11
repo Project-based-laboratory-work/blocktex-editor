@@ -10,8 +10,13 @@
 専門家が全員ルール版のときは、rules.py（hybrid_rules）と同じ答えになる。
 専門家をAIに入れ替えるときは、LABEL_EXPERTS（ラベル）や continues（区切り）を差し替える。
 
+数式は、最後に「数式を読む係」（math_reader.py）で LaTeX にする:
+    - label="math" のブロック → 要素の tex
+    - 段落・箇条書き・キャプションの中の数式 → runs の tex（IR版4）
+
 使い方（ai/ で実行）:
     python -m hybrid_extractor.operator_rules hybrid_extractor/sample_data/sample.pdf out.labeled.json --trace
+    python -m hybrid_extractor.operator_rules in.pdf out.json --math rule+ocr --math-checkpoint math_ocr/checkpoints/math_ocr_v2/best.pt
 """
 
 import argparse
@@ -20,7 +25,10 @@ from dataclasses import dataclass
 
 from common.ir import IRDocument, save_ir, validate
 from hybrid_extractor.experts import RULE_EXPERTS, DocInfo, Expert, text_of
-from hybrid_extractor.extract import Block, Continues, PageBlocks, extract_blocks, rule_continues
+import pymupdf
+
+from hybrid_extractor.extract import Block, Continues, PageBlocks, extract_blocks, rule_continues, runs_with_math
+from hybrid_extractor.math_reader import MathReader, inline_math_spans, make_reader
 from hybrid_extractor.rules import (
     body_font,
     body_size,
@@ -32,6 +40,7 @@ from hybrid_extractor.rules import (
 )
 
 NAME = "hybrid_operator"
+INLINE_MATH_LABELS = ("paragraph", "list", "caption")  # 文中の数式を探すブロック
 THRESHOLD = 0.5  # 専門家の自信がこれ以上なら、その答えを採る
 
 # 聞く順番。自信が同じときは前の専門家を優先する
@@ -97,10 +106,32 @@ def decide_pages(pages: list[PageBlocks]) -> list[list[tuple[Block, Decision]]]:
     return result
 
 
-def predict(pdf_path: str, continues: Continues = rule_continues) -> IRDocument:
-    """PDF → ラベル付きIR（オペレータ＋専門家）。評価の登録簿（evaluation/models.json）から呼ぶ"""
+def read_math(pdf_path: str, decided: list[list[tuple[Block, Decision]]], reader: MathReader) -> None:
+    """数式を読む係で、数式のブロックの tex と、文中の数式の runs を埋める（ブロックを書き換える）"""
+    with pymupdf.open(pdf_path) as doc:
+        for items in decided:
+            for block, decision in items:
+                if block.kind != "text" or not block.chars:
+                    continue
+                page = doc[block.page - 1]
+                if decision.label == "math":
+                    block.tex = reader.read(page, block.chars)
+                elif decision.label in INLINE_MATH_LABELS:
+                    spans = inline_math_spans(block.chars)
+                    if spans:
+                        read = {span: reader.read(page, block.chars[span[0]:span[1]]) for span in spans}
+                        block.runs = runs_with_math(block.chars, block.decorations, read)
+
+
+def predict(pdf_path: str, continues: Continues = rule_continues, math: str = "rule",
+            math_checkpoint: str | None = None) -> IRDocument:
+    """PDF → ラベル付きIR（オペレータ＋専門家）。評価の登録簿（evaluation/models.json）から呼ぶ。
+    math は数式を読む係（"none" / "pdf_text" / "rule" / "ocr" / "rule+ocr"。OCR を使う係は math_checkpoint が要る）"""
     pages = extract_blocks(pdf_path, continues)
     decided = decide_pages(pages)
+    reader = make_reader(math, math_checkpoint)
+    if reader is not None:
+        read_math(pdf_path, decided, reader)
     labeled = [[(b, d.label) for b, d in items] for items in decided]
     return to_labeled_ir(pages, labeled, os.path.basename(pdf_path), NAME)
 
@@ -110,13 +141,15 @@ def main() -> None:
     parser.add_argument("pdf", help="入力PDF")
     parser.add_argument("out", help="出力するラベル付きIRのJSON")
     parser.add_argument("--trace", action="store_true", help="ブロックごとに、どの専門家がどう答えたかを表示する")
+    parser.add_argument("--math", default="rule", help="数式を読む係（none / pdf_text / rule / ocr / rule+ocr）")
+    parser.add_argument("--math-checkpoint", help="math_ocr の重み（best.pt）。ocr・rule+ocr のときに要る")
     args = parser.parse_args()
     if args.trace:
         for items in decide_pages(extract_blocks(args.pdf)):
             for b, d in items:
                 ops = " ".join(f"{name}={c:.2f}" for name, c in d.opinions.items())
                 print(f"p{b.page} {d.label:9} by={d.by:13} {ops:45} {text_of(b)[:30]!r}")
-    doc = predict(args.pdf)
+    doc = predict(args.pdf, math=args.math, math_checkpoint=args.math_checkpoint)
     problems = validate(doc)
     if problems:
         raise SystemExit("IRの形式に問題があります:\n" + "\n".join(problems))

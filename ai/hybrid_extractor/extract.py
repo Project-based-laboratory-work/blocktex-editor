@@ -562,6 +562,9 @@ class Block:
     n_rows: int = 0             # 行数
     first_indent: float = 0.0   # 1行目の左端の、2行目以降の左端からのずれ(pt)
     list_head: bool = False     # 箇条書きの頭（• や 1.）で始まる
+    tex: str | None = None      # 数式として読んだ LaTeX（label="math" のとき。math_reader で入れる）
+    chars: list[dict] = field(default_factory=list, repr=False)                  # 1文字ずつ（text と同じ並び）
+    decorations: list[tuple[str, ...]] = field(default_factory=list, repr=False)  # 1文字ずつの装飾
 
 
 def row_kind(row: dict) -> str:
@@ -722,6 +725,32 @@ def block_chars(group: list[dict], code: bool) -> list[dict]:
     return chars
 
 
+def runs_with_math(chars: list[dict], decorations: list[tuple[str, ...]],
+                   spans: dict[tuple[int, int], str | None]) -> list[Run]:
+    """文中の数式（spans: 文字の範囲 [start, end) → LaTeX）を1つの Run（tex つき）にした runs。
+    読めなかった数式（LaTeX が None）も、数式の範囲として1つの Run にする（tex は書かない）"""
+    runs: list[Run] = []
+    k = 0
+    ends = dict(spans)
+    starts = {s: (s, e) for s, e in spans}
+    while k < len(chars):
+        if k in starts:
+            s, e = starts[k]
+            runs.append(Run("".join(ch["c"] for ch in chars[s:e]), tex=ends[(s, e)]))
+            k = e
+            continue
+        nxt = min([s for s in starts if s > k], default=len(chars))
+        part = to_runs(chars[k:nxt], decorations[k:nxt])
+        if part is None:
+            # 装飾が無い、または全部同じ装飾（to_runs は None を返す）→ 1つの Run にして、その装飾を付ける
+            decos = {d for ch, d in zip(chars[k:nxt], decorations[k:nxt]) if ch["bbox"] is not None and not ch["c"].isspace()}
+            marks = next(iter(decos)) if len(decos) == 1 else ()
+            part = [Run("".join(ch["c"] for ch in chars[k:nxt]), **{m: True for m in marks})]
+        runs += part
+        k = nxt
+    return runs
+
+
 def to_runs(chars: list[dict], decorations: list[tuple[str, ...]]) -> list[Run] | None:
     """装飾が同じで隣り合う文字を1つの Run にする。装飾が1つも無い・全部同じ装飾なら None"""
     shown = {d for ch, d in zip(chars, decorations) if ch["bbox"] is not None and not ch["c"].isspace()}
@@ -770,6 +799,8 @@ def make_block(page_no: int, group: list[dict], gkind: str, gothic_is_bold: bool
         n_rows=len(group),
         first_indent=round(group[0]["bbox"][0] - rest_left, 2),
         list_head=bool(LIST_HEAD.match(text.lstrip())),
+        chars=chars,
+        decorations=decorations,
     )
 
 
@@ -884,6 +915,7 @@ def to_element(block: Block, width: float, height: float, label: str | None = No
         col_widths=t.col_widths if t else None,
         label=label,
         level=level,
+        tex=block.tex,
     )
 
 

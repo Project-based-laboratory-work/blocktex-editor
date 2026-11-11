@@ -61,7 +61,8 @@ cd hybrid_extractor/sample_data && uplatex sample.tex && uplatex sample.tex && d
 | [extract.py](extract.py) | 抽出器。行 → 横につなぐ → 表・図 → 縦につないでブロックにする |
 | [rules.py](rules.py) | ルール分類器（ベースライン）。オペレータも、確実な決まり（キャプション・タイトル部分・ページ番号）をここから使う |
 | [experts.py](experts.py) | ラベルの専門家（ルール版）。AIの専門家も同じ形（`Expert`）で作る |
-| [operator_rules.py](operator_rules.py) | ルールのオペレータ。聞く専門家を選び、答えをまとめる |
+| [operator_rules.py](operator_rules.py) | ルールのオペレータ。聞く専門家を選び、答えをまとめる。最後に数式を読む係で数式を LaTeX にする |
+| [math_reader.py](math_reader.py) | 数式を読む係（PDFの文字 / ルールで組み立て / math_ocr / ルール＋math_ocr）と、文中の数式の範囲を探す |
 | [doc_gen.py](doc_gen.py) | 学習用のランダムな文書（TeX）を作る。評価用とは別の作り方 |
 | [build_dataset.py](build_dataset.py) | 学習データ（ブロック＋正解のラベル＋ルールの答え）を作る |
 | [sample_data/sample.tex](sample_data/sample.tex) | 開発用の固定サンプル（IR版3の項目がひと通り入る） |
@@ -79,6 +80,24 @@ cd hybrid_extractor/sample_data && uplatex sample.tex && uplatex sample.tex && d
 | 装飾 | 太字・斜体・下線 → `runs` | 書体名（本文が明朝ならゴシックは太字）、ベースラインのすぐ下の横線 |
 | コードの字下げ | 行の左端のずれ ÷ 1文字の幅 → 空白の数 | 等幅フォント |
 | 読み順 | 2段組は、段をまたぐもので帯に区切り、左の段 → 右の段 | |
+
+## 数式を読む係（math_reader.py）
+
+PyMuPDF の文字のままだと、数式は `∑ n / f(x) = aixi / i=1` のように崩れる。数式の範囲の文字を「数式を読む係」に渡して LaTeX にする。
+
+| 読む係 | やり方 | 重み（best.pt） |
+|---|---|---|
+| `pdf_text` | PDFの文字を左から並べるだけ（基準） | 不要 |
+| `rule` | 文字の位置と大きさから組み立てる。小さくて上（下）にずれた文字 → `^{}`（`_{}`）、`∑` の真上・真下 → 上限・下限、分数の線の上下 → `\frac{}{}`、`sin` などの関数名、右端の式番号は除く。根号は読めない（None） | 不要 |
+| `ocr` | 行ごとに 200dpi で切り抜いて math_ocr で読む | 要る |
+| `rule+ocr` | `rule` で読めなければ `ocr` | 要る |
+
+- 別行立ての数式（label="math"）→ 要素の `tex`。文中の数式 → `runs` の `tex`（IR版4）。エディタ用JSONでは文中の数式になる
+- 文中の数式の範囲: 数式のフォント（CMMI など）の文字を種にして、間が `=` `+` `(` や数字・空白だけならつなぐ。後ろの小さい文字（添字）も入れる
+- オペレータでは `--math rule`（既定）で選ぶ。評価の登録簿では `hybrid_operator` の `params.math`
+- 重みは math_ocr の担当者が更新することがあるので、コードに書かず引数（`--math-checkpoint`）で渡す
+
+評価用データセットの別行立ての数式（`rule`）: math_ter（トークン誤り率）synth_all **0.020**、synth_math **0.034**。
 
 ## 結果
 
