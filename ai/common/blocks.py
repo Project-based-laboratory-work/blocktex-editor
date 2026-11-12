@@ -25,6 +25,12 @@ MAX_HEADING_LEVEL = 3
 # 列幅（本文の幅に対する比率）の下限。web/src/tex.ts の MIN_COLUMN_WIDTH と同じ
 MIN_COLUMN_WIDTH = 0.05
 TABLE_CAPTION_PATTERN = re.compile(r"(表|Table)\s*\d")
+# 見出し・キャプションの先頭の番号。エディタのTeXが \section・\caption で番号を振り直すので、元の番号は外す。
+# 見出しは「1 」「1.1 」「1. 」「1.はじめに」を外し、「2026 年」「12 月」「1章」「1.1背景」のように番号か分からないものは残す
+HEADING_NUMBER_PATTERN = re.compile(
+    r"^\d{1,2}(?:\.\d{1,2})*\.?\s+(?![年月日時分秒章節項回位点人個件円倍])|^\d{1,2}(?:\.\d{1,2})*\.(?=[^\d\s])"
+)
+CAPTION_NUMBER_PATTERN = re.compile(r"^(?:図|表|Figure|Fig\.|Table)\s*\d+(?:[.\-]\d+)*(?:\s*[:：.．]\s*|\s+)")
 
 # 文字の装飾（ir.py の Run と model.ts の TextMarks で同じ名前）
 MARKS = ("bold", "italic", "underline")
@@ -119,6 +125,11 @@ def _join_lines(text: str) -> str:
     return _plain(_join_char_lines(_lines([(c, ()) for c in text])))
 
 
+def _strip_number(text: str, pattern: re.Pattern) -> str:
+    """先頭の番号を外す。番号しか無いときは元のまま。"""
+    return pattern.sub("", text, count=1) or text
+
+
 def _rich(chars: list[Char]) -> list[dict[str, Any]]:
     """
     装飾が同じで隣り合う文字を1つの text にする。付いている装飾だけキーを持たせる
@@ -165,7 +176,7 @@ def _attach_captions(items: list[tuple[int, Element, str]]) -> tuple[dict[int, s
         order = [i + 1, i - 1] if TABLE_CAPTION_PATTERN.match(text) else [i - 1, i + 1]
         for j in order:
             if 0 <= j < len(items) and items[j][0] == page and items[j][2] in ("table", "figure") and j not in captions:
-                captions[j] = text
+                captions[j] = _strip_number(text, CAPTION_NUMBER_PATTERN)
                 used.add(i)
                 break
     return captions, used
@@ -300,7 +311,8 @@ def ir_to_document(ir: IRDocument, title: str | None = None) -> dict[str, Any]:
             continue
 
         if label == "heading":
-            blocks.append({"id": _new_id(), "type": "heading", "level": levels[id(el)], "text": _join_lines(el.text or "")})
+            heading = _strip_number(_join_lines(el.text or ""), HEADING_NUMBER_PATTERN)
+            blocks.append({"id": _new_id(), "type": "heading", "level": levels[id(el)], "text": heading})
         elif label == "math":
             # tex が無いときは仮にPDFの文字をそのまま入れる（数式OCRで tex を埋めるまで）
             blocks.append({"id": _new_id(), "type": "math", "displayMode": True, "tex": el.tex or (el.text or "").strip()})

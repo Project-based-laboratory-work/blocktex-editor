@@ -1,6 +1,8 @@
 import re
 from pathlib import Path
 
+import pytest
+
 from common.blocks import EDITOR_SCHEMA_VERSION, ir_to_document
 from common.ir import Element, IRDocument, Page, Run
 
@@ -41,6 +43,34 @@ def test_heading_levels_follow_font_size():
     assert blocks[0] == {"id": blocks[0]["id"], "type": "heading", "level": 1, "text": "1章"}
 
 
+@pytest.mark.parametrize(
+    ("body", "expected"),
+    [
+        ("1 はじめに", "はじめに"),
+        ("1.1 背景", "背景"),
+        ("2.3.1 実験", "実験"),
+        ("1. Introduction", "Introduction"),
+        ("1.はじめに", "はじめに"),
+        ("1章 総論", "1章 総論"),  # 番号か分からないものは残す
+        ("2026 年11 月", "2026 年11 月"),
+        ("12 月の予定", "12 月の予定"),
+        ("1.1背景", "1.1背景"),
+        ("3", "3"),  # 番号しか無いときは元のまま
+    ],
+)
+def test_heading_number_is_removed(body, expected):
+    assert convert(text("heading", body))[0]["text"] == expected
+
+
+@pytest.mark.parametrize(
+    ("body", "expected"),
+    [("図1: 構成", "構成"), ("表2 結果", "結果"), ("図 3．概要", "概要"), ("Table 1. Scores", "Scores"), ("Fig. 2: Flow", "Flow"), ("図1", "図1")],
+)
+def test_caption_number_is_removed(body, expected):
+    figure = Element(kind="figure", bbox=(0.2, 0.3, 0.6, 0.5), label="figure")
+    assert convert(figure, text("caption", body, 0.52))[0]["caption"] == expected
+
+
 def test_paragraph_joins_wrapped_lines():
     blocks = convert(text("paragraph", "日本語の文が\n折り返されている。"), text("paragraph", "English words\nare wrapped."))
     assert blocks[0]["content"] == [{"type": "text", "text": "日本語の文が折り返されている。"}]
@@ -71,8 +101,8 @@ def test_caption_is_attached_to_figure_and_table():
     table = Element(kind="table", bbox=(0.1, 0.7, 0.9, 0.8), label="table", cells=[["a", "b"], ["c"]])
     blocks = convert(figure, text("caption", "図1: 図", 0.52), text("caption", "表1: 表", 0.65), table)
     assert [b["type"] for b in blocks] == ["image", "table"]
-    assert blocks[0]["caption"] == "図1: 図"
-    assert blocks[1]["caption"] == "表1: 表"
+    assert blocks[0]["caption"] == "図"  # 番号は \\caption が振り直すので外す
+    assert blocks[1]["caption"] == "表"
     assert blocks[1]["columns"] == [{"align": "l"}, {"align": "l"}]
     assert [row["cells"] for row in blocks[1]["rows"]] == [["a", "b"], ["c", ""]]  # 列数を揃える
 
