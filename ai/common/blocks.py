@@ -17,6 +17,7 @@ import uuid
 from itertools import groupby
 from typing import Any
 
+from common.control_chars import fix_text
 from common.ir import Element, IRDocument, load_ir
 
 EDITOR_SCHEMA_VERSION = 4
@@ -25,11 +26,19 @@ MAX_HEADING_LEVEL = 3
 # 列幅（本文の幅に対する比率）の下限。web/src/tex.ts の MIN_COLUMN_WIDTH と同じ
 MIN_COLUMN_WIDTH = 0.05
 TABLE_CAPTION_PATTERN = re.compile(r"(表|Table)\s*\d")
+# 見出し・キャプションの先頭の番号。エディタのTeXが \section・\caption で番号を振り直すので、元の番号は外す。
+# 見出しは「1 」「1.1 」「1. 」「1.はじめに」を外し、「2026 年」「12 月」「1章」「1.1背景」のように番号か分からないものは残す
+HEADING_NUMBER_PATTERN = re.compile(
+    r"^\d{1,2}(?:\.\d{1,2})*\.?\s+(?![年月日時分秒章節項回位点人個件円倍])|^\d{1,2}(?:\.\d{1,2})*\.(?=[^\d\s])"
+)
+CAPTION_NUMBER_PATTERN = re.compile(r"^(?:図|表|Figure|Fig\.|Table)\s*\d+(?:[.\-]\d+)*(?:\s*[:：.．]\s*|\s+)")
 
 # 文字の装飾（ir.py の Run と model.ts の TextMarks で同じ名前）
 MARKS = ("bold", "italic", "underline")
-# 1文字と、その文字に付いている装飾（MARKS のうち付いているもの）
+# 1文字と、その文字に付いている装飾（MARKS のうち付いているもの）。
+# 文中の数式（Run.tex）は、数式1つ分の文字をまとめて1つの Char にし、装飾の代わりに MATH_TAG + LaTeX を持たせる
 Char = tuple[str, tuple[str, ...]]
+MATH_TAG = "math:"
 
 # \maketitle のタイトル・著者・日付。まとめて文書の先頭のタイトルブロック1つにする
 TITLE_LABELS = ("title", "author", "date")
@@ -59,7 +68,14 @@ def _chars(el: Element) -> list[Char]:
     """要素の文字を、1文字ずつ装飾と組にする。runs が無い要素は装飾なし。"""
     if el.runs is None:
         return [(c, ()) for c in el.text or ""]
-    return [(c, tuple(mark for mark in MARKS if getattr(run, mark))) for run in el.runs for c in run.text]
+    chars: list[Char] = []
+    for run in el.runs:
+        if run.tex is not None:
+            # 文中の数式は1つの Char にまとめる（行をつなぐ処理で数式が分かれないように。改行は空白にする）
+            chars.append((run.text.replace("\n", " "), (MATH_TAG + run.tex,)))
+        else:
+            chars += [(c, tuple(mark for mark in MARKS if getattr(run, mark))) for c in run.text]
+    return chars
 
 
 def _lines(chars: list[Char]) -> list[list[Char]]:
@@ -110,15 +126,24 @@ def _join_lines(text: str) -> str:
     return _plain(_join_char_lines(_lines([(c, ()) for c in text])))
 
 
+def _strip_number(text: str, pattern: re.Pattern) -> str:
+    """先頭の番号を外す。番号しか無いときは元のまま。"""
+    return pattern.sub("", text, count=1) or text
+
+
 def _rich(chars: list[Char]) -> list[dict[str, Any]]:
     """
     装飾が同じで隣り合う文字を1つの text にする。付いている装飾だけキーを持たせる
     （model.ts の TextMarks・normalizeRich と同じ形）。
     """
-    return [
-        {"type": "text", "text": _plain(list(group)), **{mark: True for mark in marks}}
-        for marks, group in groupby(chars, key=lambda ch: ch[1])
-    ]
+    segments: list[dict[str, Any]] = []
+    for marks, group in groupby(chars, key=lambda ch: ch[1]):
+        if marks and marks[0].startswith(MATH_TAG):
+            # 文中の数式は1つずつ（同じ数式が続いても別の数式）。model.ts の InlineSegment の math
+            segments += [{"type": "math", "tex": marks[0][len(MATH_TAG):]} for _ in group]
+        else:
+            segments.append({"type": "text", "text": _plain(list(group)), **{mark: True for mark in marks}})
+    return segments
 
 
 def _heading_levels(elements: list[Element]) -> dict[int, int]:
@@ -152,7 +177,7 @@ def _attach_captions(items: list[tuple[int, Element, str]]) -> tuple[dict[int, s
         order = [i + 1, i - 1] if TABLE_CAPTION_PATTERN.match(text) else [i - 1, i + 1]
         for j in order:
             if 0 <= j < len(items) and items[j][0] == page and items[j][2] in ("table", "figure") and j not in captions:
-                captions[j] = text
+                captions[j] = _strip_number(text, CAPTION_NUMBER_PATTERN)
                 used.add(i)
                 break
     return captions, used
@@ -229,7 +254,8 @@ def _table_block(el: Element, caption: str | None, text_area: tuple[float, float
 
 
 def _image_block(el: Element, caption: str | None, text_area: tuple[float, float]) -> dict[str, Any]:
-    """画像ファイルはIRに無いので src は空（エディタで選び直す）。幅は本文の幅に対する比率で再現する。"""
+    """画像ファイルはIRに無いので、ここでは src は空。読み込み（evaluation/extract.py）では、元のPDF・画像から図の範囲を
+    切り取った画像を付けて src に名前を入れる（common/figures.py）。幅は本文の幅に対する比率で再現する。"""
     left, right = text_area
     width_ratio = (el.bbox[2] - el.bbox[0]) / (right - left) if right > left else 1.0
     block: dict[str, Any] = {"id": _new_id(), "type": "image", "src": "", "widthRatio": round(min(1.0, max(0.05, width_ratio)), 3)}
@@ -287,7 +313,8 @@ def ir_to_document(ir: IRDocument, title: str | None = None) -> dict[str, Any]:
             continue
 
         if label == "heading":
-            blocks.append({"id": _new_id(), "type": "heading", "level": levels[id(el)], "text": _join_lines(el.text or "")})
+            heading = _strip_number(_join_lines(el.text or ""), HEADING_NUMBER_PATTERN)
+            blocks.append({"id": _new_id(), "type": "heading", "level": levels[id(el)], "text": heading})
         elif label == "math":
             # tex が無いときは仮にPDFの文字をそのまま入れる（数式OCRで tex を埋めるまで）
             blocks.append({"id": _new_id(), "type": "math", "displayMode": True, "tex": el.tex or (el.text or "").strip()})
@@ -307,7 +334,20 @@ def ir_to_document(ir: IRDocument, title: str | None = None) -> dict[str, Any]:
     title_block = _title_block(items)
     if title_block:
         blocks.insert(0, title_block)
-    return {"schemaVersion": EDITOR_SCHEMA_VERSION, "id": _new_id(), "title": title or ir.source, "blocks": blocks}
+    document = {"schemaVersion": EDITOR_SCHEMA_VERSION, "id": _new_id(), "title": title or ir.source, "blocks": blocks}
+    return _fix_controls(document)
+
+
+def _fix_controls(value: Any) -> Any:
+    """エディタ用JSONの全部の文字列から、制御文字を本来の文字に戻すか捨てる（common/control_chars.py）。
+    Type3 の書体の PDF では合字の ff などが制御文字で出てきて、そのままでは TeX のコンパイルが止まるため"""
+    if isinstance(value, str):
+        return fix_text(value)
+    if isinstance(value, list):
+        return [_fix_controls(v) for v in value]
+    if isinstance(value, dict):
+        return {k: _fix_controls(v) for k, v in value.items()}
+    return value
 
 
 def main() -> None:

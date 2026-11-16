@@ -38,7 +38,15 @@
                 <span class="home-card-title">PDF・画像を読み込む</span>
                 <span class="home-card-desc" id="file-name">ファイルを選択して編集を始める</span>
             </label>
-            <input type="file" id="file-upload" class="file-upload" accept=".pdf,image/*">
+            <input type="file" id="file-upload" class="file-upload" accept=".pdf,.png,.jpg,.jpeg">
+        </div>
+        <!-- 選択肢は script.ts でサーバーの /api/models（評価サイトと同じ登録簿）から作る -->
+        <div class="home-model">
+            <label for="extract-model">読み込みに使うモデル</label>
+            <select id="extract-model" disabled>
+                <option>読み込み中…</option>
+            </select>
+            <p class="home-model-note" id="extract-model-note"></p>
         </div>
         <footer><small>&copy; 2026 project 12</small></footer>
     </section>
@@ -50,6 +58,7 @@
             <button type="button" class="toolbar-toggle" id="toggle-palette" aria-pressed="true"
                 title="Ctrl+B（文章の入力中は太字になります）">ブロック</button>
             <button type="button" class="toolbar-toggle" id="open-settings" title="用紙サイズ・文字サイズ・余白など">文書設定</button>
+            <button type="button" class="toolbar-toggle" id="download-pdf" title="PDFをダウンロード">PDF保存</button>
             <span class="toolbar-spacer"></span>
             <button type="button" class="toolbar-toggle" id="toggle-tex" aria-pressed="false"
                 title="Ctrl+/">TeX</button>

@@ -144,14 +144,16 @@ npm run dev        # ファイルを保存すると自動で再起動する
 - サーバーのURLは [web/src/script.ts](web/src/script.ts) の `COMPILE_URL`、ポートは環境変数 `PORT`（既定 8080）で変えられる
 - うまく動かないときの調べ方は [CONTRIBUTING.md](CONTRIBUTING.md) の「PDFプレビューのデバッグ」
 
-## PDFの読み込み（抽出サーバー）
+## PDF・画像の読み込み（抽出サーバー）
 
-トップ画面の「PDF・画像を読み込む」でPDFを選ぶと、コンパイルサーバーの `/api/extract` にPDFを送り、ルールベースの抽出・分類（`ai/rule_based/`）で見出し・段落・表・図のブロックにしてからエディタで開く。画像からの変換は未対応（空の文書で開く）。
+トップ画面の「PDF・画像を読み込む」でPDFか画像（png / jpg）を選ぶと、コンパイルサーバーの `/api/extract` に送り、「読み込みに使うモデル」で選んだモデルで見出し・段落・表・図のブロックにしてからエディタで開く。
+
+選べるモデルは、[評価サイト](#モデルの評価評価サイト)と同じ登録簿 [ai/evaluation/models.json](ai/evaluation/models.json) のもの。登録簿にモデルを足すと、評価サイトとエディタの両方で選べるようになる。`input` が `"image"` のモデル（OCR）は画像もPDFも読め、`"pdf"` のモデルはPDFだけ読める。
 
 ```
-ブラウザ（web/）── POST /api/extract（PDFのバイト列）──▶ server/
+ブラウザ（web/）── POST /api/extract?model=<id>（ファイルのバイト列）──▶ server/
                                      一時ディレクトリに保存 → ai/.venv の Python で
-                                     python -m rule_based.ir_adapter <PDF> --stdout
+                                     python -m evaluation.extract <id> <ファイル>
 エディタ ◀── {"labeled": ラベル付きIR, "document": エディタ用JSON} ──┘
 ```
 
@@ -182,10 +184,10 @@ JSONの形（IR・ラベル付きIR・エディタ用JSON）は [ai/common/READM
 
 ### APIの仕様
 
-`POST /api/extract` に、PDFファイルの中身を**そのまま**（JSONやbase64にせず）送る。
+`POST /api/extract?model=<id>` に、PDFか画像（png / jpg）の中身を**そのまま**（JSONやbase64にせず）送る。`model` は `GET /api/models` が返す一覧（評価サイトの `/api/eval/models` と同じもの）の `id` で、省略すると `rule_based`。
 
 ```bash
-curl -X POST --data-binary @ai/rule_based/sample_data/sample.pdf http://localhost:8080/api/extract
+curl -X POST --data-binary @ai/rule_based/sample_data/sample.pdf "http://localhost:8080/api/extract?model=hybrid_rules"
 ```
 
 | ステータス | 意味 | 本文 |
@@ -193,10 +195,11 @@ curl -X POST --data-binary @ai/rule_based/sample_data/sample.pdf http://localhos
 | 200 | 成功 | `{"labeled": ラベル付きIR, "document": エディタ用JSON}`（`application/json`） |
 | 403 | 許可していない場所（オリジン）からのリクエスト | `forbidden` |
 | 413 | 本文が大きすぎる（約20MB超） | `too large` |
-| 422 | PDFではない（先頭が `%PDF-` でない）／壊れていて読めない／抽出が20秒を超えた | `PDFファイルではありません` など |
+| 400 | 登録簿に無いモデル | `登録されていないモデルです: …` |
+| 422 | PDF・画像ではない／PDFしか読めないモデルに画像を送った／壊れていて読めない・モデルに要るライブラリが無い／読み込みが5分を超えた | `PDFか画像（png / jpg）ではありません` など。読めなかったときはエラーの最後の1行とモデルの補足（`note`）も付ける |
 | 500 | `ai/.venv` が無い、サーバー側の問題 | `抽出機のPythonが見つかりません（ai/.venv を作ってください）` など |
 
-ブラウザから送るときは `file` ではなく `await file.arrayBuffer()` を `body` にする。`file` のままだと `Content-Type: application/pdf` が付いてプリフライト（OPTIONS）が飛び、このサーバーはそれに答えないため止められる。
+ブラウザから送るときは `file` ではなく `await file.arrayBuffer()` を `body` にする。`file` のままだと `Content-Type: application/pdf` などが付いてプリフライト（OPTIONS）が飛び、このサーバーはそれに答えないため止められる。
 
 ### デバッグ用ページ
 

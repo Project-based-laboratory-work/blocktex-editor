@@ -20,7 +20,7 @@ PDF・画像の読み込みで、どのモデルも同じ形のJSONを出すた�
 
 ```json
 {
-  "ir_version": 3,
+  "ir_version": 4,
   "source": "sample.pdf",
   "extractor": "rule_based",
   "params": { "preprocess": "otsu", "scale": 1.5 },
@@ -46,7 +46,7 @@ PDF・画像の読み込みで、どのモデルも同じ形のJSONを出すた�
 
 | 項目 | 内容 |
 |---|---|
-| `ir_version` | IRの版数。形を変えたら `ir.py` の `IR_VERSION` を上げる。版1・版2のJSONも読み込める（版2・版3は省略できる項目を足しただけのため） |
+| `ir_version` | IRの版数。形を変えたら `ir.py` の `IR_VERSION` を上げる。版1〜版3のJSONも読み込める（版2〜版4は省略できる項目を足しただけのため）。版4で `runs` の `tex`（文中の数式）を足した |
 | `source` / `extractor` | 入力ファイル名 / 抽出器の名前 |
 | `params` | 前処理などのパラメータ。同じ抽出器でもパラメータ違いを別物として比較するために書く |
 | `structurer` | ラベルを付けた構造化器の名前。①では書かない |
@@ -55,7 +55,7 @@ PDF・画像の読み込みで、どのモデルも同じ形のJSONを出すた�
 | `kind` | `"text"` / `"table"` / `"figure"`。抽出器が見つけた領域の種類だけで、意味は含めない |
 | `bbox` | `[x0, y0, x1, y1]`。**左上原点・ページの幅と高さで割った0〜1の値**。PDF(pt)と画像(px、DPI違い)を同じ基準でIoU比較するため。元の単位に戻すときは `denormalize_bbox` |
 | `text` | `kind="text"` では必須。行の区切りは `\n`。コード（`label="code"`）になる要素は、行頭の空白（字下げ）を消さずに入れる |
-| `runs` | 文字の範囲ごとの装飾。`{"text", "bold", "italic", "underline"}` の並びで、装飾の無いところも1つの run にする。**`text` をつなげると要素の `text` と一致させる**。装飾の付いていない項目は書かない。判定できない抽出器（OCRなど）は `runs` ごと書かない |
+| `runs` | 文字の範囲ごとの装飾。`{"text", "bold", "italic", "underline"}` の並びで、装飾の無いところも1つの run にする。**`text` をつなげると要素の `text` と一致させる**。装飾の付いていない項目は書かない。判定できない抽出器（OCRなど）は `runs` ごと書かない。**版4:** 文中の数式は `{"text": "mc2", "tex": "mc^{2}"}` のように1つの run にし、`tex` にLaTeX（`$` は含めない）を入れる。`text` はPDFの文字のまま（並びが崩れていてよい）。数式と分かっても読めなかったら `tex` を書かない。③では、エディタの文中の数式（`{"type": "math", "tex"}`）になる |
 | `font_size` | `unit` での文字サイズ。取れない抽出器は bbox の高さから推定して入れる |
 | `bold` | 要素の大半が太字か（分類の手がかり）。判定できなければ書かない。文の一部だけ太字、は `runs` で表す |
 | `confidence` | 参考値。モデルごとに意味が違うので比較には使わない |
@@ -95,7 +95,7 @@ PDF・画像の読み込みで、どのモデルも同じ形のJSONを出すた�
 | `list` | `list` | 連続した `list` 要素は1つにまとめる。行頭の `・` `•` `-` `1.` `(1)` で項目を分け、記号の種類から `marker` を決める。`runs` の装飾は段落と同じく残す |
 | `math` | `math`（別行立て） | `tex` が無ければPDFの文字をそのまま入れる（仮の値。コンパイルが通らないことがある） |
 | `table` | `table` | `cells` があれば中身を入れる。列の揃えは `aligns`（無いか列数と合わなければ全部左寄せ）。罫線は `col_rules` → 列の `ruleLeft`・表の `ruleRight`、`row_rules` → 表の `ruleTop`・行の `ruleBelow`（無いか長さが合わなければ上端と下端の横線だけ）。`col_widths` は本文の幅に対する比率に直して列の `width` にする |
-| `figure` | `image` | 画像ファイルは無いので `src` は空（エディタで選び直す）。幅は本文の幅に対する比率 |
+| `figure` | `image` | 変換だけでは `src` は空。読み込み（`evaluation/extract.py`）では、元のPDF・画像から図の範囲を切り取った PNG を `images` として一緒に返し、`src` をその名前（`figure-p1-1.png`）にする（[figures.py](figures.py)）。幅は本文の幅に対する比率 |
 | `caption` | 隣の表・図の `caption` | 同じページの隣に表・図が無ければ段落として残す |
 | `other` | なし | ページ番号・ヘッダーなどは捨てる |
 | `code` | `code` | 連続した `code` 要素は1つにまとめ、行は改行でつなぐ（段落と違い、折り返しをつながない）。`language` は `plain` |
@@ -135,6 +135,6 @@ save_ir(doc, "out/input.ir.json")
 
 | モデル | 対応 |
 |---|---|
-| rule_based（抽出・分類・学習ラベル） | 抽出は [pdf_extract.py](../rule_based/pdf_extract.py) が①を直接出す。②③は [ir_adapter.py](../rule_based/ir_adapter.py) で変換する。`--stdout` で②③をまとめて出せて、エディタの「PDF・画像を読み込む」（server/ の `/api/extract`）はこれを使う |
+| rule_based（抽出・分類・学習ラベル） | 抽出は [pdf_extract.py](../rule_based/pdf_extract.py) が①を直接出す。②③は [ir_adapter.py](../rule_based/ir_adapter.py) で変換する。`--stdout` で②③をまとめて出せる。エディタの「PDF・画像を読み込む」（server/ の `/api/extract`）は、選んだモデルを [evaluation/extract.py](../evaluation/extract.py) で呼んで同じ形にする |
 | tesseract_ocr | 未対応。`pytesseract.image_to_data` の `left` / `top` / `width` / `height` と行番号を使えば、行ごとの `text` 要素（`unit: "px"`）にできる |
 | math_ocr | ページ全体は扱わないので①は出さない。②の `label="math"` の要素を切り出して読み、結果を `tex` に入れる使い方を想定 |

@@ -113,6 +113,19 @@ async function listModels(): Promise<ModelInfo[]> {
     return models.map((m: any) => ({ id: m.id, name: m.name, input: m.input, outputs: m.outputs, note: m.note }));
 }
 
+// エディタで「PDF・画像を読み込む」ときに、モデルを選ばなかった場合のモデル
+const DEFAULT_EXTRACT_MODEL = 'rule_based';
+// 読み込みにかかる時間の上限。OCRのモデルは1ページに数秒〜十数秒かかるので、コンパイルより長めにする
+const EXTRACT_TIMEOUT_MS = 5 * 60_000;
+
+/** ファイルの先頭の決まったバイト列で、PDF・PNG・JPEG を見分ける。どれでもなければ null */
+function fileKind(data: Buffer): 'pdf' | 'png' | 'jpg' | null {
+    if (data.subarray(0, 5).toString('latin1') === '%PDF-') return 'pdf';
+    if (data.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) return 'png';
+    if (data.subarray(0, 3).equals(Buffer.from([0xff, 0xd8, 0xff]))) return 'jpg';
+    return null;
+}
+
 interface DatasetInfo {
     name: string;
     created: string;
@@ -320,7 +333,10 @@ const server = http.createServer((req, res) => {
         return;
     }
 
-    if (req.method === 'POST' && req.url === '/api/extract') {
+    // PDF・画像を、登録簿（ai/evaluation/models.json）のモデルで読んでエディタ用JSONにする。
+    // 本文はファイルの中身そのもの。モデルは ?model=<id> で選ぶ（省略時は rule_based）
+    if (req.method === 'POST' && (req.url === '/api/extract' || req.url?.startsWith('/api/extract?'))) {
+        const modelId = new URL(req.url, 'http://localhost').searchParams.get('model') ?? DEFAULT_EXTRACT_MODEL;
         const chunks: Buffer[] = [];
         let size = 0;
 
@@ -336,20 +352,30 @@ const server = http.createServer((req, res) => {
 
         req.on('end', async () => {
             try {
-                const pdf = Buffer.concat(chunks);
-                // PDFファイルは必ず "%PDF-" で始まる。違うものは抽出機に渡す前に断る
-                if (pdf.subarray(0, 5).toString('latin1') !== '%PDF-') {
-                    res.statusCode = 422;
-                    res.setHeader('Content-Type', 'text/plain; charset=utf-8');
-                    res.end('PDFファイルではありません');
+                // 登録簿にあるモデルだけを受け付ける（任意のものを実行させない）
+                const model = (await listModels()).find((m) => m.id === modelId);
+                if (model === undefined) {
+                    sendText(res, 400, `登録されていないモデルです: ${modelId}`);
+                    return;
+                }
+
+                const data = Buffer.concat(chunks);
+                // 中身の先頭で種類を見分ける。どれでもないものはモデルに渡す前に断る
+                const kind = fileKind(data);
+                if (kind === null) {
+                    sendText(res, 422, 'PDFか画像（png / jpg）ではありません');
+                    return;
+                }
+                if (kind !== 'pdf' && model.input !== 'image') {
+                    sendText(res, 422, `「${model.name}」はPDFしか読めません。画像を読めるモデルを選んでください`);
                     return;
                 }
 
                 const dir = await mkdtemp(path.join(os.tmpdir(), 'extract-'));
 
                 try {
-                    const pdfPath = path.join(dir, 'input.pdf');
-                    await writeFile(pdfPath, pdf);
+                    const inputPath = path.join(dir, `input.${kind}`);
+                    await writeFile(inputPath, data);
 
                     let stdout: string;
                     try {
@@ -357,27 +383,25 @@ const server = http.createServer((req, res) => {
                             PYTHON,
                             // 抽出 → 分類 → エディタ用JSON への変換までをまとめて行い、
                             // {"labeled": ラベル付きIR, "document": エディタ用JSON} を標準出力に出す
-                            ['-m', 'rule_based.ir_adapter', pdfPath, '--stdout'],
-                            { cwd: AI_DIR, timeout: COMPILE_TIMEOUT_MS, maxBuffer: MAX_BODY },
+                            ['-m', 'evaluation.extract', model.id, inputPath],
+                            { cwd: AI_DIR, timeout: EXTRACT_TIMEOUT_MS, maxBuffer: MAX_BODY },
                         ));
                     } catch (err: any) {
-                        res.setHeader('Content-Type', 'text/plain; charset=utf-8');
                         // ai/.venv を作っていないと、Python 自体が見つからない
                         if (err.code === 'ENOENT') {
                             console.error(err);
-                            res.statusCode = 500;
-                            res.end('抽出機のPythonが見つかりません（ai/.venv を作ってください）');
+                            sendText(res, 500, '抽出機のPythonが見つかりません（ai/.venv を作ってください）');
                             return;
                         }
                         if (err.killed) {
-                            res.statusCode = 422;
-                            res.end('抽出に時間がかかりすぎたため中断しました');
+                            sendText(res, 422, '読み込みに時間がかかりすぎたため中断しました');
                             return;
                         }
-                        // 壊れたPDFなど。詳しい経緯（Traceback）はサーバーの端末に出す
+                        // 壊れたファイルや、モデルに要るライブラリが入っていないなど。
+                        // 詳しい経緯（Traceback）はサーバーの端末に出し、画面には最後の1行（エラーの中身）と補足だけ出す
                         console.error(err.stderr);
-                        res.statusCode = 422;
-                        res.end('PDFを読み込めませんでした');
+                        const lastLine = String(err.stderr ?? '').trim().split('\n').pop() ?? '';
+                        sendText(res, 422, ['読み込めませんでした', lastLine, model.note].filter(Boolean).join('\n'));
                         return;
                     }
 
@@ -388,8 +412,7 @@ const server = http.createServer((req, res) => {
                 }
             } catch (err) {
                 console.error(err);
-                res.statusCode = 500;
-                res.end('server error');
+                sendText(res, 500, 'server error');
             }
         });
 
@@ -410,7 +433,8 @@ const server = http.createServer((req, res) => {
         return;
     }
 
-    if (req.method === 'GET' && req.url === '/api/eval/models') {
+    // 読み込みに使えるモデルの一覧。エディタ（/api/models）と評価サイト（/api/eval/models）で同じものを返す
+    if (req.method === 'GET' && (req.url === '/api/models' || req.url === '/api/eval/models')) {
         listModels()
             .then((models) => sendJson(res, models))
             .catch((err) => {

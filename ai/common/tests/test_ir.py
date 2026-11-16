@@ -68,7 +68,7 @@ def test_none_fields_are_omitted_from_json():
     assert from_dict(json.loads(json.dumps(data))) == sample_doc()
 
 
-@pytest.mark.parametrize("version", [1, 2])
+@pytest.mark.parametrize("version", [1, 2, 3])
 def test_old_versions_are_read_as_current_version(version):
     data = to_dict(sample_doc())
     data["ir_version"] = version
@@ -152,3 +152,20 @@ def test_load_with_check_raises_on_problem(tmp_path):
     save_ir(doc, str(path))
     with pytest.raises(ValueError, match="ir_version"):
         load_ir(str(path), check=True)
+
+
+def test_inline_math_run_round_trips():
+    # 版4: 文中の数式は Run の tex に入れる。text はPDFの文字のまま
+    el = Element(kind="text", bbox=(0.1, 0.1, 0.9, 0.2), text="式 mc2 のとき",
+                 runs=[Run("式 "), Run("mc2", tex="mc^{2}"), Run(" のとき")])
+    doc = IRDocument(source="a.pdf", extractor="x", pages=[Page(1, 100, 100, "pt", [el])])
+    data = to_dict(doc)
+    assert data["pages"][0]["elements"][0]["runs"][1] == {"text": "mc2", "tex": "mc^{2}"}
+    assert from_dict(json.loads(json.dumps(data))) == doc
+    assert validate(doc) == []
+
+
+def test_validate_reports_empty_inline_math():
+    el = Element(kind="text", bbox=(0.1, 0.1, 0.9, 0.2), text="x", runs=[Run("x", tex=" ")])
+    doc = IRDocument(source="a.pdf", extractor="x", pages=[Page(1, 100, 100, "pt", [el])])
+    assert any("tex は空でない文字列" in p for p in validate(doc))

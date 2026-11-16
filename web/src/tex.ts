@@ -56,12 +56,19 @@ function geometryPackage(settings: DocumentSettings): string[] {
   return [`\\usepackage[truedimen,${paper},margin=${margin}truemm]{geometry}`];
 }
 
+/**
+ * 数式用。数式ブロックと文中数式の両方で使う。
+ * amssymb は \mathbb などの記号用。エディタの表示（KaTeX）は読み込まなくても描けるので、
+ * ここで読み込まないと「画面では出るのにPDFだけ Undefined control sequence」になる。
+ */
+const MATH_PACKAGES = ['\\usepackage{amsmath}', '\\usepackage{amssymb}'];
+
 const PACKAGES_BY_BLOCK_TYPE: Record<BlockType, string[]> = {
   title: [],
   heading: [],
   paragraph: [],
   list: [],
-  math: ['\\usepackage{amsmath}'],
+  math: MATH_PACKAGES,
   toc: [],
   // array は列幅を指定した列（p{幅}）の揃えに使う（tableColumnSpec を参照）
   table: ['\\usepackage{booktabs}', '\\usepackage{array}'],
@@ -402,6 +409,7 @@ function documentToTex(doc: BlockDocument): string {
   for (const block of doc.blocks) addPackages(PACKAGES_BY_BLOCK_TYPE[block.type]);
 
   const segments = doc.blocks.flatMap(richContents).flat();
+  if (segments.some((seg) => seg.type === 'math')) addPackages(MATH_PACKAGES);
   const texts = segments.filter((seg): seg is Extract<InlineSegment, { type: 'text' }> => seg.type === 'text');
   if (texts.some((seg) => seg.underline)) addPackages(UNDERLINE_PACKAGES);
   if (texts.some((seg) => hrefTex(seg.href) !== undefined)) addPackages(LINK_PACKAGES);
@@ -416,5 +424,12 @@ function documentToTex(doc: BlockDocument): string {
     : [];
   const head = [documentClass(settings), ...packages, ...titleLines].join('\n');
   const body = doc.blocks.map(blockToTex).join('\n\n');
-  return `${head}\n\n\\begin{document}\n\n${body}${body ? '\n\n' : ''}\\end{document}\n`;
+  const tex = `${head}\n\n\\begin{document}\n\n${body}${body ? '\n\n' : ''}\\end{document}\n`;
+  return tex.replace(CONTROL_CHARS, '');
 }
+
+/**
+ * TeX に渡せない制御文字（改行とタブ以外）。PDFから読み込んだ文字に混ざることがある（Type3 の書体の合字など）。
+ * 読み込み側（ai/common/control_chars.py）で本来の文字に戻すが、残ったものはここで捨てて、コンパイルが止まらないようにする
+ */
+const CONTROL_CHARS = /[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/g;

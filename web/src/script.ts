@@ -43,10 +43,10 @@ function schedulePdfRefresh(): void {
     pdfRefreshTimer = window.setTimeout(refreshPdf, PDF_REFRESH_DELAY_MS);
 }
 
-function showEditor(doc: BlockDocument): void {
+function showEditor(doc: BlockDocument, files: File[] = []): void {
     homeView.hidden = true;
     editorView.hidden = false;
-    editor.load(doc);
+    editor.load(doc, files);
 }
 
 function showHome(): void {
@@ -70,12 +70,86 @@ const setPalette = (open: boolean) => setPane(palette, togglePaletteButton, PALE
 requireElement('#new-doc').addEventListener('click', () => showEditor(createEmptyDocument()));
 requireElement('#back-home').addEventListener('click', showHome);
 
-/** PDFをコンパイルサーバーの /api/extract に送り、エディタ用の文書にしてもらう。失敗したら理由を投げる */
-async function extractPdf(file: File): Promise<BlockDocument> {
+// ---------- PDF・画像の読み込み ----------
+const MODELS_URL = 'http://localhost:8080/api/models';
+const EXTRACT_MODEL_KEY = 'retex.extractModel';
+const modelSelect = requireElement<HTMLSelectElement>('#extract-model');
+const modelNote = requireElement('#extract-model-note');
+
+/** 読み込みに使えるモデル（ai/evaluation/models.json）。評価サイトで選べるものと同じ */
+interface ExtractModel {
+    id: string;
+    name: string;
+    input: 'pdf' | 'image';   // image のモデルは画像も読める（PDFはページごとに画像にして読む）
+    outputs: string[];
+    note?: string;
+}
+
+let extractModels: ExtractModel[] = [];
+
+/** 選んでいるモデル。一覧を取れていなければ undefined（サーバーの既定のモデルで読む） */
+function selectedModel(): ExtractModel | undefined {
+    return extractModels.find((m) => m.id === modelSelect.value);
+}
+
+function showModelNote(): void {
+    const model = selectedModel();
+    if (!model) return;
+    const reads = model.input === 'image' ? 'PDF・画像を読めます' : 'PDFだけ読めます';
+    modelNote.textContent = [reads, model.note].filter(Boolean).join(' ／ ');
+    try {
+        localStorage.setItem(EXTRACT_MODEL_KEY, model.id);
+    } catch {
+        // 保存できなくても動作には影響しない
+    }
+}
+
+async function loadModels(): Promise<void> {
+    try {
+        const res = await fetch(MODELS_URL);
+        if (!res.ok) throw new Error(await res.text());
+        extractModels = await res.json();
+    } catch (err) {
+        console.error(err);
+        modelSelect.replaceChildren(new Option('サーバーに接続できません'));
+        modelNote.textContent = 'server/ で npm run dev を起動してから、ページを開き直してください。';
+        return;
+    }
+    modelSelect.replaceChildren(...extractModels.map((m) => new Option(m.name, m.id)));
+    let saved: string | null = null;
+    try {
+        saved = localStorage.getItem(EXTRACT_MODEL_KEY);
+    } catch {
+        // 読めなければ先頭のモデルにする
+    }
+    if (saved && extractModels.some((m) => m.id === saved)) modelSelect.value = saved;
+    modelSelect.disabled = false;
+    showModelNote();
+}
+
+modelSelect.addEventListener('change', showModelNote);
+loadModels();
+
+/** サーバーが返す、図の範囲を切り取った画像（画像ブロックの src と同じ name）。data は PNG の base64 */
+interface ExtractedImage {
+    name: string;
+    data: string;
+}
+
+/** base64 の PNG を、ユーザーが選んだ画像と同じ File にする */
+function imageFile(image: ExtractedImage): File {
+    const bytes = Uint8Array.from(atob(image.data), (c) => c.charCodeAt(0));
+    return new File([bytes], image.name, { type: 'image/png' });
+}
+
+/** PDF・画像をコンパイルサーバーの /api/extract に送り、選んだモデルでエディタ用の文書にしてもらう。失敗したら理由を投げる。
+ * 図は、元のPDF・画像から切り取った画像ファイルも一緒に返す */
+async function extractFile(file: File, model: ExtractModel | undefined): Promise<{ doc: BlockDocument; files: File[] }> {
+    const url = model ? `${EXTRACT_URL}?model=${encodeURIComponent(model.id)}` : EXTRACT_URL;
     let res: Response;
     try {
-        // file をそのまま送ると Content-Type: application/pdf が付き、プリフライト（下見）で止められるため、バイト列で送る
-        res = await fetch(EXTRACT_URL, { method: 'POST', body: await file.arrayBuffer() });
+        // file をそのまま送ると Content-Type: application/pdf などが付き、プリフライト（下見）で止められるため、バイト列で送る
+        res = await fetch(url, { method: 'POST', body: await file.arrayBuffer() });
     } catch {
         throw new Error('サーバーに接続できませんでした。server/ で npm run dev を起動しているか確認してください。');
     }
@@ -83,14 +157,16 @@ async function extractPdf(file: File): Promise<BlockDocument> {
         throw new Error(await res.text());
     }
 
-    // サーバーは {"labeled": ラベル付きIR, "document": エディタ用JSON} を返す
-    const doc: BlockDocument = (await res.json()).document;
+    // サーバーは {"labeled": ラベル付きIR, "document": エディタ用JSON, "images": 図の画像} を返す
+    const body = await res.json();
+    const doc: BlockDocument = body.document;
+    const images: ExtractedImage[] = Array.isArray(body.images) ? body.images : [];
     if (!isCurrentSchema(doc)) {
         throw new Error(`サーバーが返した文書の形式（schemaVersion ${doc.schemaVersion}）がエディタと合いません。ai/common/blocks.py を確認してください。`);
     }
-    // サーバーは一時ファイル名（input.pdf）で読むので、文書名は選んだファイル名にする
+    // サーバーは一時ファイル名（input.pdf など）で読むので、文書名は選んだファイル名にする
     doc.title = file.name;
-    return doc;
+    return { doc, files: images.map(imageFile) };
 }
 
 fileInput.addEventListener('change', async () => {
@@ -98,22 +174,25 @@ fileInput.addEventListener('change', async () => {
     if (!file) return;
     fileInput.value = '';
 
-    // 画像からのブロック変換は未実装。空のドキュメントで編集を始める。
-    if (file.type !== 'application/pdf') {
-        fileName.textContent = file.name;
-        showEditor(createEmptyDocument(file.name));
-        alert('画像の自動変換は準備中です。空のドキュメントから編集を始めます。');
+    const model = selectedModel();
+    // PDFしか読めないモデルで画像を選んだときは、送る前に知らせる（サーバーも同じ確認をする）
+    if (file.type !== 'application/pdf' && model?.input === 'pdf') {
+        alert(`「${model.name}」はPDFしか読めません。\n画像を読むときは、「PDF・画像を読めます」と出るモデルを選んでください。`);
         return;
     }
 
     fileName.textContent = `${file.name} を読み込み中…`;
+    modelSelect.disabled = true;
     try {
-        showEditor(await extractPdf(file));
+        const { doc, files } = await extractFile(file, model);
+        showEditor(doc, files);
         fileName.textContent = file.name;
     } catch (err) {
         console.error(err);
         fileName.textContent = 'ファイルを選択して編集を始める';
-        alert(`PDFを読み込めませんでした。\n${err instanceof Error ? err.message : String(err)}`);
+        alert(`読み込めませんでした。\n${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+        modelSelect.disabled = extractModels.length === 0;
     }
 });
 
@@ -276,6 +355,45 @@ function readAsBase64(file: Blob): Promise<string> {
     });
 }
 
+/** サーバーに届かなかった失敗。TeX の書き間違いなど、サーバーが理由を返した失敗と見分けるため */
+class ConnectionError extends Error {}
+
+/**
+ * 今の文書をサーバーでPDFにする。プレビューとダウンロードの両方で使う。
+ * 失敗したら、画面に出す理由を message に入れて投げる。
+ */
+async function compilePdf(signal?: AbortSignal): Promise<Blob> {
+    const tex = texOutput.textContent ?? '';
+    // \includegraphics で使う画像ファイルも、TeX と一緒に送る
+    const { files, missing } = editor.imagesForPreview();
+    if (missing.length > 0) {
+        throw new Error(`画像ファイルが手元にありません: ${missing.join(', ')}\n`
+            + '保存した文書を開き直したあとは、画像ブロックでファイルを選び直してください。');
+    }
+    const images = await Promise.all(
+        files.map(async ({ name, file }) => ({ name, data: await readAsBase64(file) })),
+    );
+    // 画像を読んでいる間に止められたら、送らずにやめる
+    signal?.throwIfAborted();
+
+    let res: Response;
+    try {
+        res = await fetch(COMPILE_URL, {
+            method: 'POST',
+            body: JSON.stringify({ tex: tex, images: images }),
+            signal: signal,
+        });
+    } catch (err) {
+        if (signal?.aborted) throw err;
+        throw new ConnectionError('サーバーに接続できません。server/ で npm run dev を起動しているか確認してください。');
+    }
+
+    if (!res.ok) {
+        throw new Error(await res.text());
+    }
+    return await res.blob();
+}
+
 async function refreshPdf(): Promise<void> {
     if (pdfAbort) {
         pdfAbort.abort();
@@ -288,36 +406,7 @@ async function refreshPdf(): Promise<void> {
     pdfError.hidden = true;
 
     try {
-        const tex = texOutput.textContent ?? '';
-        // \includegraphics で使う画像ファイルも、TeX と一緒に送る
-        const { files, missing } = editor.imagesForPreview();
-        if (missing.length > 0) {
-            pdfError.textContent = `画像ファイルが手元にありません: ${missing.join(', ')}\n`
-                + '保存した文書を開き直したあとは、画像ブロックでファイルを選び直してください。';
-            pdfError.hidden = false;
-            pdfStatus.textContent = 'エラー';
-            return;
-        }
-        const images = await Promise.all(
-            files.map(async ({ name, file }) => ({ name, data: await readAsBase64(file) })),
-        );
-        if (controller.signal.aborted) {
-            return;     // 画像を読んでいる間に、次の更新が始まった
-        }
-        const res = await fetch(COMPILE_URL, {
-            method: 'POST',
-            body: JSON.stringify({ tex: tex, images: images }),
-            signal: controller.signal,
-        });
-
-        if (!res.ok) {
-            pdfError.textContent = await res.text();
-            pdfError.hidden = false;
-            pdfStatus.textContent = 'エラー';
-            return;
-        }
-
-        const blob = await res.blob();
+        const blob = await compilePdf(controller.signal);
 
         if (pdfUrl) {        // 前の PDF があったら
             URL.revokeObjectURL(pdfUrl);
@@ -328,14 +417,54 @@ async function refreshPdf(): Promise<void> {
         pdfStatus.textContent = '';
     } catch (err) {
         if (controller.signal.aborted) {
-            return;
+            return;     // 次の更新が始まったので、この結果は捨てる
         }
         console.error(err);
-        pdfStatus.textContent = 'サーバーに接続できません';
+        if (err instanceof ConnectionError) {
+            pdfStatus.textContent = 'サーバーに接続できません';
+            return;
+        }
+        pdfError.textContent = err instanceof Error ? err.message : String(err);
+        pdfError.hidden = false;
+        pdfStatus.textContent = 'エラー';
     }
 }
 
 refreshPdfButton.addEventListener('click', refreshPdf);
+
+// ---------- PDFのダウンロード ----------
+const downloadPdfButton = requireElement<HTMLButtonElement>('#download-pdf');
+
+/** 文書名からダウンロードするファイル名を作る。拡張子を外し、ファイル名に使えない文字は _ にする */
+function pdfFileName(title: string): string {
+    const base = title.trim().replace(/\.[^.]*$/, '').replace(/[\\/:*?"<>|]/g, '_');
+    return `${base || 'document'}.pdf`;
+}
+
+async function downloadPdf(): Promise<void> {
+    const label = downloadPdfButton.textContent;
+    downloadPdfButton.disabled = true;
+    downloadPdfButton.textContent = '作成中…';
+    try {
+        const blob = await compilePdf();
+        const url = URL.createObjectURL(blob);
+        // download 属性付きのリンクを押したことにすると、ブラウザが保存してくれる
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = pdfFileName(editor.title);
+        link.click();
+        // すぐ消すと保存が始まる前に消えるブラウザがあるので、少し待つ
+        window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+    } catch (err) {
+        console.error(err);
+        alert(`PDFを作れませんでした。\n${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+        downloadPdfButton.disabled = false;
+        downloadPdfButton.textContent = label;
+    }
+}
+
+downloadPdfButton.addEventListener('click', downloadPdf);
 
 toggleTexButton.addEventListener('click', () => setTexPane(texPane.hidden));
 togglePaletteButton.addEventListener('click', () => setPalette(palette.hidden));

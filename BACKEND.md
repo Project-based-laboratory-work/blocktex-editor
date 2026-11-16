@@ -41,7 +41,7 @@ Firestoreのコレクション構成:
 ```
 users/{uid}/projects/{projectId}
   name          : string     プロジェクト名（ユーザーが変更可能）
-  schemaVersion : number     ブロックデータのスキーマ版数（frontend/src/model の SCHEMA_VERSION）
+  schemaVersion : number     ブロックデータのスキーマ版数（web/src/model.ts の SCHEMA_VERSION）
   blocks        : Block[]    ブロック配列（ローカル保存と同じ形式）
   createdAt     : Timestamp
   updatedAt     : Timestamp
@@ -63,7 +63,7 @@ match /users/{uid}/{document=**} {
 
 **注意すべき制約 (1) ドキュメントサイズ**: Firestoreの1ドキュメントは最大1MiB。画像をBase64で埋め込むとすぐに超えるため、画像はFirebase Storageに置いてURLだけをブロックに持たせる方式を推奨する。Phase 2の「画像データの扱い方針決定」（2-2-1）は、この制約を踏まえて決めること。
 
-**注意すべき制約 (2) 配列の入れ子**: Firestoreは配列の要素に配列を置けない（nested array 非対応）。表ブロックの行データを素直に `string[][]` にすると、`blocks` をそのまま保存した時点で書き込みが弾かれる。そのため `TableRow` を `{ cells: string[] }` というオブジェクトで包み、配列の入れ子が発生しない形にしてある（[frontend/src/model/block.ts](frontend/src/model/block.ts)）。
+**注意すべき制約 (2) 配列の入れ子**: Firestoreは配列の要素に配列を置けない（nested array 非対応）。表ブロックの行データを素直に `string[][]` にすると、`blocks` をそのまま保存した時点で書き込みが弾かれる。そのため `TableRow` を `{ cells: string[] }` というオブジェクトで包み、配列の入れ子が発生しない形にしてある（[web/src/model.ts](web/src/model.ts)）。
 
 > ローカル保存のJSONがやや冗長になる代わりに、「ローカルとクラウドで同じ形式を使う」という上記の方針を崩さずに済む。JSON文字列にまとめて1フィールドに入れる案もあるが、その場合クラウド側だけ形式が変わり、変換処理を二重に書くことになるため採らなかった。
 
@@ -75,9 +75,9 @@ Firebaseプロジェクトの作成は各自のGoogleアカウントとブラウ
 2. 「ウェブアプリを追加」して、表示される設定値（apiKey, authDomain, projectId など）を控える。
 3. Authentication を有効化し、ログイン方法で「Google」と「メール/パスワード」を有効にする。
 4. Firestore Database を作成する（本番モードで作成し、ルールはPhase 3で設定する）。
-5. 控えた設定値を `frontend/.env`（`frontend/.env.example` をコピーして作成）に記入する。`.env` はgitignore済みなのでコミットされない。
+5. 控えた設定値をフロントエンド（`web/`）から読めるようにする。`web/` はビルドなしの静的サイトで `.env` を読む仕組みがないため、置き方（設定用のファイルを作るかなど）はPhase 3で決める。
 
-   > **Firebaseのウェブ設定値（apiKey等）は秘密情報ではない。** `VITE_` 付きの環境変数はビルド時に `dist/` へ埋め込まれ、ブラウザから誰でも読める。Firebase側もこれを前提にしており、apiKeyはプロジェクトの識別子に近い。**データを守るのはセキュリティルール（0-5-3）であって、設定値を隠すことではない**ので、ルールの設定（Phase 3 / 3-1-3）を省略しないこと。`.env` に置くのは、環境ごとに値を差し替えられるようにするためと、リポジトリに個人のプロジェクト設定を混ぜないため。
+   > **Firebaseのウェブ設定値（apiKey等）は秘密情報ではない。** どこに置いても最終的にはブラウザへ届き、誰でも読める。Firebase側もこれを前提にしており、apiKeyはプロジェクトの識別子に近い。**データを守るのはセキュリティルール（0-5-3）であって、設定値を隠すことではない**ので、ルールの設定（Phase 3 / 3-1-3）を省略しないこと。別のファイルに分けるのは、環境ごとに値を差し替えられるようにするためと、リポジトリに個人のプロジェクト設定を混ぜないため。
 6. 無料枠（Spark プラン）の内容を[料金ページ](https://firebase.google.com/pricing)で確認する。読み取り・書き込み回数やストレージに1日あたりの上限があるが、本プロジェクトの規模（5人での開発とデモ）であれば通常は上限に達しない。**上限値は変更されることがあるため、必ず公式ページで最新の値を確認すること。**
 
 ## 0-5-5 フロントエンドのホスティング先
@@ -87,13 +87,12 @@ Firebaseプロジェクトの作成は各自のGoogleアカウントとブラウ
 デプロイ手順（Phase 3以降）:
 
 ```bash
-cd frontend
-npm run build              # dist/ を生成
+npm run build              # web/js/ を生成（リポジトリの直下で実行）
 firebase deploy --only hosting
 ```
 
 `firebase init hosting` 実行時の設定:
 
-- public directory: `frontend/dist`
-- single-page app: Yes（Reactのルーティングのため）
+- public directory: `web`
+- single-page app: No（画面の切り替えは index.html の中で行っていて、URLごとのページを持たないため）
 - GitHub連携の自動デプロイ: 任意
