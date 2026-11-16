@@ -23,6 +23,7 @@ from dataclasses import dataclass, field
 
 import pymupdf
 
+from common.control_chars import fix_char
 from common.ir import Element, IRDocument, Page, Run, normalize_bbox, save_ir, validate
 
 NAME = "hybrid_extractor"
@@ -257,14 +258,20 @@ def page_lines(page: pymupdf.Page) -> list[dict]:
             chars = []
             for span in line["spans"]:
                 for ch in span["chars"]:
-                    text += ch["c"]                      # ① text に文字をつなげる
                     bbox = tuple(ch["bbox"])
                     if is_big_symbol(ch["c"], span["font"]):
                         bbox = accurate.get(char_key(ch), bbox)
-                    chars.append({
-                        "c": ch["c"], "bbox": bbox, "font": span["font"], "size": span["size"],
-                        "flags": span["flags"], "baseline": span["origin"][1],
-                    })
+                    # Type3 の書体では、合字の ff や \textbullet が制御文字で出てくる。本来の文字に戻す（捨てることもある）。
+                    # ff のように2文字になるときは、枠を横に等分する
+                    fixed = fix_char(ch["c"])
+                    for k, c in enumerate(fixed):
+                        w = (bbox[2] - bbox[0]) / len(fixed)
+                        text += c                        # ① text に文字をつなげる
+                        chars.append({
+                            "c": c, "bbox": (bbox[0] + w * k, bbox[1], bbox[0] + w * (k + 1), bbox[3]),
+                            "font": span["font"], "size": span["size"],
+                            "flags": span["flags"], "baseline": span["origin"][1],
+                        })
                 size = max(size, span["size"])           # ② 今の size と span のサイズの、大きい方
             if text.strip():
                 lines.append({"text": text, "bbox": tuple(line["bbox"]), "size": size, "chars": chars})
