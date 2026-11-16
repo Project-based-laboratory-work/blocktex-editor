@@ -17,6 +17,7 @@ import uuid
 from itertools import groupby
 from typing import Any
 
+from common.control_chars import fix_text
 from common.ir import Element, IRDocument, load_ir
 
 EDITOR_SCHEMA_VERSION = 4
@@ -333,7 +334,20 @@ def ir_to_document(ir: IRDocument, title: str | None = None) -> dict[str, Any]:
     title_block = _title_block(items)
     if title_block:
         blocks.insert(0, title_block)
-    return {"schemaVersion": EDITOR_SCHEMA_VERSION, "id": _new_id(), "title": title or ir.source, "blocks": blocks}
+    document = {"schemaVersion": EDITOR_SCHEMA_VERSION, "id": _new_id(), "title": title or ir.source, "blocks": blocks}
+    return _fix_controls(document)
+
+
+def _fix_controls(value: Any) -> Any:
+    """エディタ用JSONの全部の文字列から、制御文字を本来の文字に戻すか捨てる（common/control_chars.py）。
+    Type3 の書体の PDF では合字の ff などが制御文字で出てきて、そのままでは TeX のコンパイルが止まるため"""
+    if isinstance(value, str):
+        return fix_text(value)
+    if isinstance(value, list):
+        return [_fix_controls(v) for v in value]
+    if isinstance(value, dict):
+        return {k: _fix_controls(v) for k, v in value.items()}
+    return value
 
 
 def main() -> None:
