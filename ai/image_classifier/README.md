@@ -23,9 +23,9 @@
 `ai/` で実行する。
 
 ```bash
-# 学習データ（image_dataset で自動生成。clean:screenshot = 1:2）
-python -m image_dataset.build --out image_classifier/data/train --docs 2000 --seed 0 --styles clean=1,screenshot=2 --workers 10
-python -m image_dataset.build --out image_classifier/data/val --docs 300 --seed 1 --styles clean=1,screenshot=2 --workers 10
+# 学習データ（image_dataset で自動生成。既定の崩し方 clean:screenshot = 1:4、ビューアの背景付きのスクショを含む）
+python -m image_dataset.build --out image_classifier/data/train --docs 2000 --seed 0 --workers 10
+python -m image_dataset.build --out image_classifier/data/val --docs 300 --seed 1 --workers 10
 # OCR（GPUがあると速い。--shard 0/4 のように分けて並べられる）→ 学習用にまとめる
 python -m image_classifier.run_ocr image_classifier/data/train
 python -m image_classifier.run_ocr image_classifier/data/val
@@ -44,16 +44,19 @@ python -m pytest image_classifier/tests
 
 ## 結果（検証 854枚、ルールベースと同じOCR結果を使用）
 
+image_dataset の今の既定（ビューアの背景付きのスクショを含む、#45 以降）で作ったデータで学習・採点したもの。
+
 | | ラベル正解率 | 3種類だけで見た正解率※ | 時間/枚 |
 |---|---|---|---|
-| ルールベース（image_rule_based） | 0.669 | 0.869 | 0.3 ms |
-| AI（数値の特徴だけ） | 0.977 | 0.984 | 35 ms |
-| **AI（特徴＋画像）** | **0.994** | **0.996** | 87 ms |
+| ルールベース（image_rule_based） | 0.653 | 0.849 | 0.3 ms |
+| **AI（特徴＋画像）** | **0.990** | **0.993** | 89 ms |
 
 ※ ルールベースが出せる見出し・段落・キャプションの3種類の正解だけで数えたもの
 
-- 画像を見ると、特にキャプション・数式・箇条書きが良くなる
-- 検出のF1（段落の区切り方）はどれも 0.543 で同じ。区切り方は OCR の段落まとめで決まり、この分類器は変えないため。
+画像を見る効果（#45 より前のデータで比べたもの）: 数値の特徴だけの版 0.977 → 特徴＋画像 0.994。特にキャプション・数式・箇条書きが良くなる。
+前のデータで学習したモデルも、今のデータで 0.989 と、ビューアの背景にはほとんど影響されない（OCRの段落を見るため）。
+
+- 検出のF1（段落の区切り方）はどれも 0.541 で同じ。区切り方は OCR の段落まとめで決まり、この分類器は変えないため。
   区切り方そのものを良くするのは [image_layout](../image_layout/README.md)
 - 注意: 学習も検証も image_dataset が作った画像なので、AIに有利な条件。人が正解を付けた本物の画像での確認はこれから
 
