@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # TeX Live入りのDockerコンテナで .tex をコンパイルしてPDFを作る。
-# 使い方: docker/compile-tex.sh frontend/src/fixtures/sample-document.expected.tex
+# 使い方: docker/compile-tex.sh path/to/main.tex
 set -euo pipefail
 
 image=blocktex-tex

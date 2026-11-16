@@ -86,6 +86,11 @@ class BlockEditor {
     this.changed();
   }
 
+  /** 文書名。読み込んだPDFのファイル名など。新規作成では空 */
+  get title(): string {
+    return this.doc.title;
+  }
+
   get settings(): DocumentSettings {
     return this.doc.settings ?? {};
   }

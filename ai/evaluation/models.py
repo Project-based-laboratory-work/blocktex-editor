@@ -5,6 +5,7 @@
 各モデルのコードは書き換えずに、「どのモジュールのどの関数を呼ぶか」を登録簿に書く。
 
 input が "image" のモデルには、PDFの各ページを画像にして1枚ずつ渡し、返ってきたページをまとめて1つのIRにする。
+エディタの「PDF・画像を読み込む」も、同じ登録簿のモデルで読む（evaluation/extract.py）。
 """
 import importlib
 import json
@@ -68,3 +69,13 @@ def predict(spec: ModelSpec, pdf_path: str) -> IRDocument:
             docs = [fn(str(image), **params) for image in images]
         return merge_pages(docs, source=Path(pdf_path).name)
     raise ValueError(f"input={spec.input!r} には対応していない（使えるのは \"pdf\" と \"image\"）")
+
+
+def predict_image(spec: ModelSpec, image_path: str) -> IRDocument:
+    """登録したモデルで、画像を1枚読む（エディタで画像を読み込んだとき）。画像を読めるのは input が "image" のモデルだけ"""
+    if spec.input != "image":
+        raise ValueError(f"{spec.name} はPDFしか読めない（画像を読めるのは input が \"image\" のモデル）")
+    params = dict(spec.params)
+    params.pop("dpi", None)  # PDFを画像にするときの解像度なので、画像をそのまま渡すときは使わない
+    fn = load_entry(spec.entry)
+    return merge_pages([fn(image_path, **params)], source=Path(image_path).name)
