@@ -78,10 +78,21 @@ class BlockEditor {
     });
   }
 
-  load(doc: BlockDocument): void {
+  /**
+   * 文書を開く。files は画像ブロックに付ける画像ファイル（PDF・画像の読み込みで、図の範囲を切り取ったもの）。
+   * 画像ブロックの src と同じ名前のファイルを、ユーザーが選んだときと同じように付ける
+   */
+  load(doc: BlockDocument, files: File[] = []): void {
     this.doc = doc;
     this.selectedId = null;
     for (const id of [...this.imageUrls.keys()]) this.revokeImageUrl(id);
+    const byName = new Map(files.map((file) => [file.name, file]));
+    for (const block of doc.blocks) {
+      const file = block.type === 'image' && block.src ? byName.get(block.src) : undefined;
+      if (!file) continue;
+      this.imageUrls.set(block.id, URL.createObjectURL(file));
+      this.imageFiles.set(block.id, file);
+    }
     this.render();
     this.changed();
   }

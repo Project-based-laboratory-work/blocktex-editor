@@ -95,7 +95,7 @@ PDF・画像の読み込みで、どのモデルも同じ形のJSONを出すた�
 | `list` | `list` | 連続した `list` 要素は1つにまとめる。行頭の `・` `•` `-` `1.` `(1)` で項目を分け、記号の種類から `marker` を決める。`runs` の装飾は段落と同じく残す |
 | `math` | `math`（別行立て） | `tex` が無ければPDFの文字をそのまま入れる（仮の値。コンパイルが通らないことがある） |
 | `table` | `table` | `cells` があれば中身を入れる。列の揃えは `aligns`（無いか列数と合わなければ全部左寄せ）。罫線は `col_rules` → 列の `ruleLeft`・表の `ruleRight`、`row_rules` → 表の `ruleTop`・行の `ruleBelow`（無いか長さが合わなければ上端と下端の横線だけ）。`col_widths` は本文の幅に対する比率に直して列の `width` にする |
-| `figure` | `image` | 画像ファイルは無いので `src` は空（エディタで選び直す）。幅は本文の幅に対する比率 |
+| `figure` | `image` | 変換だけでは `src` は空。読み込み（`evaluation/extract.py`）では、元のPDF・画像から図の範囲を切り取った PNG を `images` として一緒に返し、`src` をその名前（`figure-p1-1.png`）にする（[figures.py](figures.py)）。幅は本文の幅に対する比率 |
 | `caption` | 隣の表・図の `caption` | 同じページの隣に表・図が無ければ段落として残す |
 | `other` | なし | ページ番号・ヘッダーなどは捨てる |
 | `code` | `code` | 連続した `code` 要素は1つにまとめ、行は改行でつなぐ（段落と違い、折り返しをつながない）。`language` は `plain` |
