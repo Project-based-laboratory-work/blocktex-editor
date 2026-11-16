@@ -51,3 +51,17 @@ def test_make_doc(tmp_path):
     page = doc["pages"][0]
     assert len(page["pairs"]) == len(page["rows"]) - 1
     assert {"same", "rule_same", "prev_group_kind"} <= set(page["pairs"][0])
+
+
+def test_inline_char_labels():
+    # 文中の数式の専門家（AI版）の正解: 目印の間の文字は数式。抽出器の入れた空白は、前後が同じ数式のときだけ数式
+    from hybrid_extractor.inline_math_data import char_labels
+    from hybrid_extractor.inline_math_eval import glyph_key
+
+    def ch(c, x):
+        return {"c": c, "bbox": (x, 0, x + 1, 1)}
+
+    space = {"c": " ", "bbox": None}
+    chars = [ch("a", 0), space, ch("x", 2), space, ch("y", 4), space, ch("b", 6)]
+    owner = {glyph_key(chars[2]): 0, glyph_key(chars[4]): 0}  # x と y が数式0
+    assert char_labels(chars, owner) == [None, None, 0, 0, 0, None, None]

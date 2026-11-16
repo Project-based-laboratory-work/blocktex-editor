@@ -30,7 +30,8 @@ NAME = "hybrid_extractor"
 PtBox = tuple[float, float, float, float]  # (x0, y0, x1, y1)。pt、左上が原点
 
 # ---- フォント名から分かること ----
-MONO_FONT = re.compile(r"CMTT|Typewriter|Mono|Courier|lmtt|Consola|Menlo|Inconsolata", re.IGNORECASE)
+# 等幅の書体。txtt は newtx パッケージの等幅（\\ttfamily）、Cursor は TeX Gyre の等幅
+MONO_FONT = re.compile(r"CMTT|Typewriter|Mono|Courier|lmtt|txtt|Cursor|Consola|Menlo|Inconsolata", re.IGNORECASE)
 MATH_FONT = re.compile(r"CMMI|CMSY|CMEX|CMBSY|MSAM|MSBM|EUFM|EUSM|RSFS|Math", re.IGNORECASE)
 BOLD_FONT = re.compile(r"Bold|Black|Heavy|Semibold|Demi|CMBX|CMB\d", re.IGNORECASE)
 # 和文の太字（\textbf）はゴシック体になるので、本文が明朝体のページではゴシック体を太字とみなす
@@ -115,12 +116,43 @@ def area(box: tuple) -> float:
 # =====================================================================
 
 
+BIG_SYMBOLS = set("∑∏∫∮√")
+
+
+def is_big_symbol(c: str, font: str) -> bool:
+    """枠がずれやすい大きい記号か（CMEX のフォントの文字と、∑ ∫ √ など）"""
+    return c in BIG_SYMBOLS or "CMEX" in font
+
+
+def char_key(ch: dict) -> tuple:
+    return (ch["c"], round(ch["origin"][0], 2), round(ch["origin"][1], 2))
+
+
+def accurate_boxes(page: pymupdf.Page) -> dict[tuple, tuple]:
+    """大きい記号の、文字の形から計算した正確な枠（TEXT_ACCURATE_BBOXES）。{(文字, 原点x, 原点y): 枠}。
+
+    ふつうの枠（フォント全体の高さで決まる）は、CMEX などのフォントの大きい記号では、実際に描かれる位置より
+    10pt ほど上にずれる（∑ が数式の上の行に入ってしまう）。全部の文字を正確な枠にすると行の高さが文字によって
+    変わり、行の間のすき間の判定がずれるので、大きい記号だけ差し替える"""
+    boxes = {}
+    flags = pymupdf.TEXTFLAGS_RAWDICT | pymupdf.TEXT_ACCURATE_BBOXES
+    for block in page.get_text("rawdict", flags=flags)["blocks"]:
+        for line in block.get("lines", []):
+            for span in line["spans"]:
+                for ch in span["chars"]:
+                    if is_big_symbol(ch["c"], span["font"]):
+                        boxes[char_key(ch)] = tuple(ch["bbox"])
+    return boxes
+
+
 def page_lines(page: pymupdf.Page) -> list[dict]:
     """1ページの行を、{"text", "bbox", "size", "chars"} の辞書のリストにして返す。
 
     chars は1文字ずつの {"c", "bbox", "font", "size", "flags", "baseline"}。装飾（runs）や字下げの判定に使う。
+    大きい記号（∑ ∫ √ と CMEX のかっこ）の枠だけは、文字の形から計算した正確な枠にする（accurate_boxes を参照）
     """
     lines = []
+    accurate = accurate_boxes(page)
     d = page.get_text("rawdict")
     for block in d["blocks"]:
         if block["type"] != 0:
@@ -132,8 +164,11 @@ def page_lines(page: pymupdf.Page) -> list[dict]:
             for span in line["spans"]:
                 for ch in span["chars"]:
                     text += ch["c"]                      # ① text に文字をつなげる
+                    bbox = tuple(ch["bbox"])
+                    if is_big_symbol(ch["c"], span["font"]):
+                        bbox = accurate.get(char_key(ch), bbox)
                     chars.append({
-                        "c": ch["c"], "bbox": tuple(ch["bbox"]), "font": span["font"], "size": span["size"],
+                        "c": ch["c"], "bbox": bbox, "font": span["font"], "size": span["size"],
                         "flags": span["flags"], "baseline": span["origin"][1],
                     })
                 size = max(size, span["size"])           # ② 今の size と span のサイズの、大きい方
@@ -186,32 +221,66 @@ def reading_order(boxes: list[tuple], page_width: float, two_column: bool) -> li
 # =====================================================================
 
 
+def is_math_piece(line: dict, other: dict) -> bool:
+    """line が、数式のかけらだけの行か（分数の分子・∑ の範囲・枠が上にずれた ∫ など）。
+    見えている文字が全部、数式のフォントか、other の文字より小さい（添字・何乗根の数字）"""
+    shown = [ch for ch in line["chars"] if ch["bbox"] is not None and not ch["c"].isspace()]
+    return bool(shown) and all(MATH_FONT.search(ch["font"]) or ch["size"] < other["size"] * 0.8 for ch in shown)
+
+
+def near_row(piece: dict, row: dict) -> bool:
+    """数式のかけら piece が、row の縦の範囲（文字の大きさの 0.6 倍だけ上下に広げる）に中心を持つか"""
+    cy = (piece["bbox"][1] + piece["bbox"][3]) / 2
+    pad = 0.6 * row["size"]
+    return row["bbox"][1] - pad <= cy <= row["bbox"][3] + pad
+
+
 def merge_rows(lines: list[dict], page_width: float, two_column: bool) -> list[dict]:
     """同じ高さに並ぶ行を、横に1つにつなぐ。返す行は {"bbox", "size", "parts"}（parts は左から並べた line）。
+    文中の数式のかけら（PyMuPDF が別の行にした分子・∫ など）も、近くの行につなぐ。
     2段組では、左右の段の行はつながない"""
     rows: list[dict] = []
     for line in lines:
-        target = None
+        candidates = []
         for row in rows[-3:]:  # 直前の数行だけ見る（同じ高さの line は続けて出てくる）
-            if not same_row(row, line):
+            piece = (is_math_piece(line, row) and near_row(line, row)) or (
+                all(is_math_piece(part, line) for part in row["parts"]) and near_row(row, line))
+            if not (same_row(row, line) or piece):
                 continue
             if two_column and {column_of(row["bbox"], page_width), column_of(line["bbox"], page_width)} == {1, 2}:
                 continue
             gap = max(line["bbox"][0] - row["bbox"][2], row["bbox"][0] - line["bbox"][2])
             if gap <= 3 * max(row["size"], line["size"]):
-                target = row
-                break
+                candidates.append(row)
+        # 候補が複数あれば、縦の中心が一番近い行（上下どちらの行の添字かを間違えないように）
+        line_cy = (line["bbox"][1] + line["bbox"][3]) / 2
+        target = min(candidates, key=lambda r: abs((r["bbox"][1] + r["bbox"][3]) / 2 - line_cy), default=None)
         if target is not None:
             target["parts"].append(line)
             target["bbox"] = union_bbox(target["bbox"], line["bbox"])
             target["size"] = max(target["size"], line["size"])
+            target["chars"] = target["chars"] + line["chars"]
         else:
-            rows.append({"bbox": line["bbox"], "size": line["size"], "parts": [line]})
+            rows.append({"bbox": line["bbox"], "size": line["size"], "parts": [line], "chars": list(line["chars"])})
     for row in rows:
         row["parts"].sort(key=lambda part: part["bbox"][0])
-        row["chars"] = row_chars(row["parts"])
+        main = max(row["parts"], key=lambda part: part["bbox"][2] - part["bbox"][0])
+        pieces = [part for part in row["parts"] if part is not main and is_math_piece(part, main)
+                  and part["bbox"][0] < main["bbox"][2] and part["bbox"][2] > main["bbox"][0]]
+        chars = row_chars([part for part in row["parts"] if not any(part is p for p in pieces)])
+        for piece in pieces:
+            chars = insert_piece(chars, piece["chars"])
+        row["chars"] = chars
         row["text"] = "".join(ch["c"] for ch in row["chars"])
     return rows
+
+
+def insert_piece(chars: list[dict], piece: list[dict]) -> list[dict]:
+    """行の文字の並びに、数式のかけら（分子など）の文字を、横の位置に合わせてまとめて差し込む"""
+    x0 = min(ch["bbox"][0] for ch in piece if ch["bbox"] is not None)
+    at = next((k for k, ch in enumerate(chars) if ch["bbox"] is not None and (ch["bbox"][0] + ch["bbox"][2]) / 2 > x0),
+              len(chars))
+    return chars[:at] + piece + chars[at:]
 
 
 def row_chars(parts: list[dict]) -> list[dict]:
@@ -562,6 +631,9 @@ class Block:
     n_rows: int = 0             # 行数
     first_indent: float = 0.0   # 1行目の左端の、2行目以降の左端からのずれ(pt)
     list_head: bool = False     # 箇条書きの頭（• や 1.）で始まる
+    tex: str | None = None      # 数式として読んだ LaTeX（label="math" のとき。math_reader で入れる）
+    chars: list[dict] = field(default_factory=list, repr=False)                  # 1文字ずつ（text と同じ並び）
+    decorations: list[tuple[str, ...]] = field(default_factory=list, repr=False)  # 1文字ずつの装飾
 
 
 def row_kind(row: dict) -> str:
@@ -596,6 +668,7 @@ class PageContext:
     height: float                 # ページの高さ
     two_column: bool
     margins: dict[int, float]     # 段ごとの左端（一番多くの行が始まる位置）。0: 1段組 / 1: 左の段 / 2: 右の段
+    rights: dict[int, float] = field(default_factory=dict)  # 段ごとの右端（行の右端の一番右）
 
     def column(self, box: tuple) -> int:
         return column_of(box, self.width) if self.two_column else 0
@@ -612,7 +685,11 @@ def page_context(rows: list[dict], width: float, height: float, two_column: bool
         x = round(row["bbox"][0])
         starts.setdefault(col, {})[x] = starts.setdefault(col, {}).get(x, 0) + 1
     margins = {col: float(max(xs, key=lambda x: xs[x])) for col, xs in starts.items()}
-    return PageContext(body_size(rows), width, height, two_column, margins)
+    rights: dict[int, float] = {}
+    for row in rows:
+        col = column_of(row["bbox"], width) if two_column else 0
+        rights[col] = max(rights.get(col, 0.0), row["bbox"][2])
+    return PageContext(body_size(rows), width, height, two_column, margins, rights)
 
 
 def group_kind(row: dict) -> str:
@@ -722,6 +799,70 @@ def block_chars(group: list[dict], code: bool) -> list[dict]:
     return chars
 
 
+def reindent_code(block: "Block") -> None:
+    """コードと決まったブロックの文字を、字下げ付きで作り直す（ブロックを書き換える）。
+    行の書体が等幅と判定できなくても、ラベルがコードなら字下げを戻すため（オペレータがラベルを決めたあとに呼ぶ）。
+    行頭の小さい数字（lstlisting の numbers=left の行番号）は取り除く"""
+    rows: list[list[dict]] = [[]]
+    for ch in block.chars:
+        if ch["c"] == "\n" and ch["bbox"] is None:
+            rows.append([])
+        elif ch["bbox"] is not None:          # 前に足した字下げの空白（位置の無い文字）は捨てて作り直す
+            rows[-1].append(ch)
+    cleaned = []
+    for row in rows:
+        shown = [ch for ch in row if not ch["c"].isspace()]
+        if not shown:
+            continue
+        big = max(ch["size"] for ch in shown if not ch["c"].isdigit()) if any(not ch["c"].isdigit() for ch in shown) else 0
+        k = 0
+        while k < len(row) and (row[k]["c"].isspace() or (row[k]["c"].isdigit() and row[k]["size"] < big * 0.85)):
+            k += 1                            # 行番号（小さい数字）と、その後ろの空白
+        if k < len(row):
+            cleaned.append(row[k:])
+    if not cleaned:
+        return
+    left = min(row[0]["bbox"][0] for row in cleaned)
+    widths = [ch["bbox"][2] - ch["bbox"][0] for row in cleaned for ch in row if not ch["c"].isspace()]
+    char_width = statistics.median(widths) if widths else 1.0
+    chars: list[dict] = []
+    for k, row in enumerate(cleaned):
+        if k > 0:
+            chars.append({**space_char(), "c": "\n"})
+        chars.extend(space_char() for _ in range(round((row[0]["bbox"][0] - left) / char_width)))
+        chars.extend(row)
+    block.chars = chars
+    block.decorations = [()] * len(chars)
+    block.text = "".join(ch["c"] for ch in chars)
+    block.runs = None
+
+
+def runs_with_math(chars: list[dict], decorations: list[tuple[str, ...]],
+                   spans: dict[tuple[int, int], str | None]) -> list[Run]:
+    """文中の数式（spans: 文字の範囲 [start, end) → LaTeX）を1つの Run（tex つき）にした runs。
+    読めなかった数式（LaTeX が None）も、数式の範囲として1つの Run にする（tex は書かない）"""
+    runs: list[Run] = []
+    k = 0
+    ends = dict(spans)
+    starts = {s: (s, e) for s, e in spans}
+    while k < len(chars):
+        if k in starts:
+            s, e = starts[k]
+            runs.append(Run("".join(ch["c"] for ch in chars[s:e]), tex=ends[(s, e)]))
+            k = e
+            continue
+        nxt = min([s for s in starts if s > k], default=len(chars))
+        part = to_runs(chars[k:nxt], decorations[k:nxt])
+        if part is None:
+            # 装飾が無い、または全部同じ装飾（to_runs は None を返す）→ 1つの Run にして、その装飾を付ける
+            decos = {d for ch, d in zip(chars[k:nxt], decorations[k:nxt]) if ch["bbox"] is not None and not ch["c"].isspace()}
+            marks = next(iter(decos)) if len(decos) == 1 else ()
+            part = [Run("".join(ch["c"] for ch in chars[k:nxt]), **{m: True for m in marks})]
+        runs += part
+        k = nxt
+    return runs
+
+
 def to_runs(chars: list[dict], decorations: list[tuple[str, ...]]) -> list[Run] | None:
     """装飾が同じで隣り合う文字を1つの Run にする。装飾が1つも無い・全部同じ装飾なら None"""
     shown = {d for ch, d in zip(chars, decorations) if ch["bbox"] is not None and not ch["c"].isspace()}
@@ -770,6 +911,8 @@ def make_block(page_no: int, group: list[dict], gkind: str, gothic_is_bold: bool
         n_rows=len(group),
         first_indent=round(group[0]["bbox"][0] - rest_left, 2),
         list_head=bool(LIST_HEAD.match(text.lstrip())),
+        chars=chars,
+        decorations=decorations,
     )
 
 
@@ -884,6 +1027,7 @@ def to_element(block: Block, width: float, height: float, label: str | None = No
         col_widths=t.col_widths if t else None,
         label=label,
         level=level,
+        tex=block.tex,
     )
 
 

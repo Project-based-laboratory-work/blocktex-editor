@@ -164,9 +164,20 @@ def classify_block(b: Block, body: float, font: str) -> str:
     return "paragraph"
 
 
+# 番号の無い見出しのレベルを、本文の文字サイズとの比で決める境目。jsarticle・article とも、
+# \\section は本文の約 1.4 倍、\\subsection は約 1.2 倍、\\subsubsection は本文と同じくらい
+LEVEL1_RATIO = 1.32
+LEVEL2_RATIO = 1.1
+
+
 def heading_levels(items: list[tuple[Block, str]]) -> list[int | None]:
-    """見出しのレベル。番号（1.2.3）があればその深さ、無ければ文字の大きい順（1〜3）"""
-    sizes = sorted({b.font_size or 0 for b, label in items if label == "heading"}, reverse=True)
+    """見出しのレベル。番号（1.2.3）があればその深さ、無ければ本文の文字サイズとの比（LEVEL1_RATIO・LEVEL2_RATIO）。
+    文書の中の見出しの大きさの順位では決めない（レベル1の見出しが無い文書で、全部1つずれるため）"""
+    counts: dict[float, int] = {}
+    for b, label in items:
+        if label in ("paragraph", "list") and b.font_size:
+            counts[b.font_size] = counts.get(b.font_size, 0) + len(text_of(b))
+    body = max(counts, key=lambda s: counts[s]) if counts else 10.0
     levels: list[int | None] = []
     for b, label in items:
         if label != "heading":
@@ -176,7 +187,8 @@ def heading_levels(items: list[tuple[Block, str]]) -> list[int | None]:
         if m:
             levels.append(min(3, m.group(1).count(".") + 1))
         else:
-            levels.append(min(3, sizes.index(b.font_size or 0) + 1))
+            ratio = (b.font_size or body) / body
+            levels.append(1 if ratio >= LEVEL1_RATIO else 2 if ratio >= LEVEL2_RATIO else 3)
     return levels
 
 

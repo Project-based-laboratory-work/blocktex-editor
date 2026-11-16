@@ -164,7 +164,22 @@ def paragraph(rng: random.Random, lang: str, i: int) -> SourceBlock:
     elif r < 0.3:
         lead = rng.choice(WORDS[lang]["leads"])
         text = rf"\textbf{{{lead}}}{WORDS[lang]['sep'] or '　'}{text}"  # 太字で始まる段落（見出しと間違えやすい）
+    elif r < 0.42:
+        # 表・図を参照する文で始まる段落（「表1 で始まればキャプション」という近道を覚えさせないため）
+        text = reference_lead(rng, lang) + (WORDS[lang]["sep"]) + text
     return SourceBlock(i, "paragraph", None, f"{prefix}{mark(f'b{i}s')}{text}{mark(f'b{i}e')}")
+
+
+def reference_lead(rng: random.Random, lang: str) -> str:
+    """表・図を参照する文（キャプションと同じく「表1」「Figure 2」で始まる）"""
+    n = rng.randint(1, 5)
+    if lang == "ja":
+        return rng.choice([f"表{n}に示すように、{rng.choice(WORDS[lang]['nouns'])}を比べた。",
+                           f"図{n}は、{rng.choice(WORDS[lang]['nouns'])}の様子である。",
+                           f"表{n} の結果から、{rng.choice(WORDS[lang]['nouns'])}が分かる。"])
+    return rng.choice([f"Table {n} shows {rng.choice(WORDS[lang]['nouns'])}.",
+                       f"Figure {n} compares {rng.choice(WORDS[lang]['nouns'])} and {rng.choice(WORDS[lang]['nouns'])}.",
+                       f"Fig. {n} illustrates {rng.choice(WORDS[lang]['nouns'])}."])
 
 
 def heading(rng: random.Random, style: Style, i: int) -> SourceBlock:

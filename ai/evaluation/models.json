@@ -22,8 +22,17 @@
         "entry": "hybrid_extractor.operator_rules:predict",
         "input": "pdf",
         "outputs": ["bbox", "text", "label", "runs"],
-        "params": {},
-        "note": "ルールのオペレータが専門家に聞いてラベルを決める。専門家を自作AIに入れ替えていく"
+        "params": {"math": "rule"},
+        "note": "ルールのオペレータが専門家に聞いてラベルを決める。専門家を自作AIに入れ替えていく。数式は「数式を読む係」（params.math: none / pdf_text / rule / ocr / rule+ocr）で LaTeX にする"
+    },
+    {
+        "id": "hybrid_ai",
+        "name": "hybrid_extractor（オペレータ＋AIの専門家）",
+        "entry": "hybrid_extractor.operator_rules:predict_ai",
+        "input": "pdf",
+        "outputs": ["bbox", "text", "label", "runs"],
+        "params": {"math": "rule"},
+        "note": "区切り・ラベル・文中の数式の専門家を、自作AI（hybrid_extractor/checkpoints/、train.py で作る）にしたもの。torch が要る"
     },
     {
         "id": "tesseract",
