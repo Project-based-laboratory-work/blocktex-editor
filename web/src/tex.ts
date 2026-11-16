@@ -424,5 +424,12 @@ function documentToTex(doc: BlockDocument): string {
     : [];
   const head = [documentClass(settings), ...packages, ...titleLines].join('\n');
   const body = doc.blocks.map(blockToTex).join('\n\n');
-  return `${head}\n\n\\begin{document}\n\n${body}${body ? '\n\n' : ''}\\end{document}\n`;
+  const tex = `${head}\n\n\\begin{document}\n\n${body}${body ? '\n\n' : ''}\\end{document}\n`;
+  return tex.replace(CONTROL_CHARS, '');
 }
+
+/**
+ * TeX に渡せない制御文字（改行とタブ以外）。PDFから読み込んだ文字に混ざることがある（Type3 の書体の合字など）。
+ * 読み込み側（ai/common/control_chars.py）で本来の文字に戻すが、残ったものはここで捨てて、コンパイルが止まらないようにする
+ */
+const CONTROL_CHARS = /[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/g;
