@@ -56,12 +56,19 @@ function geometryPackage(settings: DocumentSettings): string[] {
   return [`\\usepackage[truedimen,${paper},margin=${margin}truemm]{geometry}`];
 }
 
+/**
+ * 数式用。数式ブロックと文中数式の両方で使う。
+ * amssymb は \mathbb などの記号用。エディタの表示（KaTeX）は読み込まなくても描けるので、
+ * ここで読み込まないと「画面では出るのにPDFだけ Undefined control sequence」になる。
+ */
+const MATH_PACKAGES = ['\\usepackage{amsmath}', '\\usepackage{amssymb}'];
+
 const PACKAGES_BY_BLOCK_TYPE: Record<BlockType, string[]> = {
   title: [],
   heading: [],
   paragraph: [],
   list: [],
-  math: ['\\usepackage{amsmath}'],
+  math: MATH_PACKAGES,
   toc: [],
   // array は列幅を指定した列（p{幅}）の揃えに使う（tableColumnSpec を参照）
   table: ['\\usepackage{booktabs}', '\\usepackage{array}'],
@@ -402,6 +409,7 @@ function documentToTex(doc: BlockDocument): string {
   for (const block of doc.blocks) addPackages(PACKAGES_BY_BLOCK_TYPE[block.type]);
 
   const segments = doc.blocks.flatMap(richContents).flat();
+  if (segments.some((seg) => seg.type === 'math')) addPackages(MATH_PACKAGES);
   const texts = segments.filter((seg): seg is Extract<InlineSegment, { type: 'text' }> => seg.type === 'text');
   if (texts.some((seg) => seg.underline)) addPackages(UNDERLINE_PACKAGES);
   if (texts.some((seg) => hrefTex(seg.href) !== undefined)) addPackages(LINK_PACKAGES);
