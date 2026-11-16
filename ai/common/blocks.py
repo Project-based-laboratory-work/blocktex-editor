@@ -253,7 +253,8 @@ def _table_block(el: Element, caption: str | None, text_area: tuple[float, float
 
 
 def _image_block(el: Element, caption: str | None, text_area: tuple[float, float]) -> dict[str, Any]:
-    """画像ファイルはIRに無いので src は空（エディタで選び直す）。幅は本文の幅に対する比率で再現する。"""
+    """画像ファイルはIRに無いので、ここでは src は空。読み込み（evaluation/extract.py）では、元のPDF・画像から図の範囲を
+    切り取った画像を付けて src に名前を入れる（common/figures.py）。幅は本文の幅に対する比率で再現する。"""
     left, right = text_area
     width_ratio = (el.bbox[2] - el.bbox[0]) / (right - left) if right > left else 1.0
     block: dict[str, Any] = {"id": _new_id(), "type": "image", "src": "", "widthRatio": round(min(1.0, max(0.05, width_ratio)), 3)}

@@ -43,10 +43,10 @@ function schedulePdfRefresh(): void {
     pdfRefreshTimer = window.setTimeout(refreshPdf, PDF_REFRESH_DELAY_MS);
 }
 
-function showEditor(doc: BlockDocument): void {
+function showEditor(doc: BlockDocument, files: File[] = []): void {
     homeView.hidden = true;
     editorView.hidden = false;
-    editor.load(doc);
+    editor.load(doc, files);
 }
 
 function showHome(): void {
@@ -130,8 +130,21 @@ async function loadModels(): Promise<void> {
 modelSelect.addEventListener('change', showModelNote);
 loadModels();
 
-/** PDF・画像をコンパイルサーバーの /api/extract に送り、選んだモデルでエディタ用の文書にしてもらう。失敗したら理由を投げる */
-async function extractFile(file: File, model: ExtractModel | undefined): Promise<BlockDocument> {
+/** サーバーが返す、図の範囲を切り取った画像（画像ブロックの src と同じ name）。data は PNG の base64 */
+interface ExtractedImage {
+    name: string;
+    data: string;
+}
+
+/** base64 の PNG を、ユーザーが選んだ画像と同じ File にする */
+function imageFile(image: ExtractedImage): File {
+    const bytes = Uint8Array.from(atob(image.data), (c) => c.charCodeAt(0));
+    return new File([bytes], image.name, { type: 'image/png' });
+}
+
+/** PDF・画像をコンパイルサーバーの /api/extract に送り、選んだモデルでエディタ用の文書にしてもらう。失敗したら理由を投げる。
+ * 図は、元のPDF・画像から切り取った画像ファイルも一緒に返す */
+async function extractFile(file: File, model: ExtractModel | undefined): Promise<{ doc: BlockDocument; files: File[] }> {
     const url = model ? `${EXTRACT_URL}?model=${encodeURIComponent(model.id)}` : EXTRACT_URL;
     let res: Response;
     try {
@@ -144,14 +157,16 @@ async function extractFile(file: File, model: ExtractModel | undefined): Promise
         throw new Error(await res.text());
     }
 
-    // サーバーは {"labeled": ラベル付きIR, "document": エディタ用JSON} を返す
-    const doc: BlockDocument = (await res.json()).document;
+    // サーバーは {"labeled": ラベル付きIR, "document": エディタ用JSON, "images": 図の画像} を返す
+    const body = await res.json();
+    const doc: BlockDocument = body.document;
+    const images: ExtractedImage[] = Array.isArray(body.images) ? body.images : [];
     if (!isCurrentSchema(doc)) {
         throw new Error(`サーバーが返した文書の形式（schemaVersion ${doc.schemaVersion}）がエディタと合いません。ai/common/blocks.py を確認してください。`);
     }
     // サーバーは一時ファイル名（input.pdf など）で読むので、文書名は選んだファイル名にする
     doc.title = file.name;
-    return doc;
+    return { doc, files: images.map(imageFile) };
 }
 
 fileInput.addEventListener('change', async () => {
@@ -169,7 +184,8 @@ fileInput.addEventListener('change', async () => {
     fileName.textContent = `${file.name} を読み込み中…`;
     modelSelect.disabled = true;
     try {
-        showEditor(await extractFile(file, model));
+        const { doc, files } = await extractFile(file, model);
+        showEditor(doc, files);
         fileName.textContent = file.name;
     } catch (err) {
         console.error(err);

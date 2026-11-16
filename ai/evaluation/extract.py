@@ -2,17 +2,21 @@
 エディタの「PDF・画像を読み込む」で、登録簿（models.json）のモデルを使ってファイルを読み、エディタ用JSONにする。
 
 評価サイトで選べるモデルと同じものを使う（server/ の /api/extract がこれを呼ぶ）。
-{"labeled": ラベル付きIR, "document": エディタ用JSON} を標準出力に出す（rule_based.ir_adapter --stdout と同じ形）。
+{"labeled": ラベル付きIR, "document": エディタ用JSON, "images": 図の画像} を標準出力に出す。
+images は [{"name": "figure-p1-1.png", "data": PNG の base64}, ...]。図（label="figure"）の範囲を元のPDF・画像から切り取ったもので、
+document の画像ブロックの src がこの name になっている（common/figures.py）。
 
 使い方:
     python -m evaluation.extract rule_based rule_based/sample_data/sample.pdf
     python -m evaluation.extract tesseract_image_rule_based page.png --title スライド
 """
 import argparse
+import base64
 import json
 from pathlib import Path
 
 from common.blocks import ir_to_document
+from common.figures import attach_figures, crop_figures
 from common.ir import to_dict, validate
 from evaluation.models import load_registry, predict, predict_image
 
@@ -39,7 +43,11 @@ def main(argv: list[str] | None = None) -> None:
     problems = validate(labeled)
     if problems:
         raise SystemExit("labeled の形式に問題があります:\n" + "\n".join(problems))
-    print(json.dumps({"labeled": to_dict(labeled), "document": ir_to_document(labeled, args.title)}, ensure_ascii=False))
+    document = ir_to_document(labeled, args.title)
+    figures = crop_figures(args.file, labeled)
+    attach_figures(document, figures)
+    images = [{"name": f.name, "data": base64.b64encode(f.png).decode("ascii")} for f in figures if f is not None]
+    print(json.dumps({"labeled": to_dict(labeled), "document": document, "images": images}, ensure_ascii=False))
 
 
 if __name__ == "__main__":
