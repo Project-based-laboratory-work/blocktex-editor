@@ -22,10 +22,10 @@ import unicodedata
 from common.ir import normalize_bbox
 from hybrid_extractor.extract import (
     LIST_HEAD,
-    MATH_FONT,
-    MONO_FONT,
     Block,
     PageContext,
+    is_math,
+    is_mono,
     row_font,
     row_kind,
     visible,
@@ -367,8 +367,8 @@ def char_features(chars: list[dict], block_size: float, width: float, height: fl
         feats.append([
             float(synthetic and ch["c"] != "\n"),
             float(ch["c"] == "\n"),
-            float(bool(MATH_FONT.search(font))),
-            float(bool(MONO_FONT.search(font))),
+            float(is_math(ch)),   # 数式の文字（書体の名前＋短い斜体の英字・ギリシャ文字。extract.mark_char_kinds）
+            float(is_mono(ch)),   # 等幅（送り幅で決める）
             float(bool(BF_FONT.search(font))),
             float(bool(BB_FONT.search(font))),
             float(bool(CJK_FONT.search(font))),
@@ -381,8 +381,8 @@ def char_features(chars: list[dict], block_size: float, width: float, height: fl
             gap_before,
             gap_after,
             x_in_line,
-            float(bool(prev and MATH_FONT.search(prev["font"]))),
-            float(bool(nxt and MATH_FONT.search(nxt["font"]))),
+            float(bool(prev and is_math(prev))),
+            float(bool(nxt and is_math(nxt))),
         ])
     return feats
 
@@ -394,6 +394,7 @@ def to_char_records(chars: list[dict], width: float, height: float) -> list[dict
         synthetic = ch["bbox"] is None
         out.append({
             "c": ch["c"], "font": ch["font"], "size": ch["size"], "flags": ch.get("flags", 0),
+            "mono_char": is_mono(ch), "math_char": is_math(ch),
             "bbox": None if synthetic else list(normalize_bbox(ch["bbox"], width, height)),
             "baseline": None if synthetic else ch["baseline"] / height,
         })

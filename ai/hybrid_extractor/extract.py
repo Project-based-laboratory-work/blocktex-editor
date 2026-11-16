@@ -30,9 +30,13 @@ NAME = "hybrid_extractor"
 PtBox = tuple[float, float, float, float]  # (x0, y0, x1, y1)。pt、左上が原点
 
 # ---- フォント名から分かること ----
-# 等幅の書体。txtt は newtx パッケージの等幅（\\ttfamily）、Cursor は TeX Gyre の等幅
-MONO_FONT = re.compile(r"CMTT|Typewriter|Mono|Courier|lmtt|txtt|Cursor|Consola|Menlo|Inconsolata", re.IGNORECASE)
-MATH_FONT = re.compile(r"CMMI|CMSY|CMEX|CMBSY|MSAM|MSBM|EUFM|EUSM|RSFS|Math", re.IGNORECASE)
+# 等幅の書体。txtt は newtx パッケージの等幅（\\ttfamily）、Cursor は TeX Gyre の等幅、SFTT は T1 fontenc の CMTT、
+# NimbusMonL は times パッケージの等幅（Courier）。名前は手がかりの1つで、等幅かどうかは送り幅で決める（fixed_pitch_fonts）
+MONO_FONT = re.compile(r"CMTT|SFTT|Typewriter|Mono|NimbusMon|Courier|lmtt|txtt|Cursor|Consola|Menlo|Inconsolata",
+                       re.IGNORECASE)
+# 数式の書体。PazoMath は mathpazo、StandardSymL（Symbol）は mathptmx のギリシャ文字。
+# mathpazo・mathptmx の数式の英字は本文の斜体と同じ書体になるので、名前では分からない（mark_char_kinds で補う）
+MATH_FONT = re.compile(r"CMMI|CMSY|CMEX|CMBSY|MSAM|MSBM|EUFM|EUSM|RSFS|Math|StandardSym|Symbol", re.IGNORECASE)
 BOLD_FONT = re.compile(r"Bold|Black|Heavy|Semibold|Demi|CMBX|CMB\d", re.IGNORECASE)
 # 和文の太字（\textbf）はゴシック体になるので、本文が明朝体のページではゴシック体を太字とみなす
 GOTHIC_FONT = re.compile(r"Gothic|KakuGo|Kaku-Go|Meiryo|SansCJK|Sans-?JP|SourceHanSans", re.IGNORECASE)
@@ -51,6 +55,10 @@ INDENT = 0.5         # 段落の1行目の字下げとみなす、左端のず�
 SIZE_RATIO = 1.15    # これより文字の大きさが違う行は、別のブロック（見出しと本文など）
 MATH_RATIO = 0.3     # 数式のフォントの文字がこの割合以上の行は、数式の行
 MONO_RATIO = 0.6     # 等幅フォントの文字がこの割合以上の行は、コードの行
+# コードの行どうしのベースラインの間隔の上限（文字の大きさに対する比率）。jsarticle の行送りは文字の 1.6〜1.7 倍。
+# 文字の枠の高さは書体で違う（Times の等幅 NimbusMonL は枠が低く、枠と枠のすき間が大きく見える）ので、
+# 枠のすき間（LINE_GAP）だけでなく、書体によらないベースラインの間隔でも測る
+CODE_PITCH = 1.8
 COLUMN_GUTTER = 10.0  # 2段組の段の境目（ページの中央）からこの幅(pt)まではみ出しても、同じ段とみなす
 # 表
 TABLE_LINE_TOLERANCE = 3.0   # 同じ表の罫線とみなす、左端・右端のずれ(pt)
@@ -119,9 +127,17 @@ def area(box: tuple) -> float:
 BIG_SYMBOLS = set("∑∏∫∮√")
 
 
+# 大きい記号（大きいかっこ・∑ など）の書体。CM は CMEX、lmodern は LMMathExtension
+EXTENSION_FONT = re.compile(r"CMEX|MathExtension", re.IGNORECASE)
+
+
+def is_extension(font: str) -> bool:
+    return bool(EXTENSION_FONT.search(font))
+
+
 def is_big_symbol(c: str, font: str) -> bool:
-    """枠がずれやすい大きい記号か（CMEX のフォントの文字と、∑ ∫ √ など）"""
-    return c in BIG_SYMBOLS or "CMEX" in font
+    """枠がずれやすい大きい記号か（CMEX・LMMathExtension のフォントの文字と、∑ ∫ √ など）"""
+    return c in BIG_SYMBOLS or is_extension(font)
 
 
 def char_key(ch: dict) -> tuple:
@@ -143,6 +159,84 @@ def accurate_boxes(page: pymupdf.Page) -> dict[tuple, tuple]:
                     if is_big_symbol(ch["c"], span["font"]):
                         boxes[char_key(ch)] = tuple(ch["bbox"])
     return boxes
+
+
+# 数式の記号（行が数式かを数えるときだけ使う。文中の数式の種にはしない）
+MATH_SYMBOLS = set("=+−×÷±∓<>≤≥≠≈≡∼≃∝∞∂∇∑∏∫∮√∈∉∋⊂⊃⊆⊇∪∩∧∨¬→←↔⇒⇔↦∀∃∅′")
+PITCH_TOLERANCE = 0.03   # 等幅とみなす、文字の送り幅のばらつき（最大との差 ÷ 最大）の上限
+PITCH_MIN_CHARS = 4      # 等幅かどうかを決めるのに要る、数字以外の ASCII の文字の種類の数
+MATH_RUN = 2             # この文字数以下の斜体の英字の並びは、数式の文字とみなす（それより長いのは斜体の単語）
+
+
+def fixed_pitch_fonts(chars: list[dict]) -> dict[str, bool]:
+    """書体ごとに、等幅か（文字の送り幅がそろっているか）を決める。
+
+    PDF の書体の「等幅」の印（PyMuPDF の flags の 8）は、TeX の書体ではほぼ付かない。名前（SFTT・NimbusMonL…）も
+    パッケージごとに違う。そこで、ページの中で書体ごとに ASCII の文字の送り幅（rawdict の文字の枠の幅 ÷ 文字の大きさ）を集め、
+    ばらつきが小さければ等幅とする。数字はふつうの書体でも幅がそろっているので数えない。
+    文字の種類が足りない書体は、ここには入れない（is_mono が名前で決める）"""
+    widths: dict[str, dict[str, float]] = {}
+    for ch in chars:
+        c = ch["c"]
+        if ch["bbox"] is None or not c.isascii() or c.isspace() or c.isdigit() or not ch["size"]:
+            continue
+        widths.setdefault(ch["font"], {})[c] = (ch["bbox"][2] - ch["bbox"][0]) / ch["size"]
+    result = {}
+    for font, w in widths.items():
+        if len(w) >= PITCH_MIN_CHARS and max(w.values()) > 0:
+            result[font] = (max(w.values()) - min(w.values())) / max(w.values()) <= PITCH_TOLERANCE
+    return result
+
+
+def is_greek(c: str) -> bool:
+    return "\u0391" <= c <= "\u03c9" or c in "ϑϕϖϰϱϵ"
+
+
+def mark_char_kinds(lines: list[dict]) -> None:
+    """1文字ずつに印を付ける（ch["mono_char"]・ch["math_char"]・ch["math_like_char"]。
+    "math" ではないのは、文中の数式の学習データ（inline_math_data.py）が "math" を正解に使っているため）。書体の名前に頼りすぎないため。
+
+    - mono_char: 等幅の書体の文字（送り幅で決める。決められなければ名前）
+    - math_char: 数式の文字。数式の書体の名前の文字に加えて、等幅でない ① ギリシャ文字 ② 斜体の英字が MATH_RUN 文字以下で
+      並んだもの（mathpazo・mathptmx の数式の x は本文の斜体と同じ書体。斜体の単語は長いので区別できる）
+    - math_like_char: math か、等幅でない数式の記号（= ≤ ∑ …）。行が数式かを数えるときだけ使う"""
+    pitch = fixed_pitch_fonts([ch for line in lines for ch in line["chars"]])
+    for line in lines:
+        chars = line["chars"]
+        for ch in chars:
+            ch["mono_char"] = pitch.get(ch["font"], bool(MONO_FONT.search(ch["font"])))
+        k = 0
+        while k < len(chars):
+            ch = chars[k]
+            italic_letter = ch["flags"] & 2 and ch["c"].isascii() and ch["c"].isalpha() and not ch["mono_char"]
+            if not italic_letter:
+                ch["math_char"] = not ch["mono_char"] and (bool(MATH_FONT.search(ch["font"])) or is_greek(ch["c"]))
+                k += 1
+                continue
+            end = k
+            while end < len(chars) and chars[end]["flags"] & 2 and chars[end]["c"].isascii() and chars[end]["c"].isalpha():
+                end += 1
+            short = end - k <= MATH_RUN
+            for j in range(k, end):
+                chars[j]["math_char"] = short or bool(MATH_FONT.search(chars[j]["font"]))
+            k = end
+        for ch in chars:
+            ch["math_like_char"] = ch["math_char"] or (not ch["mono_char"] and ch["c"] in MATH_SYMBOLS)
+
+
+def is_mono(ch: dict) -> bool:
+    """等幅の文字か。印（mark_char_kinds）が無い文字（学習データの古い記録など）は名前で決める"""
+    return ch.get("mono_char", bool(MONO_FONT.search(ch["font"])))
+
+
+def is_math(ch: dict) -> bool:
+    """数式の文字か（印が無ければ名前で決める）"""
+    return ch.get("math_char", bool(MATH_FONT.search(ch["font"])))
+
+
+def is_math_like(ch: dict) -> bool:
+    """数式の文字か数式の記号か（行が数式かを数えるとき）"""
+    return ch.get("math_like_char", bool(MATH_FONT.search(ch["font"])))
 
 
 def page_lines(page: pymupdf.Page) -> list[dict]:
@@ -174,6 +268,7 @@ def page_lines(page: pymupdf.Page) -> list[dict]:
                 size = max(size, span["size"])           # ② 今の size と span のサイズの、大きい方
             if text.strip():
                 lines.append({"text": text, "bbox": tuple(line["bbox"]), "size": size, "chars": chars})
+    mark_char_kinds(lines)
     return lines
 
 
@@ -225,7 +320,7 @@ def is_math_piece(line: dict, other: dict) -> bool:
     """line が、数式のかけらだけの行か（分数の分子・∑ の範囲・枠が上にずれた ∫ など）。
     見えている文字が全部、数式のフォントか、other の文字より小さい（添字・何乗根の数字）"""
     shown = [ch for ch in line["chars"] if ch["bbox"] is not None and not ch["c"].isspace()]
-    return bool(shown) and all(MATH_FONT.search(ch["font"]) or ch["size"] < other["size"] * 0.8 for ch in shown)
+    return bool(shown) and all(is_math(ch) or ch["size"] < other["size"] * 0.8 for ch in shown)
 
 
 def near_row(piece: dict, row: dict) -> bool:
@@ -250,8 +345,12 @@ def merge_rows(lines: list[dict], page_width: float, two_column: bool) -> list[d
             if two_column and {column_of(row["bbox"], page_width), column_of(line["bbox"], page_width)} == {1, 2}:
                 continue
             gap = max(line["bbox"][0] - row["bbox"][2], row["bbox"][0] - line["bbox"][2])
-            if gap <= 3 * max(row["size"], line["size"]):
+            # コードの行番号（listings の numbers=left）は、字下げの深い行ではコードから遠く離れる
+            numbered_code = is_line_number(line, row) or any(is_line_number(part, line) for part in row["parts"])
+            if gap <= (LINE_NUMBER_GAP if numbered_code else 3) * max(row["size"], line["size"]):
                 candidates.append(row)
+            elif is_equation_number(line, row):
+                candidates.append(row)   # 別行立ての数式の右端の式番号 (1) は、どれだけ離れていても数式の行につなぐ
         # 候補が複数あれば、縦の中心が一番近い行（上下どちらの行の添字かを間違えないように）
         line_cy = (line["bbox"][1] + line["bbox"][3]) / 2
         target = min(candidates, key=lambda r: abs((r["bbox"][1] + r["bbox"][3]) / 2 - line_cy), default=None)
@@ -273,6 +372,27 @@ def merge_rows(lines: list[dict], page_width: float, two_column: bool) -> list[d
         row["chars"] = chars
         row["text"] = "".join(ch["c"] for ch in row["chars"])
     return rows
+
+
+EQUATION_NUMBER = re.compile(r"^\(\d+(\.\d+)*\)$")
+
+
+def is_equation_number(line: dict, row: dict) -> bool:
+    """line が、row（数式の行）の右にある式番号「(1)」「(2.3)」か"""
+    return (bool(EQUATION_NUMBER.match(line["text"].strip())) and line["bbox"][0] >= row["bbox"][2]
+            and same_row(row, line) and ratio(row["chars"], is_math_like) >= MATH_RATIO)
+
+
+LINE_NUMBER_GAP = 15   # コードの行番号とコードの行の、横のすき間の上限（文字の大きさに対する比率）
+
+
+def is_line_number(line: dict, other: dict) -> bool:
+    """line が、other（コードの行）の左に付いた行番号か。数字だけで、other より小さく、other が等幅で、左にある"""
+    shown = visible(line["chars"])
+    code = visible(other["chars"])
+    return (bool(shown) and bool(code) and all(ch["c"].isdigit() for ch in shown)
+            and line["size"] < other["size"] * 0.95 and line["bbox"][2] <= other["bbox"][0]
+            and sum(is_mono(ch) for ch in code) >= len(code) * MONO_RATIO)
 
 
 def insert_piece(chars: list[dict], piece: list[dict]) -> list[dict]:
@@ -302,9 +422,10 @@ def visible(chars: list[dict]) -> list[dict]:
     return [ch for ch in chars if ch["bbox"] is not None and not ch["c"].isspace()]
 
 
-def ratio(chars: list[dict], pattern: re.Pattern) -> float:
+def ratio(chars: list[dict], test) -> float:
+    """見えている文字のうち、test(ch) が真の文字の割合"""
     shown = visible(chars)
-    return sum(bool(pattern.search(ch["font"])) for ch in shown) / len(shown) if shown else 0.0
+    return sum(bool(test(ch)) for ch in shown) / len(shown) if shown else 0.0
 
 
 # =====================================================================
@@ -638,18 +759,27 @@ class Block:
 
 def row_kind(row: dict) -> str:
     """行の種類。"math"（数式の行）/ "code"（等幅フォントの行）/ "text" """
-    if ratio(row["chars"], MATH_FONT) >= MATH_RATIO:
+    if ratio(row["chars"], is_math_like) >= MATH_RATIO:
         return "math"
-    if ratio(row["chars"], MONO_FONT) >= MONO_RATIO:
+    if ratio(row["chars"], is_mono) >= MONO_RATIO:
         return "code"
     return "text"
+
+
+def row_baseline(row: dict) -> float:
+    """行のベースライン（一番大きい文字たちのベースラインの中央値）。添字は少しずれるので、大きい文字だけで測る"""
+    shown = visible(row["chars"])
+    if not shown:
+        return row["bbox"][3]
+    big = max(ch["size"] for ch in shown)
+    return statistics.median(ch["baseline"] for ch in shown if ch["size"] >= big * 0.9)
 
 
 def row_font(row: dict) -> str:
     """行の文字（数字・記号・数式・コードを除く）で一番多い書体。見出しと本文の書体の違いを見るのに使う"""
     fonts: dict[str, int] = {}
     for ch in visible(row["chars"]):
-        if ch["c"].isalpha() and not MATH_FONT.search(ch["font"]):
+        if ch["c"].isalpha() and not is_math(ch):
             fonts[ch["font"]] = fonts.get(ch["font"], 0) + 1
     return max(fonts, key=lambda f: fonts[f]) if fonts else ""
 
@@ -657,7 +787,7 @@ def row_font(row: dict) -> str:
 def is_tiny(row: dict) -> bool:
     """数式の断片になりやすい、2〜3文字だけの英数字の行（∫ の上下の 0 や 1、分母の 3 など）"""
     shown = visible(row["chars"])
-    return len(shown) <= 3 and all(ch["c"].isascii() or MATH_FONT.search(ch["font"]) for ch in shown)
+    return len(shown) <= 3 and all(ch["c"].isascii() or is_math(ch) for ch in shown)
 
 
 @dataclass
@@ -731,7 +861,8 @@ def rule_continues(group: list[dict], gkind: str, row: dict, ctx: PageContext) -
         if gkind == "math":
             ok = False
         elif gkind == "code":
-            ok = gap <= LINE_GAP * unit and kind == "code"
+            pitch = row_baseline(row) - row_baseline(prev)
+            ok = kind == "code" and (gap <= LINE_GAP * unit or 0 < pitch <= CODE_PITCH * max(row["size"], prev["size"]))
         elif gkind == "list" and kind == "text":
             # 箇条書きの項目の間は、行の間より少し広い（\itemsep）
             limit = (LIST_GAP if is_list_head else LINE_GAP) * unit
@@ -775,7 +906,7 @@ def char_decorations(ch: dict, gothic_is_bold: bool, underlines: list[tuple[floa
     marks = []
     if ch["flags"] & 16 or BOLD_FONT.search(font) or (gothic_is_bold and GOTHIC_FONT.search(font)):
         marks.append("bold")
-    if (ch["flags"] & 2 or ITALIC_FONT.search(font)) and not MATH_FONT.search(font):
+    if (ch["flags"] & 2 or ITALIC_FONT.search(font)) and not is_math(ch):
         marks.append("italic")
     cx = (ch["bbox"][0] + ch["bbox"][2]) / 2
     if any(x0 <= cx <= x1 and 0 < y - ch["baseline"] <= ch["size"] * UNDERLINE_MAX_DROP for x0, x1, y in underlines):
@@ -823,8 +954,12 @@ def reindent_code(block: "Block") -> None:
     if not cleaned:
         return
     left = min(row[0]["bbox"][0] for row in cleaned)
+    # 1文字ぶんの幅は、隣り合う文字の左端の間隔で測る。listings（columns=fixed）は文字を枠の幅（0.525em）より
+    # 広い間隔（0.6em）で並べるので、文字の枠の幅で割ると字下げを多く数えてしまう
+    steps = [b["bbox"][0] - a["bbox"][0] for row in cleaned for a, b in zip(row, row[1:])
+             if not a["c"].isspace() and not b["c"].isspace() and b["bbox"][0] > a["bbox"][0]]
     widths = [ch["bbox"][2] - ch["bbox"][0] for row in cleaned for ch in row if not ch["c"].isspace()]
-    char_width = statistics.median(widths) if widths else 1.0
+    char_width = statistics.median(steps) if steps else statistics.median(widths) if widths else 1.0
     chars: list[dict] = []
     for k, row in enumerate(cleaned):
         if k > 0:
@@ -906,8 +1041,8 @@ def make_block(page_no: int, group: list[dict], gkind: str, gothic_is_bold: bool
         font_size=max(sizes, key=lambda s: sizes[s]) if sizes else None,
         bold=sum("bold" in d for _, d in letters) > len(letters) / 2 if letters else None,
         font=max(fonts, key=lambda f: fonts[f]) if fonts else "",
-        mono_ratio=round(sum(bool(MONO_FONT.search(ch["font"])) for ch, _ in shown) / max(1, len(shown)), 3),
-        math_ratio=round(sum(bool(MATH_FONT.search(ch["font"])) for ch, _ in shown) / max(1, len(shown)), 3),
+        mono_ratio=round(sum(is_mono(ch) for ch, _ in shown) / max(1, len(shown)), 3),
+        math_ratio=round(sum(is_math_like(ch) for ch, _ in shown) / max(1, len(shown)), 3),
         n_rows=len(group),
         first_indent=round(group[0]["bbox"][0] - rest_left, 2),
         list_head=bool(LIST_HEAD.match(text.lstrip())),
@@ -930,7 +1065,7 @@ def page_is_gothic(rows: list[dict]) -> bool:
     fonts: dict[str, int] = {}
     for row in rows:
         for ch in visible(row["chars"]):
-            if not MATH_FONT.search(ch["font"]) and not MONO_FONT.search(ch["font"]):
+            if not is_math(ch) and not is_mono(ch):
                 fonts[ch["font"]] = fonts.get(ch["font"], 0) + 1
     return bool(fonts) and bool(GOTHIC_FONT.search(max(fonts, key=lambda f: fonts[f])))
 

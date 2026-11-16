@@ -69,7 +69,7 @@ cd hybrid_extractor/sample_data && uplatex sample.tex && uplatex sample.tex && d
 | [features.py](features.py) | AI の専門家の特徴（区切り31・ラベル52・1文字27）。学習データと使うときで同じ関数を通す |
 | [nn.py](nn.py) / [train.py](train.py) | モデル（MLP・小さい Transformer）と学習、ルール版との比較 |
 | [ai_experts.py](ai_experts.py) | 学習した重み（checkpoints/）を読んで専門家にする。オペレータの AI モード（`predict_ai`、`--ai`）が使う |
-| [make_eval_dataset.py](make_eval_dataset.py) | 評価サイト用の、見た目をばらつかせたデータセット（ルールと AI の差を見る） |
+| [make_eval_dataset.py](make_eval_dataset.py) | 評価サイト用の、見た目（書体も）をばらつかせたデータセット（ルールと AI の差を見る） |
 | [real_reports.py](real_reports.py) | 本物のレポート（TeX のソースがあるもの）に目印を入れてコンパイルし直し、正解付きの評価データセットにする（DocBank と同じ考え方） |
 | [AI.md](AI.md) | **自作AIのアルゴリズムの説明と結果** |
 | [doc_gen.py](doc_gen.py) | 学習用のランダムな文書（TeX）を作る。評価用とは別の作り方 |
@@ -255,6 +255,42 @@ python -m evaluation.run --model hybrid_ai --dataset evaluation/data/real_report
 1. uplatex の3本は `\usepackage[T1]{fontenc}` なので、コードの書体が `SFTT`（cm-super の等幅）。等幅と分からず、1行ずつ段落になる。
    行番号（`SFRM0500`）も別のブロックになる
 2. compiler（LuaLaTeX）は `LMMono` で等幅と分かるが、`columns=fixed` で桁をそろえた大きな空きで、1行が左右に割れる
+
+## 書体を自由にする（PDF読み込みの許可リストの段階1、2026-11-16）
+
+[../CONSTRAINTS.md](../CONSTRAINTS.md) の許可リストの段階1。本文・見出し・コードの書体を自由にし（数式の書体は CM 系だけ）、
+抽出器・ルール・AI が書体の名前に頼りすぎないようにした。
+
+- **学習データ・物差し:** `doc_gen.py` の見た目に書体を足した（欧文: 既定・lmodern・newtxtext・times・mathptmx・mathpazo・helvet・CM のサンセリフ、
+  `[T1]{fontenc}` のあり/なし、等幅: 既定・inconsolata、和文: 既定・IPAex・IPA・原ノ味（`\special{pdf:mapfile}`））。
+  簡易の物差しは `make_eval_dataset.py --out evaluation/data/hybrid_fonts --docs 60 --seed 4`（tags に書体が入るので、評価サイトで書体ごとに見られる）
+- **文字の印（`extract.mark_char_kinds`）:** 1文字ずつ `mono_char`（等幅）・`math_char`（数式の文字）・`math_like_char`（数式の文字か記号）を付け、
+  あとの判定は全部この印を見る（`is_mono` / `is_math` / `is_math_like`）
+  - 等幅は**送り幅**で決める（`fixed_pitch_fonts`）。PDF の「等幅」の印（PyMuPDF の flags の 8）は TeX の書体ではどれも付かない。
+    名前も SFTT（T1）・NimbusMonL（times）など、パッケージごとに違う
+  - 数式の文字は、書体の名前に加えて、等幅でない**ギリシャ文字**と、**2文字以下の斜体の英字の並び**。mathptmx・mathpazo では数式の `x` が
+    本文の斜体と同じ書体（`NimbusRomNo9L-ReguItal`・`URWPalladioL-Ital`）になる。斜体の単語は長いので区別できる
+- **コードの行の間隔はベースラインで測る（`CODE_PITCH`）:** 文字の枠の高さは書体で違う（Times の等幅は枠が低く、すき間が大きく見える）
+- **離れた行番号と式番号をつなぐ（`is_line_number`・`is_equation_number`）:** 字下げの深いコードの行番号、数式の右端の `(1)`
+- **字下げは文字の並ぶ間隔で数える（`reindent_code`）:** listings は文字を枠の幅（0.525em）より広い間隔（0.6em）で並べる
+- **数式を読む係:** 大きい記号の書体は CMEX と lmodern の LMMathExtension（`EXTENSION_FONT`）。mathpazo の文中の `\binom` は普通の大きさの
+  かっこになるので、中が上下に積んだ小さい文字ならまとめる。`\mathbf` は太字の印でも見る（mathptmx は Times の太字）
+- **データの作り方の不具合:** newtxtext を使うと、graphicx だけに付けた `[dvipdfmx]` が効かず、**PDF から図が黙って消えていた**。
+  文書クラスに `dvipdfmx` を付けて直した（以前の学習データにも入っていた）
+
+| hybrid_fonts（60文書） | ルール 直す前 → 後 | AI 直す前 → 後（学習し直し） | 初代 rule_based |
+|---|---|---|---|
+| ブロックの検出 F1 | 0.858 → **0.907** | 0.970 → **0.981** | 0.472 |
+| ラベル正解率 | 0.904 → 0.911 | 0.976 → **0.985** | 0.675 |
+| コード F1 / 数式 F1 | 0.54 / 0.70 → **0.96 / 0.93** | 0.78 / 0.91 → **0.96 / 0.97** | |
+| コードの字下げ | 0.705 → **0.972** | 0.627 → **0.979** | 0.684 |
+| 1ページの秒数（同じ時に測った） | 0.051 → 0.064 | 0.110 → 0.129 | |
+
+- 前の評価用データでも悪くならない: synth_all ルール F1 0.983 のまま（字下げ 0.75 → 1.0）、AI ラベル 1.000 → 0.997（英語の段落2つを箇条書き）。
+  hybrid_varied ルール F1 0.881 → 0.921、AI 0.986 → 0.987
+- 文中の数式（比較実験、書体を混ぜた60文書・1,291個）: 見つける F1 ルール 0.891・AI **0.908**（前回 0.872・0.888）。
+  正解の範囲を読む完全一致 0.984（書体ごと: mathpazo 0.933 → 1.000、mathptmx 0.949 → 0.977、lmodern 0.940 → 0.991）
+- 残っている間違いは、書体よりも書き方のばらつき（番号の無い見出し → 段落、箇条書き → 段落）。書体ごとの文書の数が少ない（2〜18本）ので、書体ごとの点数はぶれる
 
 ## 分かっている課題
 

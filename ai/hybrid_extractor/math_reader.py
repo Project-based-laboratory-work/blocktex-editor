@@ -24,7 +24,7 @@ from typing import Protocol
 
 import pymupdf
 
-from hybrid_extractor.extract import MATH_FONT, MONO_FONT, union_all
+from hybrid_extractor.extract import MATH_FONT, is_extension, is_math, is_mono, union_all
 
 # ---- 文字 → LaTeX ----
 GREEK = {
@@ -65,12 +65,13 @@ def to_latex_char(c: str) -> str:
 
 
 def glyph_tex(g: dict) -> str:
-    """1文字（まとめた文字を含む）の LaTeX。書体はフォント名で見分ける（MSBM → \\mathbb、CMBX → \\mathbf）"""
+    """1文字（まとめた文字を含む）の LaTeX。書体はフォント名と太字の印で見分ける（MSBM → \\mathbb、CMBX・太字 → \\mathbf）"""
     if g.get("folded"):
         return g["c"]
     if g["c"].isalnum() and BB_FONT.search(g["font"]):
         return rf"\mathbb{{{g['c']}}}"
-    if g["c"].isalnum() and BF_FONT.search(g["font"]):
+    # 太字は名前（CMBX）か、PyMuPDF の太字の印（16）。mathptmx の \\mathbf は Times の太字（NimbusRomNo9L-Medi）
+    if g["c"].isascii() and g["c"].isalnum() and (BF_FONT.search(g["font"]) or g.get("flags", 0) & 16):
         return rf"\mathbf{{{g['c']}}}"
     return to_latex_char(g["c"])
 
@@ -183,21 +184,36 @@ class RuleReader:
         return gs
 
     def fold_parens(self, gs: list[dict]) -> list[dict] | None:
-        """大きいかっこ（CMEX）の組を、\\left( … \\right) か \\binom{上}{下} の1文字にまとめる（内側から）"""
+        """大きいかっこ（CMEX）の組を、\\left( … \\right) か \\binom{上}{下} の1文字にまとめる（内側から）。
+        普通の大きさのかっこでも、中が上下に積んだ小さい文字だけなら \\binom にする（mathpazo の文中の \\binom は、
+        かっこが CMEX ではなく本文の大きさの CMR になる）"""
         main = main_size(gs)
+
+        def between(o: dict, c: dict) -> list[dict]:
+            return [g for g in gs if g is not o and g is not c and o["bbox"][2] - 0.5 <= center_x(g) <= c["bbox"][0] + 0.5]
+
+        def small_binom(o: dict, c: dict) -> bool:
+            inside = between(o, c)
+            top, _ = stacked(inside)
+            return (o["c"] == "(" and c["c"] == ")" and bool(top) and not any(g.get("folded") for g in inside)
+                    and all(g["size"] < o["size"] * 0.9 for g in inside))
+
         while True:
             pair = None
-            opens = [g for g in gs if g["c"] in OPENERS and "CMEX" in g["font"]]
+            opens = [g for g in gs if g["c"] in OPENERS]
             for o in sorted(opens, key=lambda g: -g["bbox"][0]):  # 右の（内側の）かっこから
-                closes = [g for g in gs if g["c"] in CLOSERS and "CMEX" in g["font"] and g["bbox"][0] > o["bbox"][0]
+                closes = [g for g in gs if g["c"] in CLOSERS and g["bbox"][0] > o["bbox"][0]
                           and abs(center_y(g) - center_y(o)) < main]
-                if closes:
-                    pair = (o, min(closes, key=lambda g: g["bbox"][0]))
+                if not closes:
+                    continue
+                c = min(closes, key=lambda g: g["bbox"][0])
+                if (is_extension(o["font"]) and is_extension(c["font"])) or small_binom(o, c):
+                    pair = (o, c)
                     break
             if pair is None:
                 return gs
             o, c = pair
-            inside = [g for g in gs if g is not o and g is not c and o["bbox"][2] - 0.5 <= center_x(g) <= c["bbox"][0] + 0.5]
+            inside = between(o, c)
             if not inside:
                 gs = [g for g in gs if g is not o and g is not c]
                 continue
@@ -372,7 +388,7 @@ def stacked(gs: list[dict]) -> tuple[list[dict], list[dict]]:
 def main_size(gs: list[dict]) -> float:
     """主な文字サイズ。添字より大きい、ふつうの文字の大きさ = 一番大きい文字の大きさ
     （∑ などの大きい演算子と、大きいかっこ（CMEX）は除く）。添字の文字のほうが多い x^{10} でも正しく決まる"""
-    sizes = [g["size"] for g in gs if g["c"] not in BIG_OPERATORS and "CMEX" not in g["font"]]
+    sizes = [g["size"] for g in gs if g["c"] not in BIG_OPERATORS and not is_extension(g["font"])]
     return round(max(sizes or [g["size"] for g in gs]), 1)
 
 
@@ -566,10 +582,11 @@ FUNCTION_WORD = re.compile(r"(?<![A-Za-z])(" + "|".join(FUNCTIONS) + r")$")
 
 
 def is_math_glyph(g: dict) -> bool:
-    """数式の種になる文字: 数式のフォント（CMMI・CMSY・MSBM など）か、アクセントの記号"""
-    if g["bbox"] is None or MONO_FONT.search(g["font"]):
+    """数式の種になる文字: 数式の文字（数式のフォントの文字。mathpazo・mathptmx では短い斜体の英字やギリシャ文字も。
+    extract.mark_char_kinds）か、アクセントの記号"""
+    if g["bbox"] is None or is_mono(g):
         return False
-    return bool(MATH_FONT.search(g["font"])) or g["c"] in ACCENTS
+    return is_math(g) or g["c"] in ACCENTS
 
 
 def inline_math_spans(chars: list[dict]) -> list[tuple[int, int]]:
@@ -601,7 +618,7 @@ def inline_math_spans(chars: list[dict]) -> list[tuple[int, int]]:
             end += 1
         # 前の開きかっこ・数字（2x の 2、(x の ( など）を入れる
         while start > 0 and chars[start - 1]["bbox"] is not None and re.fullmatch(r"[0-9(\[]", chars[start - 1]["c"]) \
-                and not MONO_FONT.search(chars[start - 1]["font"]):
+                and not is_mono(chars[start - 1]):
             start -= 1
         start = include_function_name(chars, start, size)
         result.append((start, end))
