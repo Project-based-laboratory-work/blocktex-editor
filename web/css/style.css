@@ -94,6 +94,30 @@ button {
     display: none;
 }
 
+.home-model {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    max-width: 560px;
+    font-size: .9rem;
+}
+
+.home-model select {
+    max-width: 100%;
+    padding: 4px 8px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+}
+
+.home-model-note {
+    flex-basis: 100%;
+    font-size: .8rem;
+    color: var(--muted);
+}
+
 .home footer {
     margin-top: 40px;
     color: var(--muted);
@@ -140,6 +164,11 @@ button {
 .copy-button:hover {
     background: var(--accent-soft);
     border-color: var(--accent);
+}
+
+.toolbar-toggle:disabled {
+    opacity: 0.6;
+    cursor: wait;
 }
 
 .toolbar-toggle[aria-pressed="true"] {
