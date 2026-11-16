@@ -36,7 +36,7 @@ from pathlib import Path
 
 from common.ir import normalize_bbox
 from hybrid_extractor.experts import INLINE_MATH_EXPERTS
-from hybrid_extractor.extract import extract_blocks
+from hybrid_extractor.extract import extract_blocks, is_math, is_mono
 from hybrid_extractor.inline_math_eval import glyph_key, make_case
 
 
@@ -80,6 +80,8 @@ def make_doc(args: tuple[int, int, str, str]) -> dict | None:
                     "bbox": None if synthetic else list(normalize_bbox(ch["bbox"], w, h)),
                     "baseline": None if synthetic else round(ch["baseline"] / h, 5),
                     "flags": ch["flags"],
+                    "mono_char": is_mono(ch),     # 抽出器の印（features.char_features が使う）
+                    "math_char": is_math(ch),
                     "space": synthetic,
                     "math": int(math_id is not None),
                     "math_id": math_id,

@@ -3,6 +3,7 @@
     python -m hybrid_extractor.make_eval_dataset --out evaluation/data/hybrid_varied --docs 60 --seed 3
     python -m evaluation.run --model hybrid_operator --dataset evaluation/data/hybrid_varied   # ルール
     python -m evaluation.run --model hybrid_ai --dataset evaluation/data/hybrid_varied         # AI
+    python -m hybrid_extractor.make_eval_dataset --out evaluation/data/hybrid_fonts --docs 60 --seed 4   # 書体も混ぜた版
 
 評価用の synth_all（evaluation/synth_doc.py）は作りがそろっていて、ルールでラベルが全部当たる。
 こちらは見た目をばらつかせた文書（番号の無い見出し、記号の違う箇条書き、キャプションが下の表…）なので、差が見える。
@@ -47,6 +48,10 @@ def make_case(rng: random.Random, lang: str, case_dir: Path) -> dict:
         "doc_class": s["cls"],
         "numbered_headings": s["numbered"],
         "gothic_body": s["gothic_body"],
+        "text_font": s["text_font"],
+        "t1": s["t1"],
+        "mono_font": s["mono_font"],
+        "ja_font": s["ja_font"],
         "has_title": "title" in labels,
         "has_list": "list" in labels,
         "has_table": "table" in labels,

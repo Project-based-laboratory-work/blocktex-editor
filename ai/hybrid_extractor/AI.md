@@ -253,6 +253,33 @@ AI が新しく見つけた難しいブロックで、後ろのルールの処�
 
 ---
 
+## 7.5 書体を自由にして学習し直した（2026-11-16）
+
+PDF読み込みの許可リストの段階1（[../CONSTRAINTS.md](../CONSTRAINTS.md)）で、学習データ（doc_gen.py）に書体を混ぜ、3人の専門家を学習し直した。
+抽出器の側の変更（等幅を送り幅で決める、数式の文字の印など）は [README.md](README.md) の「書体を自由にする」。
+
+| 専門家（テスト用データ。書体を混ぜた、学習と別の seed） | ルール版 | AI版 |
+|---|---|---|
+| 区切り（2行の組 8,583、正解率） | 0.934 | **0.987** |
+| ラベル（オペレータで決めた正解率） | 0.834 | **0.981** |
+| 文中の数式（1文字ずつの F1） | **0.955** | 0.952 |
+| 文中の数式（比較実験、見つける F1、1,291個） | 0.891 | **0.908** |
+
+評価サイトの簡易の物差し（hybrid_fonts、書体を混ぜた60文書）: AI の検出F1 0.970 → **0.981**、ラベル 0.976 → **0.985**。
+どの書体でもラベル正解率は 0.97〜0.99（直す前に一番低かった mathptmx も 0.957 → 0.979）。
+
+### 分かったこと
+
+- **特徴の意味を変えたら、学習し直す。** 1文字の特徴「数式のフォントか」を「数式の文字の印（書体の名前＋短い斜体の並び）」に変え、
+  ブロックの `math_ratio` に数式の記号も数えるようにした。前の重みのままだと、学習のときと違う意味の数が入ってしまう
+- **正解が特徴に漏れないように、名前をぶつけない。** 文字の印を最初 `ch["math"]` という名前にしかけたが、文中の数式の学習データ（inline_math_data.py）は
+  `"math"` を**正解**（その文字が数式か）に使っていた。そのままだと `is_math()` が正解を読んでしまい、テストの点数だけが不自然に良くなる。
+  印は `math_char` / `mono_char` / `math_like_char` にした
+- **ルールが良くなると、AI の伸びしろは減る。** 文中の数式は、ルール版も印のおかげで書体に強くなり、1文字ずつの F1 は AI とほぼ並んだ
+  （まとまりで見ると AI がまだ上。後処理の「間が空白・演算子ならつなぐ」が効いている）
+- **データの作り方の不具合は、AI の点数だけを見ても気づけない。** newtxtext の文書では PDF から図が消えていて、キャプションだけが残っていた。
+  ルールの「キャプションなのに段落」を1つずつ見ていて、ようやく気づいた
+
 ## 8. 動かし方
 
 ```bash
@@ -269,8 +296,8 @@ python -m hybrid_extractor.train labels        # 約1分
 python -m hybrid_extractor.train inline --epochs 10   # CPU で1時間くらい
 python -m hybrid_extractor.inline_math_eval --out hybrid_extractor/data/inline_math --docs 60 --finder ai
 python -m hybrid_extractor.operator_rules hybrid_extractor/sample_data/sample.pdf out.json --ai --trace
-python -m hybrid_extractor.make_eval_dataset --out evaluation/data/hybrid_varied --docs 60 --seed 3
-python -m evaluation.run --model hybrid_ai --dataset evaluation/data/hybrid_varied
+python -m hybrid_extractor.make_eval_dataset --out evaluation/data/hybrid_fonts --docs 60 --seed 4   # 書体も混ぜた簡易の物差し
+python -m evaluation.run --model hybrid_ai --dataset evaluation/data/hybrid_fonts
 ```
 
 重みは `hybrid_extractor/checkpoints/`（git の管理外）。

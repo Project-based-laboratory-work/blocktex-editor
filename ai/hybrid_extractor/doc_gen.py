@@ -64,6 +64,23 @@ CODE_SNIPPETS = [
 LIST_LABELS = [r"\textbullet", "★", "―", "・", r"$\triangleright$", "(\\alph*)", "\\roman*."]
 
 
+# 書体（PDF読み込みの許可リストの段階1。ai/CONSTRAINTS.md）。どれも、書体の名前に頼るルールが崩れないかを見るため。
+# 数式の書体は CM 系（既定・lmodern・mathpazo・mathptmx）だけ（数式OCR の学習書体と同じ）。
+# (プリアンブル, 選ぶ重み)。mathptmx・mathpazo は数式の文字も本文の斜体と同じ書体になる
+TEXT_FONTS = {
+    "default": ("", 3),
+    "lmodern": (r"\usepackage{lmodern}", 2),
+    "newtxtext": (r"\usepackage{newtxtext}", 1),
+    "times": (r"\usepackage{times}", 1),
+    "mathptmx": (r"\usepackage{mathptmx}", 1),
+    "mathpazo": (r"\usepackage{mathpazo}", 1),
+    "helvet": (r"\usepackage{helvet}\renewcommand{\familydefault}{\sfdefault}", 1),
+    "cm_sans": (r"\renewcommand{\familydefault}{\sfdefault}", 1),
+}
+MONO_FONTS = {"default": "", "inconsolata": r"\usepackage{inconsolata}"}
+JA_FONT_MAPS = {"default": None, "ipaex": "uptex-ipaex.map", "ipa": "uptex-ipa.map", "haranoaji": "uptex-haranoaji.map"}
+
+
 @dataclass
 class Style:
     """1つの文書の見た目の設定"""
@@ -72,7 +89,10 @@ class Style:
     size: str          # 文字サイズ
     two_column: bool
     gothic_body: bool  # 本文をゴシック体にする（日本語だけ）
-    latin: str         # 欧文の書体（"default" / "times" / "sans"）
+    text_font: str     # 欧文の本文の書体（TEXT_FONTS のキー）。数式の書体も変わるものがある（mathptmx・mathpazo）
+    t1: bool           # \usepackage[T1]{fontenc}（欧文の書体の名前が CMR → SFRM・CMTT → SFTT などに変わる）
+    mono_font: str     # 等幅の書体（MONO_FONTS のキー）
+    ja_font: str       # 和文の書体（JA_FONT_MAPS のキー。dvipdfmx のマップを \special{pdf:mapfile} で切り替える）
     numbered: bool     # 見出しに番号を付ける（False なら \section*）
     centered_headings: bool
     page_number: bool
@@ -87,7 +107,10 @@ def random_style(rng: random.Random, lang: str) -> Style:
         size=rng.choice(["10pt", "11pt", "12pt"]),
         two_column=rng.random() < 0.3,
         gothic_body=lang == "ja" and rng.random() < 0.2,
-        latin=rng.choice(["default", "default", "times", "sans"]),
+        text_font=rng.choices(list(TEXT_FONTS), weights=[w for _, w in TEXT_FONTS.values()])[0],
+        t1=rng.random() < 0.4,
+        mono_font=rng.choice(list(MONO_FONTS)),
+        ja_font=rng.choice(list(JA_FONT_MAPS)),
         numbered=rng.random() < 0.65,
         centered_headings=cls == "article" and rng.random() < 0.4,
         page_number=rng.random() < 0.6,
@@ -96,14 +119,14 @@ def random_style(rng: random.Random, lang: str) -> Style:
 
 
 def preamble(style: Style) -> str:
-    options = ["a4paper", style.size] + (["twocolumn"] if style.two_column else [])
-    if style.cls == "jsarticle":
+    # dvipdfmx は文書クラスの全体の指定にする。graphicx だけに付けると、newtxtext を読み込んだ文書で画像の命令が
+    # 別のドライバ用（em: graph）になり、dvipdfmx が画像を黙って捨てる（図が消えてキャプションだけ残る）
+    options = ["dvipdfmx", "a4paper", style.size] + (["twocolumn"] if style.two_column else [])
+    if style.cls in ("jsarticle", "bxjsarticle"):
         options.insert(0, "uplatex")
-    elif style.cls == "bxjsarticle":
-        options[:0] = ["uplatex", "dvipdfmx"]
     lines = [
         rf"\documentclass[{','.join(options)}]{{{style.cls}}}",
-        r"\usepackage[dvipdfmx]{graphicx}" if style.cls != "bxjsarticle" else r"\usepackage{graphicx}",
+        r"\usepackage{graphicx}",
         r"\usepackage{amsmath,amssymb}",
         r"\usepackage{booktabs}",
         r"\usepackage{listings}",
@@ -112,10 +135,13 @@ def preamble(style: Style) -> str:
     ]
     if style.lang == "ja" and style.cls == "article":
         raise ValueError("article クラスは英語の文書だけ")
-    if style.latin == "times":
-        lines.append(r"\usepackage{newtxtext}")
-    elif style.latin == "sans":
-        lines.append(r"\renewcommand{\familydefault}{\sfdefault}")
+    if style.t1:
+        lines.append(r"\usepackage[T1]{fontenc}")
+    for package in (TEXT_FONTS[style.text_font][0], MONO_FONTS[style.mono_font]):
+        if package:
+            lines.append(package)
+    if JA_FONT_MAPS[style.ja_font]:
+        lines.append(rf"\AtBeginDvi{{\special{{pdf:mapfile {JA_FONT_MAPS[style.ja_font]}}}}}")
     if style.gothic_body:
         lines.append(r"\renewcommand{\kanjifamilydefault}{\gtdefault}")
     if style.centered_headings:

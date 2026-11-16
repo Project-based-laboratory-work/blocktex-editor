@@ -121,7 +121,7 @@ PDF上の位置から人手なしで付ける（[evaluation/README.md](evaluatio
 
 | 段階 | 学習データ・評価データ | 抽出器 |
 |---|---|---|
-| 1 書体 | 未対応（評価用 synth_doc・学習用 doc_gen に書体の切り替えを足す） | 未対応（hybrid_extractor は書体の名前に頼っている） |
+| 1 書体 | 学習用 doc_gen と簡易の物差し（hybrid_extractor の hybrid_fonts）は対応済み（2026-11-16）。評価用 synth_doc は #50 | hybrid_extractor は対応済み（等幅は送り幅、数式は短い斜体の並びでも判定。[hybrid_extractor/README.md](hybrid_extractor/README.md)） |
 | 2 エンジン・文書クラス・組版・数式・図・タイトル | LuaLaTeX の目印は real_reports.py で対応済み。1段/2段組・`align*`・figure・`\maketitle` は対応済み | 2段組・数式・図は対応済み。ほかは未確認 |
 | 3 見た目を変えるパッケージ・書き方 | 未対応（real_reports.py で minted・description・quote・`\paragraph`・tabularx・目次の目印は試した） | 未対応 |
 

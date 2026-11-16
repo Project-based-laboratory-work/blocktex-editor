@@ -39,7 +39,7 @@ from evaluation.ground_truth import compile_tex
 from evaluation.marks import read_marks
 from evaluation.metrics import tex_tokens
 from hybrid_extractor.doc_gen import WORDS, preamble, random_style
-from hybrid_extractor.extract import extract_blocks, page_lines, union_all
+from hybrid_extractor.extract import extract_blocks, is_extension, page_lines, union_all
 from hybrid_extractor.experts import INLINE_MATH_EXPERTS, INLINE_MATH_FINDERS, InlineMathExpert, get_inline_expert
 from hybrid_extractor.math_reader import ACCENTS, make_reader, shown
 
@@ -176,7 +176,7 @@ def in_math_band(ch: dict, y: float, tex: str) -> bool:
     """文字が、ベースライン y の文中の数式（正解の LaTeX が tex）の縦の範囲に入るか（文字の種類で範囲を変える。GT_* を参照）。
     正解の LaTeX に無い形の文字は拾わない（上下の行の文字が混ざらないように）:
     大きい記号は \\sum などがあるときだけ、小さい文字は添字・分数などがあるときだけ"""
-    if ch["c"] in BIG_SYMBOLS or "CMEX" in ch["font"]:
+    if ch["c"] in BIG_SYMBOLS or is_extension(ch["font"]):
         if not BIG_TEX.search(tex):
             return False
         above, below = GT_BIG
@@ -226,7 +226,7 @@ def make_case(args: tuple[int, int, str, str]) -> dict | None:
             page, glyphs = found
             gts.append({**item, "page": page, "bbox": union_all([g["bbox"] for g in shown(glyphs)]),
                         "glyph_keys": [glyph_key(g) for g in glyphs]})
-    return {"id": doc_id, "lang": lang, "cls": style.cls, "latin": style.latin, "gts": gts, "n_items": len(items)}
+    return {"id": doc_id, "lang": lang, "cls": style.cls, "text_font": style.text_font, "gts": gts, "n_items": len(items)}
 
 
 def find_spans(pages: list, finder: InlineMathExpert) -> list[dict]:
