@@ -37,6 +37,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--resume", action="store_true", help="out/last.pt から再開する")
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--no-boundary", action="store_true", help="ふちの出力を使わない（前のモデルと同じ）")
+    parser.add_argument("--no-figure-aug", action="store_true", help="図の枠の中をランダムな図に描き替える水増しをしない")
     return parser.parse_args()
 
 
@@ -65,7 +66,7 @@ def main() -> None:
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     args.out.mkdir(parents=True, exist_ok=True)
 
-    train_ds, val_ds = LayoutDataset(args.train, args.limit), LayoutDataset(args.val)
+    train_ds, val_ds = LayoutDataset(args.train, args.limit, augment_figures=not args.no_figure_aug), LayoutDataset(args.val)
     train_loader = DataLoader(train_ds, batch_size=args.batch_size, shuffle=True, num_workers=args.workers, drop_last=True)
     val_loader = DataLoader(val_ds, batch_size=args.batch_size, num_workers=args.workers)
 

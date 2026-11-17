@@ -74,3 +74,17 @@ def test_model_output_is_quarter_resolution():
         with torch.no_grad():
             out = model(torch.zeros(1, 1, OUT_H * STRIDE, OUT_W * STRIDE))
         assert out.shape == (1, len(CLASS_TO_ID) + boundary, OUT_H, OUT_W)
+
+
+def test_draw_figure_handles_every_kind_and_both_themes():
+    import random
+
+    from PIL import Image
+
+    from image_layout.figures import draw_figure
+
+    for seed in range(60):  # 図の種類・軸・凡例の組み合わせを一通り通す
+        for background in (255, 30):
+            image = Image.new("L", (300, 200), background)
+            draw_figure(image, (20, 20, 280, 180), random.Random(seed))
+            assert np.asarray(image)[20:180, 20:280].std() > 0  # 何か描かれている
