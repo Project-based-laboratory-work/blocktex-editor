@@ -52,30 +52,46 @@ def _render_chunk(args: tuple[int, list[str], Path, str, int]) -> list[tuple[str
     pages = [
         rf"\[ {formula} \]" if rng.random() < 0.65 else rf"\noindent ${formula}$" for formula in formulas
     ]
-    body = "\n\\newpage\n".join(pages)
 
+    results = []
+    for offset, image in enumerate(_compile_pages(pages, font_package, dpi)):
+        if image is None:  # LaTeXで組めなかった数式は飛ばす
+            continue
+        filename = f"{split}_{chunk_index * CHUNK_SIZE + offset:06d}.png"
+        image.save(image_dir / filename)
+        results.append((filename, formulas[offset]))
+    return results
+
+
+def _compile_pages(pages: list[str], font_package: str, dpi: int) -> list[Image.Image | None]:
+    """1ページに数式1つの文書をコンパイルし、ページごとの画像（数式の周りを切り出したもの）を返す。
+
+    実際の文書から集めた数式には、組めないもの（括弧の対応の崩れなど）が混ざることがある。1つでも組めないと
+    文書全体が失敗するので、そのときは半分ずつに分けて組み直し、組めない数式だけを None にする。
+    """
     with tempfile.TemporaryDirectory() as tmp:
         tmp_dir = Path(tmp)
-        (tmp_dir / "doc.tex").write_text(TEMPLATE % (font_package, body), encoding="utf-8")
-        subprocess.run(
-            ["pdflatex", "-interaction=nonstopmode", "-halt-on-error", "doc.tex"],
-            cwd=tmp_dir, check=True, capture_output=True,
-        )  # fmt: skip
-        subprocess.run(
-            ["pdftoppm", "-r", str(dpi), "-gray", "-png", "doc.pdf", "page"],
-            cwd=tmp_dir, check=True, capture_output=True,
-        )  # fmt: skip
-        # pdftoppm は page-001.png のような連番で出力する。名前順に並べるとページ順になる
-        page_images = sorted(tmp_dir.glob("page-*.png"))
-        if len(page_images) != len(formulas):
-            raise RuntimeError(f"ページ数 {len(page_images)} が数式の数 {len(formulas)} と合わない")
-
-        results = []
-        for offset, (page, formula) in enumerate(zip(page_images, formulas)):
-            filename = f"{split}_{chunk_index * CHUNK_SIZE + offset:06d}.png"
-            _crop_to_ink(Image.open(page)).save(image_dir / filename)
-            results.append((filename, formula))
-    return results
+        (tmp_dir / "doc.tex").write_text(TEMPLATE % (font_package, "\n\\newpage\n".join(pages)), encoding="utf-8")
+        try:
+            subprocess.run(
+                ["pdflatex", "-interaction=nonstopmode", "-halt-on-error", "doc.tex"],
+                cwd=tmp_dir, check=True, capture_output=True, timeout=300,
+            )  # fmt: skip
+            subprocess.run(
+                ["pdftoppm", "-r", str(dpi), "-gray", "-png", "doc.pdf", "page"],
+                cwd=tmp_dir, check=True, capture_output=True,
+            )  # fmt: skip
+            # pdftoppm は page-001.png のような連番で出力する。名前順に並べるとページ順になる
+            page_images = sorted(tmp_dir.glob("page-*.png"))
+            ok = len(page_images) == len(pages)
+        except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
+            ok = False
+        if ok:
+            return [_crop_to_ink(Image.open(page)) for page in page_images]
+    if len(pages) == 1:
+        return [None]
+    half = len(pages) // 2
+    return _compile_pages(pages[:half], font_package, dpi) + _compile_pages(pages[half:], font_package, dpi)
 
 
 def _crop_to_ink(page: Image.Image, margin: int = 8) -> Image.Image:
