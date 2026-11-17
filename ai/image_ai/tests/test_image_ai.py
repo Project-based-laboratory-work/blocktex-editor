@@ -1,8 +1,8 @@
 import numpy as np
 from PIL import Image
 
-from image_ai.pipeline import (Block, Line, align_mark, assign_lines, block_text, code_text, math_lines, orphan_blocks,
-                               reading_order)  # fmt: skip
+from image_ai.pipeline import (Block, Line, align_mark, assign_lines, block_text, code_text, margin_others, math_lines,
+                               orphan_blocks, reading_order)  # fmt: skip
 
 
 def test_lines_go_to_the_smallest_block_containing_their_center():
@@ -12,13 +12,26 @@ def test_lines_go_to_the_smallest_block_containing_their_center():
     assert [l.text for l in orphans] == ["外"]
 
 
-def test_orphan_lines_become_page_numbers_at_the_edges_and_paragraphs_inside():
+def test_orphan_lines_become_paragraphs_and_margin_lines_become_page_numbers():
     height = 1000
     lines = [Line((480, 960, 520, 975), "3"), Line((100, 400, 900, 420), "見落とした段落の1行目"),
              Line((100, 425, 600, 445), "2行目"), Line((100, 700, 900, 720), "離れた行")]  # fmt: skip
     blocks = orphan_blocks(lines, height)
+    margin_others(blocks, height)
     assert [(b.label, block_text(b.lines)) for b in blocks] == [
         ("other", "3"), ("paragraph", "見落とした段落の1行目\n2行目"), ("paragraph", "離れた行")]
+
+
+def test_margin_others_relabels_small_single_lines_but_keeps_big_titles_and_tables():
+    height = 1000
+    body = [Block("paragraph", (100, 300 + 30 * k, 900, 320 + 30 * k), [Line((100, 300 + 30 * k, 900, 320 + 30 * k), "本文")]) for k in range(5)]
+    number = Block("math", (480, 950, 520, 970), [Line((480, 950, 520, 970), "12")])
+    header = Block("date", (700, 100, 900, 118), [Line((700, 100, 900, 118), "評価用の文書")])
+    title = Block("title", (200, 60, 800, 110), [Line((200, 60, 800, 110), "大きなタイトル")])
+    table = Block("table", (100, 920, 900, 990), [])
+    margin_others(body + [number, header, title, table], height)
+    assert (number.label, header.label, title.label, table.label) == ("other", "other", "title", "table")
+    assert all(b.label == "paragraph" for b in body)
 
 
 def test_block_text_joins_rows_top_to_bottom_and_words_left_to_right():

@@ -16,8 +16,10 @@
   4. 読み順: 左右どちらの段にも複数のブロックがあれば2段組とみなし、両方の段にまたがるブロックで区切った区間ごとに
      左の段 → 右の段（image_rule_based と同じ考え方）。それ以外は上から順
 
-どのブロックにも入らなかったOCRの行（座標AIが見落とした文字）は、ページの上端・下端の帯にあれば1行ずつ other
-（ページ番号・ヘッダー）にし、それ以外は縦に近い行どうしをまとめて paragraph にする。
+どのブロックにも入らなかったOCRの行（座標AIが見落とした文字）は、縦に近い行どうしをまとめて paragraph にする。
+ページの上端・下端の帯（ヘッダー・ページ番号の置き場所）にある、本文より大きくない1行だけのブロックは、
+座標AIのラベルにかかわらず other にする（座標AIは数字だけのページ番号を math と間違えやすい）。
+帯の幅は、学習側の image_dataset と評価用データの両方で、見出し・タイトルにかからない位置にした。
 重みは各モデルの checkpoints/ の既定の場所から読む（引数で変えられる）。
 """
 
@@ -40,7 +42,9 @@ LANGS = ("ja", "en")  # easyocr_ocr の DEFAULT_LANGS と同じ
 CROP_PAD = 4  # 表・数式を切り抜くときの余白（画素）
 COLUMN_GUTTER = 0.02  # 段の境目（ページの真ん中）からこの割合までは、はみ出しても片方の段とみなす
 TWO_COLUMN_MIN = 2  # 左右それぞれの段にこの数以上のブロックがあれば2段組とみなす
-MARGIN_BAND = 0.08  # ページの上端・下端からこの割合の帯にある、ブロックに入らなかった行は other
+TOP_BAND, BOTTOM_BAND = 0.125, 0.90  # 中心がこれより上・下にある、本文より大きくない1行のブロックは other
+MARGIN_LINE_HEIGHT = 1.3  # 帯の中でも、本文の行の高さのこの倍より高い（大きな文字の）ブロックは other にしない
+KEEP_LABELS = {"table", "figure"}  # 帯の中でも other にしないラベル
 MERGE_GAP = 0.8  # ブロックに入らなかった行どうしは、行の高さのこの倍までの縦のすき間ならつなぐ
 MATH_LINE_GAP = 0.25  # 数式の行の間とみなす空白の高さ（文字の行の高さに対する割合）。分数の中の小さな空白では切らない
 MATH_MIN_GAP = 6  # 文字の行の高さが分からないときの、行の間とみなす空白の高さ（画素）
@@ -129,7 +133,8 @@ def assign_lines(boxes: list[tuple[str, Box]], lines: list[Line]) -> tuple[list[
 
 
 def orphan_blocks(orphans: list[Line], height: float) -> list[Block]:
-    """ブロックに入らなかった行 → 上端・下端の帯の行は1行ずつ other、それ以外は近い行をまとめて paragraph"""
+    """ブロックに入らなかった行 → 上端・下端の帯の行は1行ずつ、それ以外は近い行をまとめて paragraph のブロックにする
+    （帯の中のものは、あとで margin_others が other にする）"""
 
     def union(lines: list[Line]) -> Box:
         return (min(l.box[0] for l in lines), min(l.box[1] for l in lines), max(l.box[2] for l in lines), max(l.box[3] for l in lines))
@@ -138,8 +143,8 @@ def orphan_blocks(orphans: list[Line], height: float) -> list[Block]:
     for row in rows_of(orphans):
         box = union(row)
         cy = (box[1] + box[3]) / 2
-        if cy < MARGIN_BAND * height or cy > (1 - MARGIN_BAND) * height:
-            out.append(Block("other", box, row))
+        if cy < TOP_BAND * height or cy > BOTTOM_BAND * height:
+            out.append(Block("paragraph", box, row))
             continue
         if groups:
             last = union(groups[-1])
@@ -163,6 +168,19 @@ def rows_of(lines: list[Line]) -> list[list[Line]]:
                 continue
         rows.append([line])
     return [sorted(row, key=lambda l: l.box[0]) for row in rows]
+
+
+def margin_others(blocks: list[Block], height: float) -> None:
+    """上端・下端の帯にある、本文より大きくない1行だけのブロックを other にする（ヘッダー・ページ番号）"""
+    rows = [row for b in blocks for row in rows_of(b.lines)]
+    heights = [max(l.box[3] for l in row) - min(l.box[1] for l in row) for row in rows]
+    body = float(np.median(heights)) if heights else None
+    for b in blocks:
+        cy = (b.box[1] + b.box[3]) / 2
+        if b.label in KEEP_LABELS or not (cy < TOP_BAND * height or cy > BOTTOM_BAND * height):
+            continue
+        if len(rows_of(b.lines)) <= 1 and (body is None or b.box[3] - b.box[1] <= MARGIN_LINE_HEIGHT * body):
+            b.label = "other"
 
 
 def block_text(lines: list[Line]) -> str:
@@ -273,6 +291,7 @@ def predict(image_path: str, layout_checkpoint: str = LAYOUT_CHECKPOINT, table_c
         image = opened.convert("L")
     blocks, orphans = assign_lines(detect_blocks(image_path, layout_checkpoint), read_lines(np.asarray(image)) if ocr else [])
     blocks += orphan_blocks(orphans, image.height)
+    margin_others(blocks, image.height)
     elements = [to_element(b, image, table_checkpoint, math_checkpoint, ocr) for b in reading_order(blocks, image.width)]
     page = Page(page=1, width=image.width, height=image.height, unit="px", elements=elements)
     return IRDocument(source=os.path.basename(image_path), extractor="image_ai", structurer="image_ai", pages=[page])
