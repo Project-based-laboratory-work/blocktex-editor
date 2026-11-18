@@ -168,6 +168,55 @@ python -m math_ocr.real_eval math_ocr/checkpoints/math_ocr_v2/best.pt report1.te
 重なっていたのは平均12トークン程度の短い数式。なお、検証データの先頭200件は学習中にどのエポックのモデルを
 残すかの選択にも使っているので、厳密なテストデータではない。
 
+## v3・v4 と、既存の数式OCR（pix2tex）との比較（2026-11-17）
+
+### 学習のやり直し（v3）と、人が書いた数式の追加（v4）
+
+- **v3**: v2 は前のモデルを使い回し、増えた記号の分だけ学習していた。前に学習した数式の成績が下がる心配があるので、一から学習し直した
+- **v4**: v3 の学習データに、IM2LATEX-100K（arXiv の論文から集めた、人が書いた数式。CC0）の train のうち対応範囲の約2万件を足した。
+  画像は pdflatex で描き直している。出典: Deng et al., "Image-to-Markup Generation with Coarse-to-Fine Attention", ICML 2017
+
+| | pdflatex 検証（935件） | 自分のレポート（対応範囲 79個） | うち10トークン以上 | im2latex の test（2,396個） | PDFに埋め込んで評価（577個） |
+|---|---|---|---|---|---|
+| v2 | 92.8% | 88.6% | 6/11 | 6.1% | − |
+| v3 | 97.0% | 86.1% | 5/11 | 5.8% | 9.9% |
+| **v4** | **97.6%** | **92.4%** | **8/11** | **45.6%** | **77.5%** |
+
+- im2latex は「人が書いた数式の形」。自動で作った数式だけで学習した v2・v3 はほとんど読めず、v4 で大きく上がった
+- **PDFに埋め込んで評価**（[pdf_eval.py](pdf_eval.py)）: im2latex の数式を日本語の文書の中に（半分は別行立て、半分は文中）組んでPDFにし、
+  実際のパイプラインと同じく 200dpi で切り抜いて読ませる。v4 は別行立て 77.4%・文中 77.6%
+- 学習データだけを変えた3つのモデル（matplotlib だけ / pdflatex だけ / 半分ずつ）の比較は [compare_eval.py](compare_eval.py)
+
+### pix2tex との比較
+
+[compare_pix2tex.py](compare_pix2tex.py)。pix2tex（[LaTeX-OCR](https://github.com/lukas-blecher/LaTeX-OCR)）は別の環境に入れ、[run_pix2tex.py](run_pix2tex.py) で読ませる。
+どれも自作モデルの対応範囲の数式だけ。数字は「見た目の一致」（答えと正解を、書き方をそろえてから同じ方法で画像にし、ほぼ同じ画像になった割合）。
+
+| 試験データ | 自作（v4） | pix2tex | 件数 |
+|---|---|---|---|
+| 自分のレポートの数式 | **92.4%** | 65.8% | 79 |
+| PDFに埋め込んで切り抜いた数式 | **80.4%** | 48.2% | 577 |
+| im2latex の test の画像 | 48.3% | **82.2%** | 2,381 |
+
+| | 自作（v4） | pix2tex |
+|---|---|---|
+| パラメータ数 | **3,089,222** | 30,351,829（約10倍） |
+| CPUで1枚（4スレッド） | **0.03〜0.16秒** | 0.25〜0.83秒 |
+
+- このアプリが読む条件（PDFの中の数式・自分のレポートの数式）では、1/10 の大きさで、より正確で速い
+- im2latex の画像では pix2tex が上。pix2tex は im2latex を含むデータで学習していて、この描き方に慣れている（公平な比較ではない）
+- pix2tex は1〜2文字の短い数式に、元に無い太字や飾りを付けることが多い（`x` → `\mathbf{\hat{L}}` など）
+
+```bash
+python3 -m venv ~/.venvs/pix2tex && ~/.venvs/pix2tex/bin/pip install pix2tex
+python -m math_ocr.compare_pix2tex prepare --out math_ocr/data/pix2tex_cmp --checkpoint math_ocr/checkpoints/v4_im2latex/best.pt \
+    --im2latex math_ocr/data/im2latex_parquet/test.parquet --tex <レポートのTeX...>
+for s in real pdf im2latex; do
+  ~/.venvs/pix2tex/bin/python math_ocr/run_pix2tex.py math_ocr/data/pix2tex_cmp/$s/images math_ocr/data/pix2tex_cmp/$s/pix2tex.tsv
+done
+python -m math_ocr.compare_pix2tex score --out math_ocr/data/pix2tex_cmp --checkpoint math_ocr/checkpoints/v4_im2latex/best.pt
+```
+
 ## 押さえておきたい概念
 
 ### テンソルの形（shape）を追う
