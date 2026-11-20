@@ -42,6 +42,7 @@ python -m pytest operator_ai
 | `ocr/<engine>/<preset>/<case>.lines.ir.json` | 行単位のOCRの結果（ページ全体のCERに使う） |
 
 OCRの結果は保存して使い回す（読み直すときは `--force`）。設定を足したときは、足した設定だけ読む。
+OCR がプロセスごと落ちた（Segmentation fault など）ときは、もう一度同じコマンドを実行すれば続きから読む。落ちた画像 × 設定は `error` 列に `OcrCrashed` と書いて飛ばす（読んでいる間だけ `<case>.running` という目印を置いて見分ける）。
 既定の設定は `score_all.py` の `DEFAULT_SETTINGS`（Tesseract・EasyOCR それぞれ base・invert・up2 など5つずつ）。
 
 ### 採点表の列

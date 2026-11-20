@@ -122,6 +122,31 @@ def test_main_writes_csv_and_reuses_ocr(tmp_path, monkeypatch):
     assert len(calls) == 2
 
 
+def test_crashed_ocr_is_skipped_on_the_next_run(tmp_path, monkeypatch):
+    # 前回 tesseract:base を読んでいる途中でプロセスごと落ちた（目印だけが残っている）
+    marker = tmp_path / "out" / "ocr" / "tesseract" / "base" / "doc_000000_p1_v0.running"
+    marker.parent.mkdir(parents=True)
+    marker.touch()
+    calls = []
+
+    def fake_ocr(engine, preset, image_path):
+        calls.append(preset)
+        doc = IRDocument(source="x.png", extractor=engine, pages=[page(text(HEADING.bbox, "1 はじめに"))])
+        return score_all.OcrResult(doc, doc)
+
+    monkeypatch.setattr(score_all, "run_ocr", fake_ocr)
+    dataset = make_dataset(tmp_path / "ds")
+    args = [str(dataset), "--settings", "tesseract:base", "tesseract:invert", "--out", str(tmp_path / "out")]
+    with open(score_all.main(args), encoding="utf-8-sig") as f:
+        rows = list(csv.DictReader(f))
+    assert rows[0]["error"].startswith("OcrCrashed") and rows[1]["error"] == ""
+    assert calls == ["invert"]  # 落ちた設定はもう読まない
+    assert not (marker.parent.parent / "invert" / "doc_000000_p1_v0.running").exists()  # 読み終えたら目印を消す
+
+    score_all.main(args + ["--force"])  # --force なら読み直す
+    assert calls == ["invert", "base", "invert"] and not marker.exists()
+
+
 def test_main_records_ocr_errors(tmp_path, monkeypatch):
     def broken(engine, preset, image_path):
         raise RuntimeError("tesseract not found")

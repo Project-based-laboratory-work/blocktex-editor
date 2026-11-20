@@ -235,19 +235,33 @@ def run_ocr(engine: str, preset: str, image_path: str) -> OcrResult:
     return run_tesseract(preset, image_path) if engine == "tesseract" else run_easyocr(preset, image_path)
 
 
+class OcrCrashed(RuntimeError):
+    """前回この画像・設定を読んでいる途中で、プロセスごと落ちた"""
+
+
 def load_or_run_ocr(cache_dir: Path, engine: str, preset: str, case: str, image_path: str, force: bool) -> OcrResult:
-    """保存したOCRの結果を読む。無ければ読んで、かかった秒数を params["seconds"] に入れて保存する"""
+    """保存したOCRの結果を読む。無ければ読んで、かかった秒数を params["seconds"] に入れて保存する。
+
+    EasyOCR はライブラリの中で Segmentation fault を起こすことがあり、例外で拾えずにプロセスごと止まる。
+    読む前に目印（<case>.running）を置き、読み終えたら消す。目印が残っていれば前回そこで落ちたので、
+    もう一度読まずに OcrCrashed にする（error 列に残り、もう一度実行すれば続きから進む）。--force なら読み直す。
+    """
     base = cache_dir / engine / preset
     para_path, line_path = base / f"{case}.ir.json", base / f"{case}.lines.ir.json"
+    marker = base / f"{case}.running"
     if para_path.exists() and line_path.exists() and not force:
         return OcrResult(load_ir(str(para_path)), load_ir(str(line_path)))
+    if marker.exists() and not force:
+        raise OcrCrashed("前回この画像を読んでいる途中でOCRが落ちた（Segmentation fault など）。読み直すには --force")
+    base.mkdir(parents=True, exist_ok=True)
+    marker.touch()
     start = time.perf_counter()
     result = run_ocr(engine, preset, image_path)
     seconds = round(time.perf_counter() - start, 3)
-    base.mkdir(parents=True, exist_ok=True)
     for doc, path in ((result.paragraphs, para_path), (result.lines, line_path)):
         doc.params["seconds"] = seconds
         save_ir(doc, str(path))
+    marker.unlink()
     return result
 
 
