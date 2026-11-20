@@ -40,7 +40,30 @@ def test_labeled_ir_becomes_editor_blocks():
     document = ir_to_document(classify_ir(sample_doc()))
     assert [b["type"] for b in document["blocks"]] == ["heading", "paragraph", "table"]
     assert document["blocks"][0]["text"] == "CHAPTER I"
-    assert document["blocks"][2]["caption"] == "Table 1 Results"
+    assert document["blocks"][2]["caption"] == "Results"  # 番号はエディタの \caption が振り直すので外れる（common/blocks.py）
+
+
+def test_heading_level_comes_from_its_number():
+    # OCRの大きさでは「3.2」のほうが大きく見えても、番号の深さでレベルを決める
+    elements = [
+        Element(kind="text", bbox=(0.1, 0.10, 0.4, 0.12), text="3 課題3", font_size=18.0),
+        Element(kind="text", bbox=(0.1, 0.14, 0.9, 0.30), text=BODY, font_size=18.0),
+        Element(kind="text", bbox=(0.1, 0.32, 0.4, 0.34), text="3.2コード説明", font_size=19.0),
+        Element(kind="text", bbox=(0.1, 0.36, 0.9, 0.50), text=BODY, font_size=18.0),
+    ]
+    doc = IRDocument(source="a.png", extractor="tesseract", pages=[Page(page=1, width=1000, height=1400, unit="px", elements=elements)])
+    labeled = classify_ir(doc)
+    assert ir.validate(labeled) == []
+    assert [(e.label, e.level) for e in labeled.pages[0].elements] == [("heading", 1), ("paragraph", None), ("heading", 2), ("paragraph", None)]
+
+    headings = [b for b in ir_to_document(labeled)["blocks"] if b["type"] == "heading"]
+    # 番号を外すかは common/blocks.py が決める（すき間の無い「3.2コード説明」は、番号か分からないので残す）
+    assert [(b["level"], b["text"]) for b in headings] == [(1, "課題3"), (2, "3.2コード説明")]
+
+
+def test_heading_without_number_keeps_level_unset():
+    labeled = classify_ir(sample_doc())
+    assert labeled.pages[0].elements[0].text == "CHAPTER I" and labeled.pages[0].elements[0].level is None
 
 
 def test_main_writes_files(tmp_path, monkeypatch):
