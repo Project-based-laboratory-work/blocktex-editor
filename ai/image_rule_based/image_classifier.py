@@ -8,6 +8,8 @@
   - 長さの単位: PDF版は pt の固定値。画像は解像度がばらばらなので、ページの幅に対する割合にする
   - 文字の大きさが無い要素（EasyOCRの paragraph=True など）: 箱の高さ ÷ 行数を文字の大きさとみなす
   - 見出し: 大きさ・太字に加えて「番号で始まる短い1行」も見出しにする（OCRの大きさでは差が出にくく、太字も取れないため）
+  - 見出しレベル: 番号の深さで決める（heading_level）。PDF版は決めず、common/blocks.py が文字の大きさの順で付ける。
+    OCRの大きさは見出しの間でも差が出にくく、大きさの順だと「3.2」がレベル1になることがあるため
 """
 
 import re
@@ -25,8 +27,12 @@ CAPTION_MAX_CHARS = 100
 CAPTION_PATTERN = re.compile(r"(図|表|Figure|Fig\.|Table)\s*\d+([.\-]\d+)*")
 # 番号で始まる1行（「3 実験」「4.1 CPUの評価」「1. Introduction」）も見出しとみなす。
 # OCRで推定した文字の大きさでは見出しと本文の差がほとんど出ない（image_dataset で、見出しの大きさの比の中央値は 1.02）ため。
-# 「1,1」のようにOCRが「.」を「,」と読み違えることがあるので、区切りには「,」も許す
-NUMBERED_HEADING_PATTERN = re.compile(r"\d{1,2}(\s*[.,．]\s*\d{1,2}){0,2}\.?\s*[^\d\s.,)]")
+# 「1,1」のようにOCRが「.」を「,」と読み違えることがあるので、区切りには「,」も許す。
+# 番号の後ろは文字（日本語・英字など）に限る。「3| stmt」「4 = x」のような、行番号の付いたコードを見出しにしないため。
+# ただし「1】関連研究」のように、OCRが番号の後ろのすき間を「】」と読むことがあるので、「】」だけは許す
+NUMBERED_HEADING_PATTERN = re.compile(r"\d{1,2}(\s*[.,．]\s*\d{1,2}){0,2}\.?\s*】?\s*[^\W\d_]")
+HEADING_NUMBER_SEPARATOR = re.compile(r"\s*[.,．]\s*(?=\d)")  # 番号の階層の区切り（「3.2」の「.」）
+MAX_HEADING_LEVEL = 3
 NUMBERED_HEADING_MAX_CHARS = 30
 SENTENCE_END_PATTERN = re.compile(r"[。．.,、，;:：]$")  # 文の終わり方をしていれば、番号で始まっても本文（番号付きの箇条書きなど）
 # 段組みの判定で、ページの中央線からどれだけはみ出しても片側の段とみなすか（ページの幅に対する割合）。
@@ -78,6 +84,15 @@ def is_numbered_heading(text: str) -> bool:
         and NUMBERED_HEADING_PATTERN.match(text) is not None
         and SENTENCE_END_PATTERN.search(text) is None
     )
+
+
+def heading_level(text: str) -> int | None:
+    """見出しの番号の深さを見出しレベルにする（「3」→1、「3.2」→2、「3.2.1」→3）。番号が無ければ None。"""
+    match = NUMBERED_HEADING_PATTERN.match(text.strip())
+    if match is None:
+        return None
+    number = match.group(0)[:-1]  # 最後の1文字は番号の後ろの文字
+    return min(1 + len(HEADING_NUMBER_SEPARATOR.findall(number)), MAX_HEADING_LEVEL)
 
 
 def _column_of(bbox: Bbox, page_width: float) -> int:

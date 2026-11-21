@@ -17,7 +17,7 @@ import os
 
 from common.blocks import ir_to_document
 from common.ir import Element, IRDocument, Page, denormalize_bbox, load_ir, normalize_bbox, save_ir, to_dict, validate
-from image_rule_based.image_classifier import classify_page
+from image_rule_based.image_classifier import classify_page, heading_level
 
 NAME = "image_rule_based"
 
@@ -42,6 +42,9 @@ def classify_ir(doc: IRDocument) -> IRDocument:
                     bold=source.bold if source else None,
                     confidence=source.confidence if source else None,
                     label=cb.kind,
+                    # 分類結果（PDF版と同じ ClassifiedBlock）にはレベルの欄が無いので、ここで見出しの番号から付ける。
+                    # 番号の無い見出しは None のままにし、common/blocks.py が文字の大きさの順で付ける
+                    level=heading_level(cb.text) if cb.kind == "heading" and cb.text else None,
                 )
             )
     return IRDocument(source=doc.source, extractor=doc.extractor, structurer=NAME, pages=pages, params=doc.params)
