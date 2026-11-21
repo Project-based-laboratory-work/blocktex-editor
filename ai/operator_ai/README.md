@@ -160,18 +160,31 @@ python -m operator_ai.evaluate operator_ai.rules:choose operator_ai.rule_example
 
 ### 最終テスト（test）
 
+> [!CAUTION]
+> **`results/test/` は見ちゃだめ！** ルール版（`rules.py`）ができて、val での調整が終わるまで、`results/test/scores.csv` を開かない・集計しない・`evaluate` や `analyze` に渡さない。
+> test の点数を見ながらルールを直すと、test にも合わせ込んでしまい、「初めて見る画像での成績」が測れなくなる。うっかり見てしまったら、チームに言う。
+
 **ルール版のコードができたときの確認用。** ルールを作る途中では使わない（test の点数を見ながら直すと、test にも合わせ込んでしまい、実力より良く出るため）。
 
 | | 内容 |
 |---|---|
 | 画像 | `image_dataset/data/test/`（seed 2、300文書から827枚。val・学習用とは別の文書）。git 管理外なので、無ければ下のコマンドで作る |
+| 採点表・特徴量 | `results/test/scores.csv`（827枚 × 10設定、エラー 0 行）と `results/test/features.csv`。CPU で採点済み（約6時間半）なので、採点し直さなくてよい。**開くのはルールができてから** |
 | 使う時期 | `rules.py` ができて、val での調整が終わったとき。原則1回 |
+
+ルールができたら、これだけ実行する（ai/ で）:
+
+```bash
+python -m operator_ai.evaluate operator_ai.rules:choose --scores operator_ai/results/test/scores.csv --features operator_ai/results/test/features.csv
+```
+
+採点表を作り直すとき（画像を変えたときなど）だけ:
 
 ```bash
 python -m image_dataset.build --out image_dataset/data/test --docs 300 --seed 2   # 画像（無ければ。約101MB）
-python -m operator_ai.score_all image_dataset/data/test                           # 採点表（CPU で約5時間）
+python -m operator_ai.score_all image_dataset/data/test                           # 採点表（CPU で約6時間半）
 python -m operator_ai.features image_dataset/data/test                            # 特徴量
-python -m operator_ai.evaluate operator_ai.rules:choose --scores operator_ai/data/test/scores.csv --features operator_ai/data/test/features.csv
+cp operator_ai/data/test/scores.csv operator_ai/data/test/features.csv operator_ai/results/test/
 ```
 
 **いまの手がかり**（val、`report.md` から）
@@ -225,7 +238,7 @@ python -m operator_ai.analyze operator_ai/results/val/scores.csv
 
 | 担当 | 範囲 | 状態 |
 |---|---|---|
-| natsuko | オペレータAI全体のまとめ役。`image_dataset`（学習データ）、採点表・分析（進め方 1〜3）、学習版（5）、評価（6） | `image_dataset`・採点表（1）・分析と原因のメモ（2〜3）・特徴量・評価ツールは済み。最終テスト用の画像（test、seed 2）も作成済み |
+| natsuko | オペレータAI全体のまとめ役。`image_dataset`（学習データ）、採点表・分析（進め方 1〜3）、学習版（5）、評価（6） | `image_dataset`・採点表（1）・分析と原因のメモ（2〜3）・特徴量・評価ツールは済み。最終テスト用の画像（test、seed 2）の作成と採点も済み（`results/test/`、ルールができるまで見ない） |
 | chihiro | ルールベース。構造化器 `image_rule_based`（済み）と、ルール版オペレータ（進め方 4） | 4 はこれから。始め方は上の「ルール版を作る」 |
 
 - 進め方 3 の分析結果は、4（ルール版）の根拠にも、5（学習版）の材料にもなる。3 を先に共有すれば、ルール版と学習版の作業がかぶらない
@@ -249,7 +262,7 @@ ai/operator_ai/
   train.py       # 進め方 5：学習版
   predict.py     # 推論の入口。画像 → 設定を選ぶ → OCR → IR
   data/          # 採点表・OCRの結果・学習済みモデル（.gitignore）
-  results/       # チームで共有する採点表・特徴量・分析（git に入れる）
+  results/       # チームで共有する採点表・特徴量・分析（git に入れる）。test/ はルールができるまで見ない
   tests/
 ```
 
@@ -301,6 +314,7 @@ README・評価の決めごとを変えたら、ここに足す（新しいも�
 
 | 日付 | 変更 | 決めた人 |
 |---|---|---|
+| 2026-11-22 | test（seed 2）の採点表・特徴量を `results/test/` に入れた。**ルール版ができるまで見ない**（注意書きを「最終テスト（test）」に追加） | natsuko |
 | 2026-11-21 | 評価項目を **CER（`cer_page`）と f1 の2つ**に決定。速さ（`sec_per_page`）は評価項目から外す（採点表には記録として残す）。CER で同点のときは、速いほうではなく f1 が高いほうを選ぶ | natsuko・chihiro |
 | 2026-11-21 | 進め方4（ルール版オペレータ）の担当を chihiro に決定 | natsuko・chihiro |
 | 2026-11-21 | 採点表に読み順（`order_acc`）とチームの評価の分子・分母を追加。何枚かをまとめた値は、チームと同じく「足してから割る」で出す | natsuko |
