@@ -63,4 +63,4 @@ def test_evaluate_operator_from_features(tmp_path, monkeypatch):
     md = evaluate.main(["my_rules:choose", "--scores", str(tmp_path / "scores.csv"),
                         "--features", str(tmp_path / "features.csv")])
     row = next(line for line in md.splitlines() if line.startswith("| my_rules:choose"))
-    assert "| 0.1167 | 100% | 1.0 | 0.5 | 0.6667 | 0.8 | 0.75 | 0.1 | 1.0 |" in row  # 暗い画像だけ B にすると、オラクルと同じ
+    assert "| 0.1167 | 0.6667 | 100% | 1.0 | 0.5 | 0.8 | 0.75 | 0.1 |" in row  # 暗い画像だけ B にすると、オラクルと同じ

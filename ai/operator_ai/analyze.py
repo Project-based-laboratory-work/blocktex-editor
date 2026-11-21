@@ -53,12 +53,12 @@ class Case:
         return self.errors(setting) / self.chars
 
     def best(self, candidates: list[str]) -> str:
-        """一番 CER が小さい設定。同点なら速いほう"""
-        return min(candidates, key=lambda s: (self.errors(s), seconds(self.settings[s])))
+        """一番 CER が小さい設定。同点なら f1 が高いほう"""
+        return min(candidates, key=lambda s: (self.errors(s), -f1(self.settings[s])))
 
 
-def seconds(row: dict) -> float:
-    return float(row["sec_per_page"]) if row.get("sec_per_page") else float("inf")
+def f1(row: dict) -> float:
+    return float(row["f1"]) if row.get("f1") else -1.0
 
 
 def load(csv_path: Path) -> tuple[list[Case], list[str], list[dict]]:
@@ -80,7 +80,7 @@ def load(csv_path: Path) -> tuple[list[Case], list[str], list[dict]]:
 
 
 def team_scores(rows: list[dict]) -> dict:
-    """何枚かの行（scores.csv）をまとめた、チームの評価と同じ値（precision・recall・f1・miou・order_acc・cer）と秒数。
+    """何枚かの行（scores.csv）をまとめた、チームの評価と同じ値（precision・recall・f1・miou・order_acc・cer）。
     チームと同じく Counts を足してから evaluation.metrics.summarize で割る（画像ごとの値の平均にしない）"""
     counts = Counts()
     for r in rows:
@@ -90,9 +90,7 @@ def team_scores(rows: list[dict]) -> dict:
                 raise SystemExit("エラー: 採点表に数の列（n_pairs など）がありません。score_all.py で作り直してください。")
             setattr(counts, key, getattr(counts, key) + (float(value) if key == "iou_sum" else int(value)))
     s = summarize(counts)
-    out = {k: None if s[k] is None else round(s[k], 4) for k in TEAM_KEYS}
-    out["sec_per_page"] = round(statistics.mean(seconds(r) for r in rows), 2)
-    return out
+    return {k: None if s[k] is None else round(s[k], 4) for k in TEAM_KEYS}
 
 
 def pooled(cases: list[Case], pick) -> float | None:
@@ -275,7 +273,7 @@ def report(csv_path, cases, settings, skipped, settings_t, pairs_t, cond_t, wors
         "### 設定ごと",
         "",
         f"`median` は画像ごとの CER の真ん中、`broken` は CER が {BROKEN} を超えた画像の割合、"
-        "`wins` はその設定が一番良かった画像の数（同点なら速いほう）。",
+        "`wins` はその設定が一番良かった画像の数（同点なら f1 が高いほう）。",
         "",
         md_table(settings_t, list(settings_t[0])),
         "",

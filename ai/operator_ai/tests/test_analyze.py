@@ -47,7 +47,7 @@ def test_team_scores_are_pooled_like_the_team_evaluation(tmp_path):
     cases, _, _ = analyze.load(tmp_path / "scores.csv")
     s = analyze.team_scores([c.settings["t:A"] for c in cases])  # 3枚分の数を足してから割る
     assert s["precision"] == 1.0 and s["recall"] == 0.5 and s["f1"] == round(2 / 3, 4)
-    assert s["miou"] == 0.8 and s["order_acc"] == 0.75 and s["cer"] == 0.1 and s["sec_per_page"] == 1.0
+    assert s["miou"] == 0.8 and s["order_acc"] == 0.75 and s["cer"] == 0.1 and "sec_per_page" not in s
 
 
 def test_condition_table_finds_the_winner_per_group(tmp_path):
@@ -60,10 +60,12 @@ def test_condition_table_finds_the_winner_per_group(tmp_path):
     assert rows[("effective_dpi", "<70")]["n"] == 3  # 120 × 0.5 = 60
 
 
-def test_tie_goes_to_the_faster_setting(tmp_path):
-    write_scores(tmp_path / "scores.csv", [row("x", "t:slow", 5, sec=9.0), row("x", "t:fast", 5, sec=0.5)])
+def test_tie_goes_to_the_higher_f1(tmp_path):
+    rows = [row("x", "t:low", 5), row("x", "t:high", 5)]
+    rows[1]["f1"] = 0.9
+    write_scores(tmp_path / "scores.csv", rows)
     cases, settings, _ = analyze.load(tmp_path / "scores.csv")
-    assert cases[0].best(settings) == "t:fast"
+    assert cases[0].best(settings) == "t:high"
 
 
 def test_cases_with_errors_are_left_out(tmp_path):
