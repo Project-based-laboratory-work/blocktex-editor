@@ -11,6 +11,7 @@
 
 import glob
 import os
+import random
 from pathlib import Path
 
 import numpy as np
@@ -19,6 +20,7 @@ from PIL import Image
 from torch.utils.data import Dataset
 
 from common.ir import LABELS, load_ir
+from image_layout.figures import FIGURE_RATE, draw_figure
 
 CANVAS_H, CANVAS_W = 768, 576
 STRIDE = 4  # 出力（塗り分け図）は入力の 1/4 の大きさ
@@ -31,7 +33,11 @@ CLASS_TO_ID = {label: i for i, label in enumerate(CLASSES)}
 def load_canvas(image_path: str) -> tuple[np.ndarray, float]:
     """画像 → (CANVAS_H, CANVAS_W) の「背景0・文字1」の配列と、拡大率。ダークモードは反転してそろえる"""
     with Image.open(image_path) as image:
-        gray = image.convert("L")
+        return canvas_of(image.convert("L"))
+
+
+def canvas_of(gray: Image.Image) -> tuple[np.ndarray, float]:
+    """グレーの画像 → load_canvas と同じもの"""
     w, h = gray.size
     scale = min(CANVAS_H / h, CANVAS_W / w)
     new_w, new_h = max(1, round(w * scale)), max(1, round(h * scale))
@@ -98,17 +104,29 @@ def boundary_mask(truth_path: str, scale: float) -> np.ndarray:
 
 
 class LayoutDataset(Dataset):
-    def __init__(self, data_dir: Path, limit: int | None = None):
+    """augment_figures=True（学習用）なら、図の枠の中をランダムな図に描き替える（figures.py）"""
+
+    def __init__(self, data_dir: Path, limit: int | None = None, augment_figures: bool = False):
         self.data_dir = str(data_dir)
         self.truth_paths = sorted(glob.glob(os.path.join(self.data_dir, "truth", "*.ir.json")))[:limit]
+        self.augment_figures = augment_figures
 
     def __len__(self) -> int:
         return len(self.truth_paths)
 
     def __getitem__(self, index: int) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         truth_path = self.truth_paths[index]
-        source = load_ir(truth_path).source
-        canvas, scale = load_canvas(os.path.join(self.data_dir, "images", source))
+        truth = load_ir(truth_path)
+        with Image.open(os.path.join(self.data_dir, "images", truth.source)) as image:
+            gray = image.convert("L")
+        if self.augment_figures:
+            rng = random.Random()
+            page = truth.pages[0]
+            for el in page.elements:
+                if el.label == "figure" and rng.random() < FIGURE_RATE:
+                    x0, y0, x1, y1 = el.bbox
+                    draw_figure(gray, (x0 * page.width, y0 * page.height, x1 * page.width, y1 * page.height), rng)
+        canvas, scale = canvas_of(gray)
         return (
             torch.from_numpy(canvas)[None],
             torch.from_numpy(target_mask(truth_path, scale)),
