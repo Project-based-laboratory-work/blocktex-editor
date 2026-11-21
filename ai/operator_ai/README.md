@@ -1,6 +1,6 @@
 # operator_ai — 画像ごとにOCRの設定を選ぶオペレータAI
 
-**状態：進め方1（採点表を作る `score_all.py`）まで。** この README は、何を作るか・どう進めるか・誰が何を担当するかの共有用。
+**状態：進め方1〜3（採点表 `score_all.py`、分析 `analyze.py`）まで。val 全部（850枚）で採点・分析済み。** この README は、何を作るか・どう進めるか・誰が何を担当するかの共有用。
 
 画像（スクリーンショット）を1枚受け取り、その画像に一番合う OCR の設定を1つ選ぶ。
 選ぶ候補は、Tesseract の psm・前処理（[tesseract_ocr/presets.py](../tesseract_ocr/presets.py)）と EasyOCR（[easyocr_ocr/presets.py](../easyocr_ocr/presets.py)）。
@@ -79,6 +79,110 @@ OCR がプロセスごと落ちた（Segmentation fault など）ときは、も
 
 ブロック単位で比べるので、ブロックの読む順や段落の区切り方の違いは誤りにならない。文字そのものの読み取りの良さだけを比べられる。
 
+## 分析する（進め方2・3）
+
+```bash
+python -m operator_ai.analyze operator_ai/data/val/scores.csv
+```
+
+`scores.csv` と同じ場所の `analysis/` に書く（git管理外）。
+
+| 出力 | 内容 |
+|---|---|
+| `report.md` | まとめ（共有用）。下の表を全部まとめたもの |
+| `settings.csv` | 進め方2。設定ごとの `cer_page`・画像ごとの CER の真ん中（`median`）・大きく崩れた画像の割合（`broken`、CER > 0.5）・f1・秒数・一番になった画像の数（`wins`） |
+| `pairs.csv` | 2つの設定のどちらかを画像ごとに選べるときの上限。ルール版で「A か B か」を決めるときの目安 |
+| `conditions.csv` | 進め方3。条件（params の値。dpi・縮小率・JPEG品質は区間にまとめる）ごとに、その条件での単独ベスト・オラクル・各設定の CER |
+| `worst.csv` | 単独ベストで CER が悪い画像の上位30（正解が50字未満のページは除く）。`memo` 列に原因を書く。作り直しても `memo` は消えない |
+
+- CER はすべて「誤りを足してから文字数の合計で割る」
+- どれかの設定でエラーになった画像は、比べる条件を揃えるため集計から外す（`report.md` に一覧が出る）
+- 「一番良い設定」が同点なら速いほうを選ぶ
+- `effective_dpi` は dpi × 縮小率（画面上の文字の細かさ）。params には無い、分析用に足した切り口
+
+### val 全部での結果（850枚、CPU で約5.5時間、2026-11-21）
+
+全854枚のうち、EasyOCR が落ちた1枚と、正解の文字が無い3枚を除いた850枚。
+
+| 方法 | cer_page | 差の埋まり具合 |
+|---|---|---|
+| 単独ベスト（`tesseract:up2`） | 0.119 | 0% |
+| 2つから選ぶときの上限（`tesseract:up2` / `easyocr:up2_lowtext`） | 0.093 | 70% |
+| オラクル（上限） | 0.081 | 100% |
+
+- 振り分けで誤りを約3分の1減らせる余地がある。2つの設定から選ぶだけで、その7割が埋まる（200枚のときとほぼ同じ）
+- `tesseract:psm6` は全体では最下位（0.349）だが、画像ごとの真ん中は 0.060 と2番目に良く、311枚で一番になる。崩れる画像（22%）を見分けられれば強い
+- 文字が細かい画像（`effective_dpi` < 70、71枚）は、どの設定でも悪い（オラクルでも 0.31）
+- `effective_dpi` が 140 以上の画像では、拡大しない `tesseract:invert`（≒ `base`）のほうが `up2` より良い（0.064 と 0.074）
+- ダークモード（0.181）・2段組（0.185）・ビューアあり（0.157）は単独ベストで悪く、振り分けの余地も大きい
+- CER が悪い画像の上位は、Tesseract がほとんど何も読めず（CER ≒ 1）、EasyOCR では読めているものが多い。例：`doc_000040_p2_v0`（ビューアの暗い帯があり、縮小率 0.556）
+- 確認が要る画像：
+  - `doc_000092_p3_v0`：全部の設定で正解のブロックの外に約320字読んでいる。正解の箱がずれている（`image_dataset` の不具合）かもしれない
+  - `doc_000130_p1_v0`：`tesseract:up2` だけ CER 1.0。コードの行と隣の図を1行にまとめて読み、行の中心がコードのブロックから外れたため、行ごと誤りに数えている（`cer_page` の数え方の弱いところ）
+- 英語の画像は73枚
+
+## ルール版を作る（進め方4）— chihiro へ
+
+OCR を回し直さなくても始められるように、val（854枚）の採点表と特徴量を `operator_ai/results/val/` に入れてある（git で入る）。
+
+| ファイル | 内容 |
+|---|---|
+| `results/val/scores.csv` | 採点表（854枚 × 10設定）。列は上の「採点表の列」 |
+| `results/val/features.csv` | 画像から測った特徴量（1行 = 画像1枚）。列は下の「特徴量」 |
+| `results/val/analysis/report.md` | 分析のまとめ（進め方2・3）。ルールの根拠はここから探す |
+
+**手順**
+
+1. `results/val/analysis/report.md` を読む。どの条件でどの設定が勝つか、2つの設定から選ぶだけでどこまで届くか
+2. [rule_example.py](rule_example.py) を写して `rules.py` を作り、`choose(f)` を書く。`f` は特徴量の dict、返すのは設定の名前
+3. 評価する。採点表から点数を引くだけなので1秒で終わる。2〜3 を繰り返す
+
+```bash
+python -m operator_ai.evaluate operator_ai.rules:choose                                  # ai/ で
+python -m operator_ai.evaluate operator_ai.rules:choose operator_ai.rule_example:choose   # 並べて比べる
+```
+
+出力は、単独ベスト・自分のルール・オラクルの `cer_page` と「差の埋まり具合」、条件ごとの点数、オラクルとの差が大きい画像の一覧。
+
+**守ること**
+
+- ルールに使えるのは `f`（画像から測った値）だけ。正解の params（`dark_mode`・`dpi` など）は本物のスクショに無いので使えない。
+  条件ごとの表で params を見るのは、ルールの手がかりを探すため
+- 欲しい特徴量が足りなければ、`features.py` に足す（natsuko に相談）
+- val で閾値を合わせると、val の点数は実力より良く出る。最後は別の画像（seed 2 で作る最終テスト用、natsuko が用意）で確かめる
+
+**いまの手がかり**（val、`report.md` から）
+
+- 単独ベストは `tesseract:up2`（0.119）、オラクルは 0.081。`tesseract:up2` と `easyocr:up2_lowtext` の2択で 0.093（差の70%）まで届く
+- 見本の `rule_example.py`（文字が大きければ `invert`）は、単独ベストと同じ 0.119 で、まだ上回らない。文字の高さだけでは足りない
+- `tesseract:psm6` は311枚で一番だが、22% の画像では大きく崩れる。崩れる画像を見分けられれば大きい
+- 単独ベストで悪いのは、ダークモード・2段組・ビューアあり・文字がとても細かい画像
+
+### 特徴量
+
+[features.py](features.py) の `measure(画像のパス)` で測る。854枚で約10秒。
+
+| 列 | 内容 | val での当たり具合 |
+|---|---|---|
+| `width` / `height` | 画像の大きさ（px） | |
+| `is_jpeg` | 拡張子が .jpg / .jpeg | JPEG の劣化ありと 854枚すべて一致 |
+| `brightness` | 画像全体の明るさ（0〜1） | |
+| `page_dark` / `page_bg` | ページの地が暗いか / 地の明るさ（画像の真ん中の明るさの中央値） | ダークモードと 854枚すべて一致 |
+| `band_ratio` | ビューアの帯・背景（ページと違う色で一様な行・列）の面積の割合 | ビューアありの中央値 0.22、なし 0 |
+| `ink_ratio` | ページの中で文字（インク）の画素の割合 | |
+| `char_height` / `char_height_rel` | 文字の高さ（px、連結成分の高さの中央値）/ 画像の高さに対する割合 | dpi × 縮小率との相関 0.85 |
+| `n_chars` | 文字くらいの大きさの連結成分の数 | |
+| `center_gap` | ページの真ん中に、左右に文字があってすき間が縦に通っている行の割合（2段組の手がかり） | **弱い**。0.5 で分けると段組みとの一致は約7割 |
+
+各ファイルを作り直すとき（natsuko）:
+
+```bash
+python -m operator_ai.score_all image_dataset/data/val
+python -m operator_ai.features image_dataset/data/val
+cp operator_ai/data/val/scores.csv operator_ai/data/val/features.csv operator_ai/results/val/
+python -m operator_ai.analyze operator_ai/results/val/scores.csv
+```
+
 ## 進め方
 
 いきなり学習させず、次の順に進める。各段階で動くものができるので、途中で止まっても結果を出せる。
@@ -98,13 +202,13 @@ OCR がプロセスごと落ちた（Segmentation fault など）ときは、も
 
 | 担当 | 範囲 | 状態 |
 |---|---|---|
-| natsuko | オペレータAI全体のまとめ役。`image_dataset`（学習データ）、採点表・分析（進め方 1〜3）、学習版（5）、評価（6） | `image_dataset`・採点表（1）は済み。2〜3 はこれから |
-| chihiro | ルールベース。構造化器 `image_rule_based`（済み）と、ルール版オペレータ（進め方 4）を担当するか | **要確認** |
+| natsuko | オペレータAI全体のまとめ役。`image_dataset`（学習データ）、採点表・分析（進め方 1〜3）、学習版（5）、評価（6） | `image_dataset`・採点表（1）・分析（2〜3）・特徴量・評価ツールは済み。`worst.csv` の原因のメモ、最終テスト用の画像（seed 2）はこれから |
+| chihiro | ルールベース。構造化器 `image_rule_based`（済み）と、ルール版オペレータ（進め方 4）を担当するか | **要確認**。始める準備はできている（上の「ルール版を作る」） |
 
 - 進め方 3 の分析結果は、4（ルール版）の根拠にも、5（学習版）の材料にもなる。3 を先に共有すれば、ルール版と学習版の作業がかぶらない
 - 他の人のフォルダ（`tesseract_ocr/`・`easyocr_ocr/`・`image_rule_based/`・`evaluation/`）のコードは書き換えない。このフォルダから呼ぶだけにする
 
-## フォルダ構成（予定）
+## フォルダ構成
 
 [ai/README.md](../README.md) の「新しいモデルを作るときの構成」に合わせる。
 
@@ -113,12 +217,15 @@ ai/operator_ai/
   README.md      # これ
   __init__.py
   score_all.py   # 進め方 1：全部の設定で読んで採点表を作る（済み）
-  features.py    # 画像の特徴量を測る（明るさ・暗い画素の割合・文字の高さ・画像の大きさ・周りの灰色の帯・段組みの数など）
-  analyze.py     # 進め方 2・3：単独ベスト・オラクル、条件ごとの勝ち負けの表
+  features.py    # 画像の特徴量を測る（済み）
+  evaluate.py    # オペレータを採点表だけで評価する（済み。進め方 4〜6 で使う）
+  rule_example.py  # ルール版の見本（済み）
+  analyze.py     # 進め方 2・3：単独ベスト・オラクル、条件ごとの勝ち負けの表（済み）
   rules.py       # 進め方 4：ルール版
   train.py       # 進め方 5：学習版
   predict.py     # 推論の入口。画像 → 設定を選ぶ → OCR → IR
   data/          # 採点表・OCRの結果・学習済みモデル（.gitignore）
+  results/       # チームで共有する採点表・特徴量・分析（git に入れる）
   tests/
 ```
 
