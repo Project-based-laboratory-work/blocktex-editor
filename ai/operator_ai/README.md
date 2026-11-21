@@ -156,7 +156,23 @@ python -m operator_ai.evaluate operator_ai.rules:choose operator_ai.rule_example
 - ルールに使えるのは `f`（画像から測った値）だけ。正解の params（`dark_mode`・`dpi` など）は本物のスクショに無いので使えない。
   条件ごとの表で params を見るのは、ルールの手がかりを探すため
 - 欲しい特徴量が足りなければ、`features.py` に足す（natsuko に相談）
-- val で閾値を合わせると、val の点数は実力より良く出る。最後は別の画像（seed 2 で作る最終テスト用、natsuko が用意）で確かめる
+- val で閾値を合わせると、val の点数は実力より良く出る。ルール版ができたら、最終テスト用の画像（test）で確かめる（下の「最終テスト（test）」）
+
+### 最終テスト（test）
+
+**ルール版のコードができたときの確認用。** ルールを作る途中では使わない（test の点数を見ながら直すと、test にも合わせ込んでしまい、実力より良く出るため）。
+
+| | 内容 |
+|---|---|
+| 画像 | `image_dataset/data/test/`（seed 2、300文書から827枚。val・学習用とは別の文書）。git 管理外なので、無ければ下のコマンドで作る |
+| 使う時期 | `rules.py` ができて、val での調整が終わったとき。原則1回 |
+
+```bash
+python -m image_dataset.build --out image_dataset/data/test --docs 300 --seed 2   # 画像（無ければ。約101MB）
+python -m operator_ai.score_all image_dataset/data/test                           # 採点表（CPU で約5時間）
+python -m operator_ai.features image_dataset/data/test                            # 特徴量
+python -m operator_ai.evaluate operator_ai.rules:choose --scores operator_ai/data/test/scores.csv --features operator_ai/data/test/features.csv
+```
 
 **いまの手がかり**（val、`report.md` から）
 
@@ -209,7 +225,7 @@ python -m operator_ai.analyze operator_ai/results/val/scores.csv
 
 | 担当 | 範囲 | 状態 |
 |---|---|---|
-| natsuko | オペレータAI全体のまとめ役。`image_dataset`（学習データ）、採点表・分析（進め方 1〜3）、学習版（5）、評価（6） | `image_dataset`・採点表（1）・分析と原因のメモ（2〜3）・特徴量・評価ツールは済み。最終テスト用の画像（seed 2）はこれから |
+| natsuko | オペレータAI全体のまとめ役。`image_dataset`（学習データ）、採点表・分析（進め方 1〜3）、学習版（5）、評価（6） | `image_dataset`・採点表（1）・分析と原因のメモ（2〜3）・特徴量・評価ツールは済み。最終テスト用の画像（test、seed 2）も作成済み |
 | chihiro | ルールベース。構造化器 `image_rule_based`（済み）と、ルール版オペレータ（進め方 4） | 4 はこれから。始め方は上の「ルール版を作る」 |
 
 - 進め方 3 の分析結果は、4（ルール版）の根拠にも、5（学習版）の材料にもなる。3 を先に共有すれば、ルール版と学習版の作業がかぶらない
