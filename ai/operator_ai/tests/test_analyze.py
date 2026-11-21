@@ -10,7 +10,9 @@ TAGS = {"style": "screenshot", "dpi": "120.0", "scale": "0.5", "jpeg_quality": "
 def row(case, setting, errors, chars=100, sec=1.0, error="", **tags):
     r = dict.fromkeys(COLUMNS, "")
     r.update(TAGS, case=case, setting=setting, errors=errors, chars=chars, ja_errors=errors, ja_chars=chars,
-             en_errors=0, en_chars=0, f1=0.5, sec_per_page=sec, error=error, **tags)
+             en_errors=0, en_chars=0, f1=0.5, sec_per_page=sec, error=error,
+             n_pairs=1, n_preds=1, n_gts=2, iou_sum=0.8, order_concordant=3, order_discordant=1,
+             text_errors=1, text_chars=10, **tags)
     if error:
         r.update(errors="", chars="")
     return r
@@ -38,6 +40,14 @@ def test_single_best_and_oracle(tmp_path):
     assert table[0]["setting"] == "t:A" and table[0]["cer_page"] == round(65 / 300, 4)  # 足してから割る
     assert {r["setting"]: r["wins"] for r in table} == {"t:A": 2, "t:B": 1}
     assert analyze.pooled(cases, lambda c: c.best(settings)) == 35 / 300
+
+
+def test_team_scores_are_pooled_like_the_team_evaluation(tmp_path):
+    write_scores(tmp_path / "scores.csv", SCORES)
+    cases, _, _ = analyze.load(tmp_path / "scores.csv")
+    s = analyze.team_scores([c.settings["t:A"] for c in cases])  # 3枚分の数を足してから割る
+    assert s["precision"] == 1.0 and s["recall"] == 0.5 and s["f1"] == round(2 / 3, 4)
+    assert s["miou"] == 0.8 and s["order_acc"] == 0.75 and s["cer"] == 0.1 and s["sec_per_page"] == 1.0
 
 
 def test_condition_table_finds_the_winner_per_group(tmp_path):

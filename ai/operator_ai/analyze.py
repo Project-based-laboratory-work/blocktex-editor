@@ -24,7 +24,8 @@ from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from operator_ai.score_all import TAG_KEYS
+from evaluation.metrics import Counts, summarize
+from operator_ai.score_all import COUNT_KEYS, TAG_KEYS, TEAM_KEYS
 
 # 「大きく崩れた」とみなす cer_page。これを超える画像の割合を、設定の危うさとして出す
 BROKEN = 0.5
@@ -78,6 +79,22 @@ def load(csv_path: Path) -> tuple[list[Case], list[str], list[dict]]:
     return complete, settings, skipped
 
 
+def team_scores(rows: list[dict]) -> dict:
+    """何枚かの行（scores.csv）をまとめた、チームの評価と同じ値（precision・recall・f1・miou・order_acc・cer）と秒数。
+    チームと同じく Counts を足してから evaluation.metrics.summarize で割る（画像ごとの値の平均にしない）"""
+    counts = Counts()
+    for r in rows:
+        for key in COUNT_KEYS:
+            value = r.get(key)
+            if value in ("", None):
+                raise SystemExit("エラー: 採点表に数の列（n_pairs など）がありません。score_all.py で作り直してください。")
+            setattr(counts, key, getattr(counts, key) + (float(value) if key == "iou_sum" else int(value)))
+    s = summarize(counts)
+    out = {k: None if s[k] is None else round(s[k], 4) for k in TEAM_KEYS}
+    out["sec_per_page"] = round(statistics.mean(seconds(r) for r in rows), 2)
+    return out
+
+
 def pooled(cases: list[Case], pick) -> float | None:
     """画像ごとに pick(case) の設定を選んだときの、まとめた CER"""
     chars = sum(c.chars for c in cases)
@@ -93,7 +110,6 @@ def setting_table(cases: list[Case], settings: list[str]) -> list[dict]:
     table = []
     for s in settings:
         cers = [c.cer(s) for c in cases]
-        f1s = [float(c.settings[s]["f1"]) for c in cases if c.settings[s]["f1"]]
         table.append({
             "setting": s,
             "cer_page": round(pooled(cases, lambda c: s), 4),
@@ -101,8 +117,7 @@ def setting_table(cases: list[Case], settings: list[str]) -> list[dict]:
             "cer_page_en": rate(cases, s, "en"),
             "median": round(statistics.median(cers), 4),
             "broken": round(sum(x > BROKEN for x in cers) / len(cers), 4),
-            "f1": round(statistics.mean(f1s), 4) if f1s else None,
-            "sec_per_page": round(statistics.median(seconds(c.settings[s]) for c in cases), 2),
+            **team_scores([c.settings[s] for c in cases]),
             "wins": wins[s],
         })
     return sorted(table, key=lambda r: r["cer_page"])

@@ -56,9 +56,10 @@ OCR がプロセスごと落ちた（Segmentation fault など）ときは、も
 | `cer_page` / `cer_page_ja` / `cer_page_en` | **ページ全体の文字の誤り率。設定を比べるときはこれを使う**（下の「ページ全体のCER」） |
 | `errors` / `chars` / `ja_*` / `en_*` | `cer_page` の分子と分母。全体の値は「足してから割る」（画像ごとの CER の平均にしない） |
 | `extra_chars` | どの正解のブロックにも入らなかった文字の数（ビューアの文字・ゴミなど）。`errors` に含まれる |
-| `precision` / `recall` / `f1` / `miou` | チームの評価と同じ値（段落の切り方・枠の位置）。EasyOCR は `easyocr_image_rule_based` と同じく段落にまとめてから比べる |
+| `precision` / `recall` / `f1` / `miou` / `order_acc` | チームの評価と同じ値（段落の切り方・枠の位置・読み順）。EasyOCR は `easyocr_image_rule_based` と同じく段落にまとめてから比べる |
 | `cer` | チームの評価と同じ値（対応が取れた箱の中だけの CER）。参考。取りこぼしても下がらないので、設定の比較には使わない |
 | `sec_per_page` | 1枚を読むのにかかった秒数（OCRの結果を保存したときの値） |
+| `n_pairs` `n_preds` `n_gts` `iou_sum` `order_concordant` `order_discordant` `text_errors` `text_chars` | チームの評価の値の分子と分母（[metrics.py](../evaluation/metrics.py) の `Counts`）。何枚かをまとめた値を、チームと同じく「足してから割る」で出すために使う |
 | `style` `dpi` `scale` `jpeg_quality` `dark_mode` `crop` `viewer` `background` | 正解IRの `params` から。崩し方が入っていれば True |
 | `lang` | 正解の文字から推定（ASCII以外が3割以上なら `ja`。`evaluation.import_dataset.guess_lang`） |
 | `columns` | 元のTeX（`<dataset>/tex/`）が twocolumn なら 2 |
@@ -90,7 +91,7 @@ python -m operator_ai.analyze operator_ai/data/val/scores.csv
 | 出力 | 内容 |
 |---|---|
 | `report.md` | まとめ（共有用）。下の表を全部まとめたもの |
-| `settings.csv` | 進め方2。設定ごとの `cer_page`・画像ごとの CER の真ん中（`median`）・大きく崩れた画像の割合（`broken`、CER > 0.5）・f1・秒数・一番になった画像の数（`wins`） |
+| `settings.csv` | 進め方2。設定ごとの `cer_page`・画像ごとの CER の真ん中（`median`）・大きく崩れた画像の割合（`broken`、CER > 0.5）・チームの評価と同じ値（`precision`・`recall`・`f1`・`miou`・`order_acc`・`cer`・`sec_per_page`、足してから割る）・一番になった画像の数（`wins`） |
 | `pairs.csv` | 2つの設定のどちらかを画像ごとに選べるときの上限。ルール版で「A か B か」を決めるときの目安 |
 | `conditions.csv` | 進め方3。条件（params の値。dpi・縮小率・JPEG品質は区間にまとめる）ごとに、その条件での単独ベスト・オラクル・各設定の CER |
 | `worst.csv` | 単独ベストで CER が悪い画像の上位30（正解が50字未満のページは除く）。`memo` 列に原因を書く。作り直しても `memo` は消えない |
@@ -142,7 +143,7 @@ python -m operator_ai.evaluate operator_ai.rules:choose                         
 python -m operator_ai.evaluate operator_ai.rules:choose operator_ai.rule_example:choose   # 並べて比べる
 ```
 
-出力は、単独ベスト・自分のルール・オラクルの `cer_page`・`f1`・1枚の秒数（下の「評価」の3項目）と「差の埋まり具合」、条件ごとの `cer_page`、オラクルとの差が大きい画像の一覧。
+出力は、単独ベスト・自分のルール・オラクルの `cer_page` と「差の埋まり具合」、チームの評価と同じ値（`precision`・`recall`・`f1`・`miou`・`order_acc`・`cer`・`sec_per_page`）、条件ごとの `cer_page`、オラクルとの差が大きい画像の一覧。
 
 **守ること**
 
@@ -259,10 +260,13 @@ ai/operator_ai/
 | 速さ | `sec_per_page` | 1枚を読む秒数（選んだ設定のOCRにかかった時間）。小さいほど良い |
 
 - 単独ベスト・オラクル・差の埋まり具合は CER で決める。f1 と速さは、そのとき一緒に出す
-- 3つは食い違うことがある。val では、EasyOCR（`up2_lowtext`）は CER で負けるが f1 は高く（0.61 と 0.57）、秒数は約12倍（9.5秒と 0.8秒）
-- CER だけで選ぶと f1 が下がる。val のオラクル（CER が一番の設定を選ぶ）は、CER 0.081 と単独ベストの 0.119 より良いが、f1 は 0.41 と単独ベストの 0.57 より悪い。CER で勝ちやすい `psm6`・`psm11` は段落をうまく切れない（f1 0.15・0.19）ため
+- 3つは食い違うことがある。val では、EasyOCR（`up2_lowtext`）は CER で負けるが f1 は高く（0.59 と 0.57）、秒数は約10倍（9.1秒と 0.9秒）
+- CER だけで選ぶと f1 が下がる。val のオラクル（CER が一番の設定を選ぶ）は、CER 0.081 と単独ベストの 0.119 より良いが、f1 は 0.43 と単独ベストの 0.57 より悪い。CER で勝ちやすい `psm6`・`psm11` は段落をうまく切れない（f1 0.16・0.15）ため
+- 読み順（`order_acc`）は、Tesseract が 0.96〜1.00、EasyOCR が約 0.95。`psm6` は段落をほとんど切らない（recall 0.11）ので、読み順はほぼ崩れない（0.999）
+- 値は「足してから割る」で、チームの評価と同じ計算（画像ごとの値の平均ではない）
 - ダークモード／通常、日本語／英語、文字の大小、のような切り口ごとにも出す
-- 採点は [evaluation/metrics.py](../evaluation/metrics.py) と同じ物差し（CER・f1）を使う
+- 採点は [evaluation/metrics.py](../evaluation/metrics.py) と同じ物差しを使う。3項目のほかに、PDF 側と同じ `precision`・`recall`・`miou`・`order_acc`（読み順）・`cer` も並べて出す（何枚かをまとめるときは、チームと同じく `Counts` を足してから `summarize` で割る）
+- PDF 側の指標のうち、`label_acc`・`level_acc`・`deco_f1`・表・数式・コードの指標は出さない。ラベルや装飾は OCR の後ろの構造化器が付けるので、OCR の設定を選ぶオペレータでは変わらないため
 
 ## 未決事項
 

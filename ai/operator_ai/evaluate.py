@@ -1,6 +1,7 @@
 """
 オペレータ（画像の特徴量 → 設定を選ぶ関数）を、採点表だけで評価する。OCR は読み直さない。
-評価項目は CER（cer_page）・f1・速さ（1枚の秒数）の3つ（operator_ai/README.md の「評価」）。
+評価項目は CER（cer_page）・f1・速さ（sec_per_page）の3つ（operator_ai/README.md の「評価」）。
+ほかに、チームの評価と同じ precision・recall・miou・order_acc・cer も並べる（計算は evaluation/metrics.py の summarize）。
 
 採点表（scores.csv）には全部の画像 × 全部の設定の点数があるので、
 「この画像ではこの設定を選んだ」が決まれば、その点数を引いてくるだけで評価できる（1秒で終わる）。
@@ -21,12 +22,11 @@ f の中身は operator_ai/features.py の FEATURES（画像から測った値�
 import argparse
 import csv
 import importlib
-import statistics
 from collections import Counter, defaultdict
 from collections.abc import Callable
 from pathlib import Path
 
-from operator_ai.analyze import Case, condition_value, load, pooled, seconds, single_best
+from operator_ai.analyze import Case, condition_value, load, pooled, single_best, team_scores
 
 RESULTS = Path("operator_ai/results/val")  # ai/ で実行する
 BREAKDOWN = ["dark_mode", "viewer", "lang", "columns", "effective_dpi"]
@@ -67,15 +67,13 @@ def choices(op: Operator, cases: list[Case], features: dict[str, dict], settings
 
 def summary(name: str, cases: list[Case], pick: dict[str, str], base: float, oracle: float) -> dict:
     cer = pooled(cases, lambda c: pick[c.name])
-    secs = [seconds(c.settings[pick[c.name]]) for c in cases]
-    f1s = [float(c.settings[pick[c.name]]["f1"]) for c in cases if c.settings[pick[c.name]]["f1"]]
+    team = team_scores([c.settings[pick[c.name]] for c in cases])
     gap = base - oracle
     return {
         "方法": name,
         "cer_page": round(cer, 4),
-        "f1": round(statistics.mean(f1s), 4) if f1s else "-",
         "差の埋まり具合": f"{(base - cer) / gap:.0%}" if gap > 0 else "-",
-        "1枚の秒数（平均）": round(statistics.mean(secs), 2),
+        **{k: "-" if v is None else v for k, v in team.items()},
         "選んだ設定": "、".join(f"{s} {n}" for s, n in Counter(pick.values()).most_common()),
     }
 
