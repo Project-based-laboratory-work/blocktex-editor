@@ -1,6 +1,6 @@
 """
 オペレータ（画像の特徴量 → 設定を選ぶ関数）を、採点表だけで評価する。OCR は読み直さない。
-評価項目は CER（cer_page）・f1・速さ（sec_per_page）の3つ（operator_ai/README.md の「評価」）。
+評価項目は検討中（いまの案は CER（cer_page）・f1・速さ（sec_per_page）の3つ。operator_ai/README.md の「評価」）。
 ほかに、チームの評価と同じ precision・recall・miou・order_acc・cer も並べる（計算は evaluation/metrics.py の summarize）。
 
 採点表（scores.csv）には全部の画像 × 全部の設定の点数があるので、
