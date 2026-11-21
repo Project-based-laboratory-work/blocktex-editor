@@ -96,6 +96,12 @@ python -m operator_ai.analyze operator_ai/data/val/scores.csv
 | `conditions.csv` | 進め方3。条件（params の値。dpi・縮小率・JPEG品質は区間にまとめる）ごとに、その条件での単独ベスト・オラクル・各設定の CER |
 | `worst.csv` | 単独ベストで CER が悪い画像の上位30（正解が50字未満のページは除く）。`memo` 列に原因を書く。作り直しても `memo` は消えない |
 
+CER が悪い画像を目で確かめるページも作れる（[review.py](review.py)）。画像に正解とOCRの枠を重ね、原因の下書き（自動の判定）を付ける。memo はページの上で直して `worst.csv` に書き出せる。
+
+```bash
+python -m operator_ai.review image_dataset/data/val operator_ai/results/val/analysis/worst.csv   # → operator_ai/data/val/review.html
+```
+
 - CER はすべて「誤りを足してから文字数の合計で割る」
 - どれかの設定でエラーになった画像は、比べる条件を揃えるため集計から外す（`report.md` に一覧が出る）
 - 「一番良い設定」が同点なら速いほうを選ぶ
@@ -221,6 +227,7 @@ ai/operator_ai/
   features.py    # 画像の特徴量を測る（済み）
   evaluate.py    # オペレータを採点表だけで評価する（済み。進め方 4〜6 で使う）
   rule_example.py  # ルール版の見本（済み）
+  review.py      # CER が悪い画像を目で確かめるページ（済み）
   analyze.py     # 進め方 2・3：単独ベスト・オラクル、条件ごとの勝ち負けの表（済み）
   rules.py       # 進め方 4：ルール版
   train.py       # 進め方 5：学習版

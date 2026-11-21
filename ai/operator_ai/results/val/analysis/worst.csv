@@ -1,31 +1,31 @@
 ﻿case,single_best_cer,best_setting,best_cer,chars,style,dpi,scale,jpeg_quality,dark_mode,crop,viewer,background,lang,columns,memo
-doc_000092_p3_v0,1.2472,tesseract:up2,1.2472,271,screenshot,135.6,0.739,,True,True,False,False,ja,2,
-doc_000103_p1_v0,1.0,easyocr:up2_lowtext,0.6959,171,screenshot,105.4,0.621,,True,True,True,False,en,1,
-doc_000123_p3_v0,1.0,easyocr:up2_lowtext,0.6222,270,screenshot,107.1,0.533,,False,True,True,False,ja,1,
-doc_000130_p1_v0,1.0,tesseract:invert,0.0273,439,clean,126.4,1.0,,False,False,False,False,ja,2,
-doc_000255_p2_v0,1.0,easyocr:up2_lowtext,0.5435,333,screenshot,90.0,0.815,60,True,False,True,False,ja,1,
-doc_000291_p2_v0,0.9925,easyocr:up2_lowtext,0.5689,668,screenshot,119.4,0.557,,True,False,True,False,ja,2,
-doc_000040_p2_v0,0.9799,easyocr:up2_lowtext,0.5006,797,screenshot,109.3,0.556,,False,True,True,False,ja,1,
-doc_000110_p1_v0,0.9663,easyocr:up2_lowtext,0.5056,356,screenshot,138.9,0.547,90,True,True,True,False,ja,2,
-doc_000055_p1_v0,0.9621,easyocr:lowtext,0.4953,317,screenshot,126.0,0.556,53,True,False,True,False,ja,1,
-doc_000068_p2_v0,0.96,easyocr:up2_lowtext,0.1745,275,screenshot,174.1,0.515,,True,True,True,False,ja,1,
-doc_000044_p1_v0,0.9558,easyocr:lowtext,0.5953,430,screenshot,94.4,0.629,84,False,True,True,True,ja,2,
-doc_000057_p1_v0,0.9373,tesseract:psm11,0.0863,255,screenshot,117.8,0.791,67,False,False,False,False,ja,2,
-doc_000034_p3_v0,0.9115,easyocr:lowtext,0.3393,610,screenshot,109.5,0.916,53,True,False,True,False,ja,1,
-doc_000093_p2_v0,0.8952,easyocr:up2_lowtext,0.1935,372,screenshot,113.9,0.822,68,True,False,True,False,ja,1,
-doc_000180_p1_v0,0.8707,easyocr:up2_lowtext,0.2019,317,screenshot,162.8,0.704,62,True,True,True,False,ja,2,
-doc_000009_p1_v0,0.8466,easyocr:lowtext,0.767,352,screenshot,102.3,0.511,54,False,False,True,False,ja,1,
-doc_000189_p1_v0,0.8395,easyocr:up2_lowtext,0.3895,760,screenshot,101.0,0.665,,False,True,True,True,ja,2,
-doc_000134_p2_v0,0.8063,tesseract:invert,0.0149,537,screenshot,157.8,0.945,90,True,False,True,False,ja,2,
-doc_000026_p2_v0,0.6875,easyocr:up2_lowtext,0.62,400,screenshot,108.8,0.506,,False,False,True,True,ja,1,
-doc_000132_p1_v0,0.6834,easyocr:up2_lowtext,0.341,736,screenshot,91.3,0.757,,True,True,True,False,ja,2,
-doc_000044_p2_v0,0.6452,tesseract:up2,0.6452,434,screenshot,97.1,0.658,60,False,True,True,True,ja,2,
-doc_000033_p2_v0,0.639,easyocr:up2_lowtext,0.5062,241,screenshot,104.5,0.642,58,False,False,False,False,ja,1,
-doc_000267_p3_v0,0.6286,easyocr:up2_lowtext,0.5841,315,screenshot,104.1,0.512,,False,False,False,False,ja,1,
-doc_000121_p1_v0,0.6232,easyocr:up2_lowtext,0.1256,207,screenshot,126.7,0.879,66,True,True,True,False,ja,2,
-doc_000069_p1_v0,0.622,tesseract:psm11,0.1707,164,screenshot,98.4,0.826,,False,True,True,False,ja,2,
-doc_000079_p1_v0,0.5954,tesseract:up2,0.5954,435,screenshot,105.8,0.598,60,False,False,True,False,ja,1,
-doc_000155_p2_v0,0.5951,easyocr:up2_lowtext,0.5634,284,screenshot,106.5,0.58,58,False,True,False,False,ja,1,
-doc_000108_p2_v0,0.592,easyocr:lowtext,0.2239,201,screenshot,125.5,0.591,,True,False,True,False,ja,1,
-doc_000153_p4_v0,0.5846,easyocr:up2_lowtext,0.4667,195,screenshot,101.0,0.691,60,False,True,False,False,ja,1,
-doc_000092_p2_v0,0.5681,tesseract:up2,0.5681,558,screenshot,97.2,0.647,50,False,True,True,True,ja,2,
+doc_000092_p3_v0,1.2472,tesseract:up2,1.2472,271,screenshot,135.6,0.739,,True,True,False,False,ja,2,【画像で確認】左の段の長い表（表1）が正解に入っていない。OCR が読んだ表の文字が全部「正解の外」になっている。表がページより長く、正解から抜け落ちた可能性。#56（ページより長い表）と同じ原因かもしれない／【自動】どの設定でも正解のブロックの外に多く読んでいる（少ない設定でも 312 字）。正解の箱がずれている疑い／ダークモード／一番良い設定（tesseract:up2）でも cer_page 1.25。設定を選ぶだけでは直らない
+doc_000103_p1_v0,1.0,easyocr:up2_lowtext,0.6959,171,screenshot,105.4,0.621,,True,True,True,False,en,1,【画像で確認】ダークモード＋ビューア＋縮小で文字がとても小さい。EasyOCR は枠は合っているが、コードと小さい日本語を読み違えている／【自動】tesseract:up2 がほとんど読めていない（0 字 / 正解 171 字）。EasyOCR なら読める／ダークモード／ビューアの帯・背景あり（画像の 29%）／文字が細かい（文字の高さ 6px、dpi × 縮小率 65）／一番良い設定（easyocr:up2_lowtext）でも cer_page 0.70。設定を選ぶだけでは直らない
+doc_000123_p3_v0,1.0,easyocr:up2_lowtext,0.6222,270,screenshot,107.1,0.533,,False,True,True,False,ja,1,【自動】tesseract:up2 がほとんど読めていない（0 字 / 正解 270 字）。EasyOCR なら読める／ビューアの帯・背景あり（画像の 11%）／文字が細かい（文字の高さ 7px、dpi × 縮小率 57）／一番良い設定（easyocr:up2_lowtext）でも cer_page 0.62。設定を選ぶだけでは直らない
+doc_000130_p1_v0,1.0,tesseract:invert,0.0273,439,clean,126.4,1.0,,False,False,False,False,ja,2,【画像で確認】tesseract:up2 が左右の段をまたいで1つの大きな段落にまとめている。invert・psm11 は段を分けられている／【自動】tesseract:up2 だけ正解の外に多く読んでいる（218 字）。2段組の左右の段を1行にまとめて読んだ疑い／tesseract:invert に替えれば cer_page 1.00 → 0.03。振り分けで直せる
+doc_000255_p2_v0,1.0,easyocr:up2_lowtext,0.5435,333,screenshot,90.0,0.815,60,True,False,True,False,ja,1,【自動】tesseract:up2 がほとんど読めていない（0 字 / 正解 333 字）。EasyOCR なら読める／ダークモード／ビューアの帯・背景あり（画像の 11%）／文字が細かい（文字の高さ 7px、dpi × 縮小率 73）／JPEG（品質 60）／一番良い設定（easyocr:up2_lowtext）でも cer_page 0.54。設定を選ぶだけでは直らない
+doc_000291_p2_v0,0.9925,easyocr:up2_lowtext,0.5689,668,screenshot,119.4,0.557,,True,False,True,False,ja,2,【自動】tesseract:up2 がほとんど読めていない（5 字 / 正解 668 字）。EasyOCR なら読める／ダークモード／ビューアの帯・背景あり（画像の 13%）／文字が細かい（文字の高さ 7px、dpi × 縮小率 67）／一番良い設定（easyocr:up2_lowtext）でも cer_page 0.57。設定を選ぶだけでは直らない
+doc_000040_p2_v0,0.9799,easyocr:up2_lowtext,0.5006,797,screenshot,109.3,0.556,,False,True,True,False,ja,1,【自動】tesseract:up2 がほとんど読めていない（17 字 / 正解 797 字）。EasyOCR なら読める／ビューアの帯・背景あり（画像の 25%）／文字が細かい（文字の高さ 6px、dpi × 縮小率 61）／一番良い設定（easyocr:up2_lowtext）でも cer_page 0.50。設定を選ぶだけでは直らない
+doc_000110_p1_v0,0.9663,easyocr:up2_lowtext,0.5056,356,screenshot,138.9,0.547,90,True,True,True,False,ja,2,【自動】tesseract:up2 がほとんど読めていない（12 字 / 正解 356 字）。EasyOCR なら読める／ダークモード／ビューアの帯・背景あり（画像の 11%）／文字が細かい（文字の高さ 7px、dpi × 縮小率 76）／JPEG（品質 90）／一番良い設定（easyocr:up2_lowtext）でも cer_page 0.51。設定を選ぶだけでは直らない
+doc_000055_p1_v0,0.9621,easyocr:lowtext,0.4953,317,screenshot,126.0,0.556,53,True,False,True,False,ja,1,【自動】tesseract:up2 がほとんど読めていない（12 字 / 正解 317 字）。EasyOCR なら読める／ダークモード／ビューアの帯・背景あり（画像の 32%）／文字が細かい（文字の高さ 6px、dpi × 縮小率 70）／JPEG（品質 53）／一番良い設定（easyocr:lowtext）でも cer_page 0.50。設定を選ぶだけでは直らない
+doc_000068_p2_v0,0.96,easyocr:up2_lowtext,0.1745,275,screenshot,174.1,0.515,,True,True,True,False,ja,1,【自動】tesseract:up2 がほとんど読めていない（11 字 / 正解 275 字）。EasyOCR なら読める／ダークモード／ビューアの帯・背景あり（画像の 11%）／easyocr:up2_lowtext に替えれば cer_page 0.96 → 0.17。振り分けで直せる
+doc_000044_p1_v0,0.9558,easyocr:lowtext,0.5953,430,screenshot,94.4,0.629,84,False,True,True,True,ja,2,【自動】tesseract:up2 がほとんど読めていない（42 字 / 正解 430 字）。EasyOCR なら読める／ビューアの帯・背景あり（画像の 17%）／文字が細かい（文字の高さ 6px、dpi × 縮小率 59）／JPEG（品質 84）／一番良い設定（easyocr:lowtext）でも cer_page 0.60。設定を選ぶだけでは直らない
+doc_000057_p1_v0,0.9373,tesseract:psm11,0.0863,255,screenshot,117.8,0.791,67,False,False,False,False,ja,2,【画像で確認】tesseract:up2 が左の段の本文と右の段の表を横につなげて読んでいる。psm11 は段を分けられている／【自動】tesseract:up2 は枠は見つけている（556 字）が、文字を読み違えている／JPEG（品質 67）／tesseract:psm11 に替えれば cer_page 0.94 → 0.09。振り分けで直せる
+doc_000034_p3_v0,0.9115,easyocr:lowtext,0.3393,610,screenshot,109.5,0.916,53,True,False,True,False,ja,1,【自動】tesseract:up2 がほとんど読めていない（62 字 / 正解 610 字）。EasyOCR なら読める／ダークモード／ビューアの帯・背景あり（画像の 30%）／JPEG（品質 53）／easyocr:lowtext に替えれば cer_page 0.91 → 0.34。振り分けで直せる
+doc_000093_p2_v0,0.8952,easyocr:up2_lowtext,0.1935,372,screenshot,113.9,0.822,68,True,False,True,False,ja,1,【自動】tesseract:up2 がほとんど読めていない（42 字 / 正解 372 字）。EasyOCR なら読める／ダークモード／ビューアの帯・背景あり（画像の 35%）／JPEG（品質 68）／easyocr:up2_lowtext に替えれば cer_page 0.90 → 0.19。振り分けで直せる
+doc_000180_p1_v0,0.8707,easyocr:up2_lowtext,0.2019,317,screenshot,162.8,0.704,62,True,True,True,False,ja,2,【自動】ダークモード／ビューアの帯・背景あり（画像の 10%）／JPEG（品質 62）／easyocr:up2_lowtext に替えれば cer_page 0.87 → 0.20。振り分けで直せる
+doc_000009_p1_v0,0.8466,easyocr:lowtext,0.767,352,screenshot,102.3,0.511,54,False,False,True,False,ja,1,【自動】tesseract:up2 は枠は見つけている（114 字）が、文字を読み違えている／ビューアの帯・背景あり（画像の 16%）／文字が細かい（文字の高さ 6px、dpi × 縮小率 52）／JPEG（品質 54）／一番良い設定（easyocr:lowtext）でも cer_page 0.77。設定を選ぶだけでは直らない
+doc_000189_p1_v0,0.8395,easyocr:up2_lowtext,0.3895,760,screenshot,101.0,0.665,,False,True,True,True,ja,2,【自動】tesseract:up2 は枠は見つけている（155 字）が、文字を読み違えている／ビューアの帯・背景あり（画像の 20%）／文字が細かい（文字の高さ 7px、dpi × 縮小率 67）／easyocr:up2_lowtext に替えれば cer_page 0.84 → 0.39。振り分けで直せる
+doc_000134_p2_v0,0.8063,tesseract:invert,0.0149,537,screenshot,157.8,0.945,90,True,False,True,False,ja,2,【自動】tesseract:up2 だけ正解の外に多く読んでいる（209 字）。2段組の左右の段を1行にまとめて読んだ疑い／ダークモード／ビューアの帯・背景あり（画像の 33%）／JPEG（品質 90）／tesseract:invert に替えれば cer_page 0.81 → 0.01。振り分けで直せる
+doc_000026_p2_v0,0.6875,easyocr:up2_lowtext,0.62,400,screenshot,108.8,0.506,,False,False,True,True,ja,1,【自動】tesseract:up2 は枠は見つけている（149 字）が、文字を読み違えている／ビューアの帯・背景あり（画像の 37%）／文字が細かい（文字の高さ 6px、dpi × 縮小率 55）／一番良い設定（easyocr:up2_lowtext）でも cer_page 0.62。設定を選ぶだけでは直らない
+doc_000132_p1_v0,0.6834,easyocr:up2_lowtext,0.341,736,screenshot,91.3,0.757,,True,True,True,False,ja,2,【自動】tesseract:up2 は枠は見つけている（316 字）が、文字を読み違えている／ダークモード／ビューアの帯・背景あり（画像の 17%）／文字が細かい（文字の高さ 8px、dpi × 縮小率 69）／easyocr:up2_lowtext に替えれば cer_page 0.68 → 0.34。振り分けで直せる
+doc_000044_p2_v0,0.6452,tesseract:up2,0.6452,434,screenshot,97.1,0.658,60,False,True,True,True,ja,2,【画像で確認】画像が 579×523 と小さく、JPEG で文字がつぶれている。Tesseract は枠は合っているが、日本語を英字として読んでいる／【自動】tesseract:up2 は枠は見つけている（442 字）が、文字を読み違えている／ビューアの帯・背景あり（画像の 25%）／文字が細かい（文字の高さ 7px、dpi × 縮小率 64）／JPEG（品質 60）／一番良い設定（tesseract:up2）でも cer_page 0.65。設定を選ぶだけでは直らない
+doc_000033_p2_v0,0.639,easyocr:up2_lowtext,0.5062,241,screenshot,104.5,0.642,58,False,False,False,False,ja,1,【自動】tesseract:up2 は枠は見つけている（236 字）が、文字を読み違えている／文字が細かい（文字の高さ 7px、dpi × 縮小率 67）／JPEG（品質 58）／一番良い設定（easyocr:up2_lowtext）でも cer_page 0.51。設定を選ぶだけでは直らない
+doc_000267_p3_v0,0.6286,easyocr:up2_lowtext,0.5841,315,screenshot,104.1,0.512,,False,False,False,False,ja,1,【自動】tesseract:up2 は枠は見つけている（301 字）が、文字を読み違えている／文字が細かい（文字の高さ 6px、dpi × 縮小率 53）／一番良い設定（easyocr:up2_lowtext）でも cer_page 0.58。設定を選ぶだけでは直らない
+doc_000121_p1_v0,0.6232,easyocr:up2_lowtext,0.1256,207,screenshot,126.7,0.879,66,True,True,True,False,ja,2,【自動】tesseract:up2 は枠は見つけている（101 字）が、文字を読み違えている／ダークモード／ビューアの帯・背景あり（画像の 25%）／JPEG（品質 66）／easyocr:up2_lowtext に替えれば cer_page 0.62 → 0.13。振り分けで直せる
+doc_000069_p1_v0,0.622,tesseract:psm11,0.1707,164,screenshot,98.4,0.826,,False,True,True,False,ja,2,【自動】ビューアの帯・背景あり（画像の 20%）／tesseract:psm11 に替えれば cer_page 0.62 → 0.17。振り分けで直せる
+doc_000079_p1_v0,0.5954,tesseract:up2,0.5954,435,screenshot,105.8,0.598,60,False,False,True,False,ja,1,【自動】tesseract:up2 は枠は見つけている（363 字）が、文字を読み違えている／文字が細かい（文字の高さ 8px、dpi × 縮小率 63）／JPEG（品質 60）／一番良い設定（tesseract:up2）でも cer_page 0.60。設定を選ぶだけでは直らない
+doc_000155_p2_v0,0.5951,easyocr:up2_lowtext,0.5634,284,screenshot,106.5,0.58,58,False,True,False,False,ja,1,【自動】tesseract:up2 は枠は見つけている（290 字）が、文字を読み違えている／文字が細かい（文字の高さ 7px、dpi × 縮小率 62）／JPEG（品質 58）／一番良い設定（easyocr:up2_lowtext）でも cer_page 0.56。設定を選ぶだけでは直らない
+doc_000108_p2_v0,0.592,easyocr:lowtext,0.2239,201,screenshot,125.5,0.591,,True,False,True,False,ja,1,【自動】tesseract:up2 は枠は見つけている（110 字）が、文字を読み違えている／ダークモード／ビューアの帯・背景あり（画像の 38%）／easyocr:lowtext に替えれば cer_page 0.59 → 0.22。振り分けで直せる
+doc_000153_p4_v0,0.5846,easyocr:up2_lowtext,0.4667,195,screenshot,101.0,0.691,60,False,True,False,False,ja,1,【自動】tesseract:up2 は枠は見つけている（193 字）が、文字を読み違えている／文字が細かい（文字の高さ 7px、dpi × 縮小率 70）／JPEG（品質 60）／一番良い設定（easyocr:up2_lowtext）でも cer_page 0.47。設定を選ぶだけでは直らない
+doc_000092_p2_v0,0.5681,tesseract:up2,0.5681,558,screenshot,97.2,0.647,50,False,True,True,True,ja,2,【自動】tesseract:up2 は枠は見つけている（559 字）が、文字を読み違えている／文字が細かい（文字の高さ 6px、dpi × 縮小率 63）／JPEG（品質 50）／一番良い設定（tesseract:up2）でも cer_page 0.57。設定を選ぶだけでは直らない
