@@ -43,13 +43,18 @@ ENGINES = ("tesseract", "easyocr")
 # 数式の正解の text はPDFの文字を並べただけ（分数などの並びが崩れている）なので、OCRの文字の比べ先にならない
 PAGE_CER_EXCLUDED = ("table", "figure", "math")
 
+TEAM_KEYS = ["precision", "recall", "f1", "miou", "order_acc", "cer"]
+COUNT_KEYS = ["n_pairs", "n_preds", "n_gts", "iou_sum", "order_concordant", "order_discordant", "text_errors", "text_chars"]
+
 SCORE_KEYS = [
     # ページ全体の文字の誤り率（取りこぼしも、余計に読んだ文字も誤りに数える）
     "cer_page", "cer_page_ja", "cer_page_en",
     "errors", "chars", "ja_errors", "ja_chars", "en_errors", "en_chars", "extra_chars",
     # チームの評価と同じ値（evaluation/metrics.py の summarize）。EasyOCR は段落にまとめてから比べる
-    "precision", "recall", "f1", "miou", "cer",
+    *TEAM_KEYS,
     "sec_per_page",
+    # TEAM_KEYS の分子と分母（evaluation/metrics.py の Counts）。何枚かをまとめた値を、チームと同じく「足してから割る」で出すため
+    *COUNT_KEYS,
 ]
 TAG_KEYS = ["style", "dpi", "scale", "jpeg_quality", "dark_mode", "crop", "viewer", "background", "lang", "columns"]
 COLUMNS = ["case", "setting", "engine", "preset", *SCORE_KEYS, *TAG_KEYS, "error"]
@@ -305,8 +310,11 @@ def score(ocr: OcrResult, truth: IRDocument) -> dict:
     counts = Counts()
     count_document(ocr.paragraphs, truth, counts)
     s = summarize(counts)
-    for key in ("precision", "recall", "f1", "miou", "cer"):
+    for key in TEAM_KEYS:
         row[key] = None if s[key] is None else round(s[key], 4)
+    for key in COUNT_KEYS:
+        value = getattr(counts, key)
+        row[key] = round(value, 4) if isinstance(value, float) else value
     row["sec_per_page"] = ocr.paragraphs.params.get("seconds")
     return row
 
