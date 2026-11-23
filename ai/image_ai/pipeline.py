@@ -12,7 +12,8 @@
                  読み、`\\` でつなぐ。画像読み込みの数式は align*（ai/CONSTRAINTS.md）なので、各行の最初の関係記号の前に & を置く
        - code:   行の左端のずれ ÷ 1文字の幅 → 行頭の空白（字下げ）
        - figure: 中身なし
-       - それ以外: 行を上から順に "\\n" でつなぐ
+       - それ以外: 行を上から順に "\\n" でつなぐ。見出しのレベルは番号の深さ（image_rule_based.heading_level。
+                 画像読み込みの見出しは番号付きの決まり。学習データの見出しも全部、番号の深さ＝レベル）
   4. 読み順: 左右どちらの段にも複数のブロックがあれば2段組とみなし、両方の段にまたがるブロックで区切った区間ごとに
      左の段 → 右の段（image_rule_based と同じ考え方）。それ以外は上から順
 
@@ -281,7 +282,12 @@ def to_element(block: Block, image: Image.Image, table_checkpoint: str, math_che
         tex = " \\\\\n".join(align_mark(vocab.decode(row.tolist()[1:])) for row in ids)
         return Element(kind="text", bbox=bbox, text=block_text(block.lines) or tex, label="math", tex=tex)
     text = code_text(block.lines) if block.label == "code" else block_text(block.lines)
-    return Element(kind="text", bbox=bbox, text=text, label=block.label)
+    level = None
+    if block.label == "heading":
+        from image_rule_based.image_classifier import heading_level
+
+        level = heading_level(text)
+    return Element(kind="text", bbox=bbox, text=text, label=block.label, level=level)
 
 
 def predict(image_path: str, layout_checkpoint: str = LAYOUT_CHECKPOINT, table_checkpoint: str = TABLE_CHECKPOINT,
