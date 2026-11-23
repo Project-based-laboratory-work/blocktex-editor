@@ -1,5 +1,5 @@
 from common.ir import Element, Page
-from image_rule_based.image_classifier import body_font_size, classify_page, font_size_of
+from image_rule_based.image_classifier import body_font_size, classify_page, font_size_of, heading_level
 
 
 def el(text, x0, y0, x1, y1, size=None, kind="text"):
@@ -59,9 +59,10 @@ def test_numbered_line_is_heading_even_if_not_large():
         el("4.1 CPUの評価", 0.1, 0.10, 0.4, 0.12, 18.0),
         el("1,1 文書の比較", 0.1, 0.14, 0.4, 0.16, 18.0),  # OCRが「.」を「,」と読み違えたもの
         el("2 Related Work", 0.1, 0.18, 0.4, 0.20, 18.0),
+        el("1】関連研究", 0.1, 0.20, 0.4, 0.21, 18.0),  # OCRが番号の後ろのすき間を「】」と読んだもの
         el(BODY, 0.1, 0.22, 0.9, 0.35, 18.0),
     ))  # fmt: skip
-    assert [b.kind for b in blocks] == ["heading", "heading", "heading", "paragraph"]
+    assert [b.kind for b in blocks] == ["heading", "heading", "heading", "heading", "paragraph"]
 
 
 def test_numbered_sentence_or_number_only_is_not_heading():
@@ -72,6 +73,27 @@ def test_numbered_sentence_or_number_only_is_not_heading():
         el(BODY, 0.1, 0.25, 0.9, 0.35, 18.0),
     ))  # fmt: skip
     assert [b.kind for b in blocks] == ["paragraph"] * 4
+
+
+def test_numbered_code_line_is_not_heading():
+    # 行番号の付いたコード。番号の後ろが記号なら見出しにしない
+    blocks = classify_page(page_of(
+        el("3| stmt{[$1]}", 0.1, 0.10, 0.4, 0.12, 18.0),
+        el("4 = x + 1", 0.1, 0.14, 0.4, 0.16, 18.0),
+        el("12 {", 0.1, 0.18, 0.4, 0.20, 18.0),
+        el(BODY, 0.1, 0.22, 0.9, 0.35, 18.0),
+    ))  # fmt: skip
+    assert [b.kind for b in blocks] == ["paragraph"] * 4
+
+
+def test_heading_level():
+    assert heading_level("3 実験") == 1
+    assert heading_level("1. Introduction") == 1
+    assert heading_level("3.2コード説明") == 2
+    assert heading_level("1,1 文書の比較") == 2  # OCRが「.」を「,」と読み違えたもの
+    assert heading_level("4.1.2 CPUの評価") == 3
+    assert heading_level("概要") is None
+    assert heading_level("CHAPTER II") is None
 
 
 def test_text_inside_table_is_absorbed():
