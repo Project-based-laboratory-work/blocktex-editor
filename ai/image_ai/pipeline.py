@@ -12,7 +12,8 @@
                  読み、`\\` でつなぐ。画像読み込みの数式は align*（ai/CONSTRAINTS.md）なので、各行の最初の関係記号の前に & を置く
        - code:   行の左端のずれ ÷ 1文字の幅 → 行頭の空白（字下げ）
        - figure: 中身なし
-       - それ以外: 行を上から順に "\\n" でつなぐ。見出しのレベルは番号の深さ（image_rule_based.heading_level。
+       - それ以外: 行を上から順に "\\n" でつなぐ。段落・箇条書き・キャプションは、装飾AI（image_deco）で行ごとに
+                 太字・斜体・下線を見分けて runs にする。見出しのレベルは番号の深さ（image_rule_based.heading_level。
                  画像読み込みの見出しは番号付きの決まり。学習データの見出しも全部、番号の深さ＝レベル）
   4. 読み順: 左右どちらの段にも複数のブロックがあれば2段組とみなし、両方の段にまたがるブロックで区切った区間ごとに
      左の段 → 右の段（image_rule_based と同じ考え方）。それ以外は上から順
@@ -34,11 +35,13 @@ import numpy as np
 import torch
 from PIL import Image
 
-from common.ir import Element, IRDocument, Page, normalize_bbox, save_ir
+from common.ir import Element, IRDocument, Page, Run, normalize_bbox, save_ir
 
 LAYOUT_CHECKPOINT = "image_layout/checkpoints/unet/best.pt"
 TABLE_CHECKPOINT = "image_table/checkpoints/split/best.pt"
 MATH_CHECKPOINT = "math_ocr/checkpoints/v4_im2latex/best.pt"
+DECO_CHECKPOINT = "image_deco/checkpoints/tagger/best.pt"  # 無ければ装飾（runs）は付けない
+DECORATED_LABELS = {"paragraph", "list", "caption"}  # 文中の装飾を付けるラベル（evaluation/metrics.py と同じ）
 LANGS = ("ja", "en")  # easyocr_ocr の DEFAULT_LANGS と同じ
 CROP_PAD = 4  # 表・数式を切り抜くときの余白（画素）
 COLUMN_GUTTER = 0.02  # 段の境目（ページの真ん中）からこの割合までは、はみ出しても片方の段とみなす
@@ -86,6 +89,13 @@ def _table_model(path: str):
 @lru_cache(maxsize=None)
 def _math_model(path: str):
     from math_ocr.predict import load_model
+
+    return load_model(Path(path))
+
+
+@lru_cache(maxsize=None)
+def _deco_model(path: str):
+    from image_deco.predict import load_model
 
     return load_model(Path(path))
 
@@ -188,6 +198,32 @@ def block_text(lines: list[Line]) -> str:
     return "\n".join(" ".join(l.text for l in row) for row in rows_of(lines))
 
 
+def block_runs(lines: list[Line], image: Image.Image, deco_checkpoint: str) -> list[Run] | None:
+    """装飾AIで、行ごとに太字・斜体・下線の付いた文字を決め、runs にする（つなげると block_text と同じ文字）。
+    装飾が1つも無ければ None"""
+    from image_deco.predict import char_ranges, line_spans, pieces
+
+    model = _deco_model(deco_checkpoint)
+    parts: list[tuple[str, frozenset[str]]] = []
+    for r, row in enumerate(rows_of(lines)):
+        if r:
+            parts.append(("\n", frozenset()))
+        for k, line in enumerate(row):
+            if k:
+                parts.append((" ", frozenset()))
+            spans = line_spans(model, crop(image, line.box, pad=2))
+            parts += pieces(line.text, char_ranges(line.text, spans))
+    if not any(m for _, m in parts):
+        return None
+    runs: list[Run] = []
+    for text, marks in parts:
+        if runs and frozenset(m for m in ("bold", "italic", "underline") if getattr(runs[-1], m)) == marks:
+            runs[-1].text += text
+        else:
+            runs.append(Run(text, **{m: True for m in marks}))
+    return runs
+
+
 def code_text(lines: list[Line]) -> str:
     """コード: 行の左端が一番左の行からどれだけずれているかを、1文字の幅で割って行頭の空白にする"""
     rows = rows_of(lines)
@@ -257,13 +293,14 @@ def align_mark(tex: str) -> str:
     return tex
 
 
-def crop(image: Image.Image, box: Box) -> Image.Image:
+def crop(image: Image.Image, box: Box, pad: int = CROP_PAD) -> Image.Image:
     x0, y0, x1, y1 = box
-    return image.crop((max(0, int(x0) - CROP_PAD), max(0, int(y0) - CROP_PAD),
-                       min(image.width, int(np.ceil(x1)) + CROP_PAD), min(image.height, int(np.ceil(y1)) + CROP_PAD)))  # fmt: skip
+    return image.crop((max(0, int(x0) - pad), max(0, int(y0) - pad),
+                       min(image.width, int(np.ceil(x1)) + pad), min(image.height, int(np.ceil(y1)) + pad)))  # fmt: skip
 
 
-def to_element(block: Block, image: Image.Image, table_checkpoint: str, math_checkpoint: str, use_ocr: bool) -> Element:
+def to_element(block: Block, image: Image.Image, table_checkpoint: str, math_checkpoint: str, use_ocr: bool,
+               deco_checkpoint: str | None = None) -> Element:  # fmt: skip
     bbox = normalize_bbox(block.box, image.width, image.height)
     if block.label == "figure":
         return Element(kind="figure", bbox=bbox, label="figure")
@@ -287,18 +324,21 @@ def to_element(block: Block, image: Image.Image, table_checkpoint: str, math_che
         from image_rule_based.image_classifier import heading_level
 
         level = heading_level(text)
-    return Element(kind="text", bbox=bbox, text=text, label=block.label, level=level)
+    runs = None
+    if deco_checkpoint and block.label in DECORATED_LABELS and block.lines and Path(deco_checkpoint).exists():
+        runs = block_runs(block.lines, image, deco_checkpoint)
+    return Element(kind="text", bbox=bbox, text=text, label=block.label, level=level, runs=runs)
 
 
 def predict(image_path: str, layout_checkpoint: str = LAYOUT_CHECKPOINT, table_checkpoint: str = TABLE_CHECKPOINT,
-            math_checkpoint: str = MATH_CHECKPOINT, ocr: bool = True) -> IRDocument:  # fmt: skip
+            math_checkpoint: str = MATH_CHECKPOINT, deco_checkpoint: str = DECO_CHECKPOINT, ocr: bool = True) -> IRDocument:  # fmt: skip
     """画像1枚 → ラベル付きIR（1ページ）。評価の登録簿（evaluation/models.json）の entry から呼ぶ"""
     with Image.open(image_path) as opened:
         image = opened.convert("L")
     blocks, orphans = assign_lines(detect_blocks(image_path, layout_checkpoint), read_lines(np.asarray(image)) if ocr else [])
     blocks += orphan_blocks(orphans, image.height)
     margin_others(blocks, image.height)
-    elements = [to_element(b, image, table_checkpoint, math_checkpoint, ocr) for b in reading_order(blocks, image.width)]
+    elements = [to_element(b, image, table_checkpoint, math_checkpoint, ocr, deco_checkpoint) for b in reading_order(blocks, image.width)]
     page = Page(page=1, width=image.width, height=image.height, unit="px", elements=elements)
     return IRDocument(source=os.path.basename(image_path), extractor="image_ai", structurer="image_ai", pages=[page])
 

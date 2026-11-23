@@ -66,8 +66,8 @@
         "name": "画像読み込みの自作AI（座標AI＋表AI＋数式AI）",
         "entry": "image_ai.pipeline:predict",
         "input": "image",
-        "outputs": ["bbox", "text", "label"],
+        "outputs": ["bbox", "text", "label", "runs"],
         "params": {"dpi": 200},
-        "note": "easyocr と、image_layout・image_table・math_ocr の重み（各 checkpoints/）が必要。文字は EasyOCR で読む"
+        "note": "easyocr と、image_layout・image_table・math_ocr・image_deco の重み（各 checkpoints/）が必要。文字は EasyOCR で読む"
     }
 ]
