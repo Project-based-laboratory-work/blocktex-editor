@@ -7,7 +7,8 @@
      評価用データ（evaluation/synth_doc.py）と同じく、日本語は太字・下線、英語は太字・斜体・下線
   2. 行の始まり・終わりと、装飾の範囲の前後に目印 \\mk{...} を入れる
   3. PDFの文字（rawdict の char）と下線（図形）から行の外枠を決め、ランダムな解像度で画像にする。
-     日本語のフォント（原ノ味・IPAex）は埋め込む（埋め込まないと明朝と太字のゴシックが同じ見た目になる）
+     日本語のフォントは、原ノ味・IPAex を埋め込むか、埋め込まない（評価用データと同じ）かを文書ごとに選ぶ。
+     埋め込まないと明朝と太字のゴシックが同じ見た目になるので、その文書の日本語の太字は正解から外す
   4. 装飾の範囲は、目印の x 座標を画像の画素にしたもの
 
 出力: <out>/images/<名前>.png と <out>/labels/<名前>.json
@@ -34,7 +35,9 @@ TEX = {"bold": r"\textbf", "italic": r"\textit", "underline": r"\underline"}
 NO_DECORATION_RATE = 0.3  # 装飾の無い行の割合（何も無い行で「無い」と答えられるように）
 # 日本語のフォントを埋め込む対応表。埋め込まないと、画像にしたとき明朝とゴシック（太字）が同じ代わりのフォントになり、
 # 日本語の太字が見分けられない（#63）。ai/CONSTRAINTS.md の画像読み込みの制約「埋め込みは IPAex・原ノ味 など」に合わせる
-FONT_MAPS = ["uptex-haranoaji.map", "uptex-ipaex.map"]
+# None は埋め込まない（今の評価用データ・image_dataset と同じ。本文も太字も同じ代わりのフォントになる）。その文書では
+# 日本語の太字は見えないので、正解から外す（下線は見えるので残す）。「全部が同じ太さなら太字ではない」を学ばせる
+FONT_MAPS = ["uptex-haranoaji.map", "uptex-ipaex.map", None]
 PREAMBLE = r"""\documentclass[uplatex,a4paper,%s]{jsarticle}
 \usepackage[dvipdfmx,paperwidth=32cm,paperheight=40cm,margin=1cm]{geometry}
 \newcommand{\mk}[1]{\leavevmode\special{pdf:dest (#1) [@thispage /XYZ @xpos @ypos null]}}
@@ -107,7 +110,7 @@ def build_doc(args: tuple[Path, int, int]) -> int:
         (Path(tmp) / "doc.tex").write_text(tex, encoding="utf-8")
         try:
             for cmd in (["uplatex", "-interaction=nonstopmode", "-halt-on-error", "doc.tex"],
-                        ["dvipdfmx", "-q", "-C", "0x0010", "-f", font_map, "doc.dvi"]):  # fmt: skip
+                        ["dvipdfmx", "-q", "-C", "0x0010", *(["-f", font_map] if font_map else []), "doc.dvi"]):  # fmt: skip
                 subprocess.run(cmd, cwd=tmp, check=True, capture_output=True, timeout=300)
         except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
             return 0
@@ -150,9 +153,11 @@ def build_doc(args: tuple[Path, int, int]) -> int:
                         label_spans.append([round((a[0] - clip.x0) * f, 2), round((b[0] - clip.x0) * f, 2), kind])
                 if len(label_spans) != len(spans):
                     continue
+                if font_map is None and lang == "ja":  # 埋め込まない日本語の太字は見えない
+                    label_spans = [sp for sp in label_spans if sp[2] != "bold"]
                 name = f"d{seed}_{doc_index:05d}_{k:02d}"
                 pix.save(str(out / "images" / f"{name}.png"))
-                label = {"width": pix.width, "height": pix.height, "lang": lang, "spans": label_spans,
+                label = {"width": pix.width, "height": pix.height, "lang": lang, "spans": label_spans, "font_map": font_map,
                          "text": WORDS[lang]["sep"].join(words)}  # fmt: skip
                 (out / "labels" / f"{name}.json").write_text(json.dumps(label, ensure_ascii=False), encoding="utf-8")
                 saved += 1
