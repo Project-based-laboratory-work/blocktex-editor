@@ -1,7 +1,7 @@
 import numpy as np
 from PIL import Image
 
-from image_ai.pipeline import (Block, Line, align_mark, assign_lines, block_text, code_text, margin_others, math_lines,
+from image_ai.pipeline import (stroke_width, Block, Line, align_mark, assign_lines, block_text, code_text, margin_others, math_lines,
                                orphan_blocks, reading_order)  # fmt: skip
 
 
@@ -80,3 +80,13 @@ def test_align_mark_goes_before_the_first_top_level_relation():
     assert align_mark(r"y=\frac{a}{b}") == r"y&=\frac{a}{b}"
     assert align_mark(r"f_{x=1}\leq2") == r"f_{x=1}&\leq2"
     assert align_mark("abc") == "abc"
+
+
+def test_stroke_width_measures_line_thickness():
+    def bars(width: int) -> np.ndarray:
+        image = np.full((40, 60), 255, np.uint8)
+        for x in (10, 30, 50):
+            image[5:35, x : x + width] = 0  # 縦線3本
+        return image
+
+    assert abs(stroke_width(bars(2)) - 2) < 0.3 and abs(stroke_width(bars(4)) - 4) < 0.5

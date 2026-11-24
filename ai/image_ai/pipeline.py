@@ -42,6 +42,9 @@ TABLE_CHECKPOINT = "image_table/checkpoints/split/best.pt"
 MATH_CHECKPOINT = "math_ocr/checkpoints/v4_im2latex/best.pt"
 DECO_CHECKPOINT = "image_deco/checkpoints/tagger/best.pt"  # 無ければ装飾（runs）は付けない
 DECORATED_LABELS = {"paragraph", "list", "caption"}  # 文中の装飾を付けるラベル（evaluation/metrics.py と同じ）
+# 太字は「本文より線が太い」こと。装飾AIが太字と出した範囲でも、線の太さがページの本文の行（真ん中の値）の
+# この倍に届かなければ外す。フォントが埋め込まれず本文までゴシックで描かれた文書で、本文を太字と間違えるのを防ぐ
+BOLD_STROKE_RATIO = 1.25
 LANGS = ("ja", "en")  # easyocr_ocr の DEFAULT_LANGS と同じ
 CROP_PAD = 4  # 表・数式を切り抜くときの余白（画素）
 COLUMN_GUTTER = 0.02  # 段の境目（ページの真ん中）からこの割合までは、はみ出しても片方の段とみなす
@@ -198,9 +201,26 @@ def block_text(lines: list[Line]) -> str:
     return "\n".join(" ".join(l.text for l in row) for row in rows_of(lines))
 
 
-def block_runs(lines: list[Line], image: Image.Image, deco_checkpoint: str) -> list[Run] | None:
+def stroke_width(gray: np.ndarray) -> float:
+    """白地に黒い文字の画像の、線の太さ（画素）。文字の面積 ÷ 縁の長さ × 2 で見積もる"""
+    ink = gray < 128
+    inner = ink.copy()
+    inner[1:] &= ink[:-1]
+    inner[:-1] &= ink[1:]
+    inner[:, 1:] &= ink[:, :-1]
+    inner[:, :-1] &= ink[:, 1:]
+    return 2 * float(ink.sum()) / max(1, int((ink & ~inner).sum()))
+
+
+def page_body_stroke(blocks: list[Block], image: Image.Image) -> float | None:
+    """ページの本文（段落・箇条書き・キャプション）の行の、線の太さの真ん中の値"""
+    widths = [stroke_width(np.asarray(crop(image, l.box, pad=2))) for b in blocks if b.label in DECORATED_LABELS for l in b.lines]
+    return float(np.median(widths)) if widths else None
+
+
+def block_runs(lines: list[Line], image: Image.Image, deco_checkpoint: str, body_stroke: float | None = None) -> list[Run] | None:
     """装飾AIで、行ごとに太字・斜体・下線の付いた文字を決め、runs にする（つなげると block_text と同じ文字）。
-    装飾が1つも無ければ None"""
+    太字は、線の太さが本文（body_stroke）より十分太い範囲だけ残す。装飾が1つも無ければ None"""
     from image_deco.predict import char_ranges, line_spans, pieces
 
     model = _deco_model(deco_checkpoint)
@@ -211,7 +231,10 @@ def block_runs(lines: list[Line], image: Image.Image, deco_checkpoint: str) -> l
         for k, line in enumerate(row):
             if k:
                 parts.append((" ", frozenset()))
-            spans = line_spans(model, crop(image, line.box, pad=2))
+            gray = np.asarray(crop(image, line.box, pad=2))
+            spans = [(a, b, m) for a, b, m in line_spans(model, Image.fromarray(gray))
+                     if m != "bold" or body_stroke is None
+                     or stroke_width(gray[:, int(a * gray.shape[1]) : int(np.ceil(b * gray.shape[1]))]) >= BOLD_STROKE_RATIO * body_stroke]  # fmt: skip
             parts += pieces(line.text, char_ranges(line.text, spans))
     if not any(m for _, m in parts):
         return None
@@ -300,7 +323,7 @@ def crop(image: Image.Image, box: Box, pad: int = CROP_PAD) -> Image.Image:
 
 
 def to_element(block: Block, image: Image.Image, table_checkpoint: str, math_checkpoint: str, use_ocr: bool,
-               deco_checkpoint: str | None = None) -> Element:  # fmt: skip
+               deco_checkpoint: str | None = None, body_stroke: float | None = None) -> Element:  # fmt: skip
     bbox = normalize_bbox(block.box, image.width, image.height)
     if block.label == "figure":
         return Element(kind="figure", bbox=bbox, label="figure")
@@ -326,7 +349,7 @@ def to_element(block: Block, image: Image.Image, table_checkpoint: str, math_che
         level = heading_level(text)
     runs = None
     if deco_checkpoint and block.label in DECORATED_LABELS and block.lines and Path(deco_checkpoint).exists():
-        runs = block_runs(block.lines, image, deco_checkpoint)
+        runs = block_runs(block.lines, image, deco_checkpoint, body_stroke)
     return Element(kind="text", bbox=bbox, text=text, label=block.label, level=level, runs=runs)
 
 
@@ -338,7 +361,9 @@ def predict(image_path: str, layout_checkpoint: str = LAYOUT_CHECKPOINT, table_c
     blocks, orphans = assign_lines(detect_blocks(image_path, layout_checkpoint), read_lines(np.asarray(image)) if ocr else [])
     blocks += orphan_blocks(orphans, image.height)
     margin_others(blocks, image.height)
-    elements = [to_element(b, image, table_checkpoint, math_checkpoint, ocr, deco_checkpoint) for b in reading_order(blocks, image.width)]
+    body_stroke = page_body_stroke(blocks, image)
+    elements = [to_element(b, image, table_checkpoint, math_checkpoint, ocr, deco_checkpoint, body_stroke)
+                for b in reading_order(blocks, image.width)]  # fmt: skip
     page = Page(page=1, width=image.width, height=image.height, unit="px", elements=elements)
     return IRDocument(source=os.path.basename(image_path), extractor="image_ai", structurer="image_ai", pages=[page])
 
