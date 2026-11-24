@@ -4,7 +4,7 @@
 入力: 1行の画像を高さ HEIGHT にそろえ（縦横比は保つ）、「背景0・文字1」にしたもの。幅は行ごとに違うので、まとめるときに右を0で埋める
 正解: 横の位置（1/STRIDE）ごとに [太字, 斜体, 下線] の 0/1
 
-学習のときだけ、スクリーンショットに近づける崩しを入れる（解像度を落とす・JPEGで劣化させる・明暗の反転）。
+学習のときだけ、スクリーンショットに近づける崩しを入れる（解像度を落とす・JPEGで劣化させる・明暗の反転・上下の余白を変える）。
 """
 
 import glob
@@ -26,16 +26,27 @@ STRIDE = 4
 MAX_WIDTH = 2048  # これより長い行は、縦横比を崩して縮める（めったに無い）
 
 
-def line_tensor(gray: Image.Image) -> tuple[torch.Tensor, float]:
-    """1行の画像 → (1, HEIGHT, W) の「背景0・文字1」と、横の拡大率。ダークモードは反転してそろえる"""
-    w, h = gray.size
-    scale = HEIGHT / h
-    new_w = min(MAX_WIDTH, max(STRIDE, round(w * scale)))
-    new_w -= new_w % STRIDE
-    ink = 1.0 - np.asarray(gray.resize((max(STRIDE, new_w), HEIGHT), Image.BILINEAR), dtype=np.float32) / 255.0
+MARGIN = 0.25  # 文字の上下に足す余白（文字の高さに対する割合）
+
+
+def line_tensor(gray: Image.Image, margin: float = MARGIN) -> tuple[torch.Tensor, float]:
+    """1行の画像 → (1, HEIGHT, W) の「背景0・文字1」と、横の拡大率。ダークモードは反転してそろえる。
+
+    切り出し方（上下の余白）で文字の大きさが変わると、太さの見え方も変わって太字と間違える。
+    そこで、文字のある行だけに縮めてから、文字の高さの margin 倍の余白を上下に足してそろえる"""
+    ink = 1.0 - np.asarray(gray, dtype=np.float32) / 255.0
     if np.median(ink) > 0.5:
         ink = 1.0 - ink
-    return torch.from_numpy(ink)[None], max(STRIDE, new_w) / w
+    rows = np.flatnonzero(ink.max(axis=1) > 0.5)
+    if len(rows):
+        top, bottom = rows[0], rows[-1] + 1
+        pad = max(1, round((bottom - top) * margin))
+        ink = np.pad(ink[top:bottom], ((pad, pad), (0, 0)))
+    h, w = ink.shape
+    new_w = min(MAX_WIDTH, max(STRIDE, round(w * HEIGHT / h)))
+    new_w -= new_w % STRIDE
+    resized = Image.fromarray((ink * 255).astype(np.uint8)).resize((new_w, HEIGHT), Image.BILINEAR)
+    return torch.from_numpy(np.asarray(resized, dtype=np.float32) / 255.0)[None], new_w / w
 
 
 def degrade(gray: Image.Image, rng: random.Random) -> Image.Image:
@@ -83,7 +94,7 @@ class DecoDataset(Dataset):
             gray = image.convert("L")
         if self.augment:
             gray = degrade(gray, random.Random())
-        x, scale = line_tensor(gray)
+        x, scale = line_tensor(gray, random.uniform(0.1, 0.4) if self.augment else MARGIN)
         return x, target(label["spans"], scale, x.shape[2])
 
 

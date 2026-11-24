@@ -19,6 +19,16 @@ def test_line_tensor_keeps_aspect_and_height():
     assert x.shape[1] == HEIGHT and x.shape[2] % STRIDE == 0 and abs(scale - 2.0) < 0.05
 
 
+def test_line_tensor_ignores_how_much_margin_the_crop_has():
+    def line(pad: int) -> Image.Image:
+        image = Image.new("L", (200, 10 + 2 * pad), 255)
+        image.paste(0, (20, pad, 80, pad + 10))  # 文字の代わりの黒い帯（地が白のまま多く残るように細く）
+        return image
+
+    tight, loose = line_tensor(line(1))[0], line_tensor(line(12))[0]
+    assert tight.shape == loose.shape and (tight - loose).abs().max() < 0.05
+
+
 def test_collate_pads_and_marks_valid_positions():
     a = (torch.zeros(1, HEIGHT, 16), torch.zeros(3, 4))
     b = (torch.zeros(1, HEIGHT, 32), torch.ones(3, 8))
