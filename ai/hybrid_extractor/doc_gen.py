@@ -19,48 +19,20 @@
 
 import io
 import random
-from dataclasses import dataclass
+from contextlib import contextmanager
+from dataclasses import dataclass, field
 
 from PIL import Image, ImageDraw
 
 from evaluation.synth_doc import SourceBlock, mark, page_style
+from hybrid_extractor.content import DEFAULT as DEFAULT_CONTENT
+from hybrid_extractor.content import Content, get_content
 
-WORDS = {
-    "ja": {
-        "nouns": ["料理", "旅行", "天気", "電車", "図書館", "植物", "音楽", "地図", "時計", "温度", "距離", "速度",
-                  "観測", "記録", "材料", "工程", "地域", "季節", "道具", "計画", "予算", "費用", "人数", "期間"],
-        "verbs": ["を調べた", "を集めた", "を比べた", "をまとめた", "を見直した", "を記録した", "を計算した", "を予測した"],
-        "ends": ["。", "。", "。", "ことが分かった。", "必要がある。", "と考えられる。"],
-        "headings": ["背景", "目的", "準備", "手順", "観察", "考察", "まとめ", "課題", "方法", "結果の整理", "今後の予定", "参考"],
-        "authors": ["鈴木一郎", "高橋花子", "田中次郎", "伊藤美咲"],
-        "captions": ["の変化", "の比較", "の一覧", "の分布", "の流れ"],
-        "leads": ["注意", "補足", "例", "ポイント"],
-        "sep": "",
-    },
-    "en": {
-        "nouns": ["the recipe", "the journey", "the weather", "the train", "the library", "the plant", "the song",
-                  "the map", "the clock", "the temperature", "the distance", "the budget", "the season", "the tool"],
-        "verbs": ["changes", "affects", "follows", "records", "explains", "limits", "supports", "reflects"],
-        "ends": [".", ".", ".", " in most cases.", " over time.", " as expected."],
-        "headings": ["Background", "Goals", "Setup", "Procedure", "Observations", "Analysis", "Summary",
-                     "Open Problems", "Approach", "Findings", "Next Steps", "Notes"],
-        "authors": ["Ken Suzuki", "Mary Brown", "John Lee", "Emma Davis"],
-        "captions": [" over time", " by region", " in detail", " at a glance", " per step"],
-        "leads": ["Note.", "Remark.", "Example.", "Tip."],
-        "sep": " ",
-    },
-}
-CELL_WORDS = {"ja": ["項目", "回数", "時刻", "場所", "合計", "割合", "平均値", "番号"],
-              "en": ["Item", "Count", "Time", "Place", "Total", "Rate", "Mean", "No."]}
-MATH_PARTS = [r"a^{2} + b^{2}", r"\frac{x}{y}", r"\sqrt{2g h}", r"\sum_{k=0}^{m} c_{k}", r"\prod_{j=1}^{n} p_{j}",
-              r"\cos\theta", r"\lim_{t \to 0} h(t)", r"\mu + \sigma", r"m v^{2}", r"\int_{a}^{b} u(s) \, ds"]
-CODE_SNIPPETS = [
-    ["def mean(xs):", "    total = 0", "    for x in xs:", "        total += x", "    return total / len(xs)"],
-    ["while queue:", "    node = queue.pop()", "    visit(node)"],
-    ["for (int k = 0; k < n; k++) {", "    sum += v[k];", "}"],
-    ["SELECT name, age", "FROM users", "WHERE age > 20;"],
-    ["if x > limit:", "    x = limit", "else:", "    x += 1"],
-]
+# 中身の材料（単語・見出し・数式の部品・コード）は content.py のパック。下の名前は今までの名前（default のパック）
+WORDS = DEFAULT_CONTENT.words
+CELL_WORDS = DEFAULT_CONTENT.cell_words
+MATH_PARTS = DEFAULT_CONTENT.math_parts
+CODE_SNIPPETS = DEFAULT_CONTENT.code_snippets
 LIST_LABELS = [r"\textbullet", "★", "―", "・", r"$\triangleright$", "(\\alph*)", "\\roman*."]
 
 
@@ -82,6 +54,76 @@ JA_FONT_MAPS = {"default": None, "ipaex": "uptex-ipaex.map", "ipa": "uptex-ipa.m
 
 
 @dataclass
+class Variant:
+    """作る文書の「見た目の制限」と「中身の材料」。何も指定しなければ今までと同じ文書（同じ種なら同じ文書）になる。
+
+    見たことのない見た目・中身で AI を評価するため（AI.md の 7.7）:
+      学習データ: exclude={"text_font": ["times", "newtxtext", "mathptmx"]}（Times の仲間を見せない）
+      評価データ: only={"text_font": ["times", "newtxtext", "mathptmx"]}（Times の仲間だけ）、content="real"（本物の文と数式）
+    制限できる属性は VARIANT_ATTRS"""
+    only: dict[str, list[str]] = field(default_factory=dict)      # 属性 → 使ってよい値
+    exclude: dict[str, list[str]] = field(default_factory=dict)   # 属性 → 使わない値
+    content: str = "default"                                       # 中身の材料のパック（content.py）
+
+
+VARIANT_ATTRS = ("cls", "text_font", "mono_font", "ja_font", "list_label")
+_ACTIVE: list = [Variant(), DEFAULT_CONTENT]   # 今作っている文書の Variant と材料（use_variant の中で入れ替える）
+
+
+@contextmanager
+def use_variant(variant: Variant | None):
+    """この中で作る文書に、variant の制限と材料を使う"""
+    old = list(_ACTIVE)
+    variant = variant or Variant()
+    _ACTIVE[:] = [variant, get_content(variant.content)]
+    try:
+        yield
+    finally:
+        _ACTIVE[:] = old
+
+
+def add_variant_args(parser) -> None:
+    """データを作るコマンドに、Variant の指定（--only / --exclude / --content）を足す"""
+    parser.add_argument("--only", action="append", default=[], metavar="属性=値,値",
+                        help=f"その属性はこの値だけにする（例: text_font=times,newtxtext,mathptmx）。属性は {', '.join(VARIANT_ATTRS)}")
+    parser.add_argument("--exclude", action="append", default=[], metavar="属性=値,値",
+                        help="その属性はこの値を使わない（学習データから見た目を抜くとき）")
+    parser.add_argument("--content", default="default", help="中身の材料のパック（default / alt / real。content.py）")
+
+
+def variant_from_args(args) -> Variant:
+    def parse(items: list[str]) -> dict[str, list[str]]:
+        out = {}
+        for item in items:
+            attr, _, values = item.partition("=")
+            if attr not in VARIANT_ATTRS:
+                raise SystemExit(f"制限できない属性: {attr}（{', '.join(VARIANT_ATTRS)}）")
+            out[attr] = values.split(",")
+        return out
+
+    return Variant(only=parse(args.only), exclude=parse(args.exclude), content=args.content)
+
+
+def C() -> Content:
+    """今使っている中身の材料"""
+    return _ACTIVE[1]
+
+
+def pick(rng: random.Random, attr: str, options: list, weights: list | None = None):
+    """options から1つ選ぶ。Variant の only / exclude で、選べる値を絞る（絞らなければ rng.choice と同じ乱数の使い方）"""
+    variant = _ACTIVE[0]
+    keep = [k for k, o in enumerate(options)
+            if (attr not in variant.only or o in variant.only[attr])
+            and (attr not in variant.exclude or o not in variant.exclude[attr])]
+    if not keep:
+        raise ValueError(f"{attr} に選べる値が無い（only {variant.only.get(attr)} / exclude {variant.exclude.get(attr)}）")
+    if len(keep) == len(options):
+        return rng.choices(options, weights=weights)[0] if weights else rng.choice(options)
+    filtered = [options[k] for k in keep]
+    return rng.choices(filtered, weights=[weights[k] for k in keep])[0] if weights else rng.choice(filtered)
+
+
+@dataclass
 class Style:
     """1つの文書の見た目の設定"""
     lang: str
@@ -100,17 +142,17 @@ class Style:
 
 
 def random_style(rng: random.Random, lang: str) -> Style:
-    cls = rng.choice(["jsarticle", "jsarticle", "bxjsarticle"] + (["article", "article"] if lang == "en" else []))
+    cls = pick(rng, "cls", ["jsarticle", "jsarticle", "bxjsarticle"] + (["article", "article"] if lang == "en" else []))
     return Style(
         lang=lang,
         cls=cls,
         size=rng.choice(["10pt", "11pt", "12pt"]),
         two_column=rng.random() < 0.3,
         gothic_body=lang == "ja" and rng.random() < 0.2,
-        text_font=rng.choices(list(TEXT_FONTS), weights=[w for _, w in TEXT_FONTS.values()])[0],
+        text_font=pick(rng, "text_font", list(TEXT_FONTS), weights=[w for _, w in TEXT_FONTS.values()]),
         t1=rng.random() < 0.4,
-        mono_font=rng.choice(list(MONO_FONTS)),
-        ja_font=rng.choice(list(JA_FONT_MAPS)),
+        mono_font=pick(rng, "mono_font", list(MONO_FONTS)),
+        ja_font=pick(rng, "ja_font", list(JA_FONT_MAPS)),
         numbered=rng.random() < 0.65,
         centered_headings=cls == "article" and rng.random() < 0.4,
         page_number=rng.random() < 0.6,
@@ -156,20 +198,22 @@ def preamble(style: Style) -> str:
 
 
 def sentence(rng: random.Random, lang: str, math: bool = False) -> str:
-    w = WORDS[lang]
-    if lang == "ja":
+    w = C().words[lang]
+    if C().sentences:
+        text = rng.choice(C().sentences[lang])   # 本物の文（real のパック）
+    elif lang == "ja":
         text = rng.choice(w["nouns"]) + "と" + rng.choice(w["nouns"]) + rng.choice(w["verbs"]) + rng.choice(w["ends"])
     else:
         text = f"{rng.choice(w['nouns'])} {rng.choice(w['verbs'])} {rng.choice(w['nouns'])}{rng.choice(w['ends'])}"
         text = text[0].upper() + text[1:]
     if math:
-        part = rng.choice([r"$x_{i}$", r"$\alpha + \beta$", r"$n^{2}$", r"$f(t)$"])
+        part = f"${rng.choice(C().inline_formulas)}$" if C().inline_formulas else rng.choice(C().inline_parts)
         text = (f"{part}について、" if lang == "ja" else f"For {part}, ") + (text if lang == "ja" else text[0].lower() + text[1:])
     return text
 
 
 def sentences(rng: random.Random, lang: str, n: int, math_rate: float = 0.0) -> str:
-    return WORDS[lang]["sep"].join(sentence(rng, lang, rng.random() < math_rate) for _ in range(n))
+    return C().words[lang]["sep"].join(sentence(rng, lang, rng.random() < math_rate) for _ in range(n))
 
 
 def decorate(rng: random.Random, text: str, lang: str) -> str:
@@ -177,7 +221,7 @@ def decorate(rng: random.Random, text: str, lang: str) -> str:
     if rng.random() > 0.3:
         return text
     command = rng.choice([r"\textbf", r"\underline"] + ([r"\textit"] if lang == "en" else []))
-    word = rng.choice(WORDS[lang]["nouns"])
+    word = rng.choice(C().words[lang]["nouns"])
     return text.replace(word, f"{command}{{{word}}}", 1) if word in text else text
 
 
@@ -188,11 +232,11 @@ def paragraph(rng: random.Random, lang: str, i: int) -> SourceBlock:
     if r < 0.15:
         prefix = r"\noindent "  # 字下げの無い段落
     elif r < 0.3:
-        lead = rng.choice(WORDS[lang]["leads"])
-        text = rf"\textbf{{{lead}}}{WORDS[lang]['sep'] or '　'}{text}"  # 太字で始まる段落（見出しと間違えやすい）
+        lead = rng.choice(C().words[lang]["leads"])
+        text = rf"\textbf{{{lead}}}{C().words[lang]['sep'] or '　'}{text}"  # 太字で始まる段落（見出しと間違えやすい）
     elif r < 0.42:
         # 表・図を参照する文で始まる段落（「表1 で始まればキャプション」という近道を覚えさせないため）
-        text = reference_lead(rng, lang) + (WORDS[lang]["sep"]) + text
+        text = reference_lead(rng, lang) + (C().words[lang]["sep"]) + text
     return SourceBlock(i, "paragraph", None, f"{prefix}{mark(f'b{i}s')}{text}{mark(f'b{i}e')}")
 
 
@@ -200,17 +244,17 @@ def reference_lead(rng: random.Random, lang: str) -> str:
     """表・図を参照する文（キャプションと同じく「表1」「Figure 2」で始まる）"""
     n = rng.randint(1, 5)
     if lang == "ja":
-        return rng.choice([f"表{n}に示すように、{rng.choice(WORDS[lang]['nouns'])}を比べた。",
-                           f"図{n}は、{rng.choice(WORDS[lang]['nouns'])}の様子である。",
-                           f"表{n} の結果から、{rng.choice(WORDS[lang]['nouns'])}が分かる。"])
-    return rng.choice([f"Table {n} shows {rng.choice(WORDS[lang]['nouns'])}.",
-                       f"Figure {n} compares {rng.choice(WORDS[lang]['nouns'])} and {rng.choice(WORDS[lang]['nouns'])}.",
-                       f"Fig. {n} illustrates {rng.choice(WORDS[lang]['nouns'])}."])
+        return rng.choice([f"表{n}に示すように、{rng.choice(C().words[lang]['nouns'])}を比べた。",
+                           f"図{n}は、{rng.choice(C().words[lang]['nouns'])}の様子である。",
+                           f"表{n} の結果から、{rng.choice(C().words[lang]['nouns'])}が分かる。"])
+    return rng.choice([f"Table {n} shows {rng.choice(C().words[lang]['nouns'])}.",
+                       f"Figure {n} compares {rng.choice(C().words[lang]['nouns'])} and {rng.choice(C().words[lang]['nouns'])}.",
+                       f"Fig. {n} illustrates {rng.choice(C().words[lang]['nouns'])}."])
 
 
 def heading(rng: random.Random, style: Style, i: int) -> SourceBlock:
     level = rng.choice([1, 1, 2, 2, 3])
-    title = rng.choice(WORDS[style.lang]["headings"])
+    title = rng.choice(C().words[style.lang]["headings"])
     s, e = mark(f"b{i}s"), mark(f"b{i}e")
     if level == 3 and rng.random() < 0.4:
         # 本文と同じ大きさの、太字の1行だけの見出し（番号も無い）
@@ -223,12 +267,12 @@ def list_block(rng: random.Random, lang: str, i: int) -> SourceBlock:
     env = rng.choice(["itemize", "itemize", "enumerate", "description"])
     items = [decorate(rng, sentences(rng, lang, rng.randint(1, 2)), lang) for _ in range(rng.randint(2, 5))]
     if env == "description":
-        terms = rng.sample(WORDS[lang]["leads"] + WORDS[lang]["headings"], len(items))
+        terms = rng.sample(C().words[lang]["leads"] + C().words[lang]["headings"], len(items))
         lines = [rf"\item[{t}] {item}" for t, item in zip(terms, items)]
         opts = ""
     else:
         lines = [rf"\item {item}" for item in items]
-        label = rng.choice(LIST_LABELS)
+        label = pick(rng, "list_label", LIST_LABELS)
         if env == "itemize" and "*" not in label and rng.random() < 0.5:
             opts = f"[label={label}]"
         elif env == "enumerate" and "*" in label and rng.random() < 0.5:
@@ -246,7 +290,7 @@ def list_block(rng: random.Random, lang: str, i: int) -> SourceBlock:
 
 def title_blocks(rng: random.Random, lang: str, i: int) -> list[SourceBlock]:
     """タイトル・著者・（ときどき）日付。日付を出さない文書もある（\\date{}）"""
-    w = WORDS[lang]
+    w = C().words[lang]
     title = (rng.choice(w["nouns"]) + "と" + rng.choice(w["nouns"]) + "の" + rng.choice(["調査", "記録", "検討"])) if lang == "ja" \
         else f"On {rng.choice(w['nouns'])} and {rng.choice(w['nouns'])}".title()
     with_date = rng.random() < 0.7
@@ -267,7 +311,7 @@ def title_blocks(rng: random.Random, lang: str, i: int) -> list[SourceBlock]:
 
 
 def caption(rng: random.Random, lang: str, i: int) -> str:
-    text = rng.choice(WORDS[lang]["nouns"]) + rng.choice(WORDS[lang]["captions"])
+    text = rng.choice(C().words[lang]["nouns"]) + rng.choice(C().words[lang]["captions"])
     return rf"\caption{{{mark(f'b{i}s')}{text[0].upper() + text[1:]}{mark(f'b{i}e')}}}"
 
 
@@ -275,7 +319,7 @@ def table_blocks(rng: random.Random, lang: str, i: int) -> list[SourceBlock]:
     """表とキャプション。キャプションは表の上か下。番号: 表 i、キャプション i+1"""
     cols, rows = rng.randint(2, 5), rng.randint(2, 6)
     style = rng.choice(["grid", "booktabs", "hline", "none"])
-    header = rng.sample(CELL_WORDS[lang], cols)
+    header = rng.sample(C().cell_words[lang], cols)
     body = [[f"{rng.uniform(0, 500):.{rng.choice([0, 1, 2])}f}" for _ in range(cols)] for _ in range(rows)]
     rule = "|" if style == "grid" else ""
     spec = rule + rule.join(rng.choice("lcr") for _ in range(cols)) + rule
@@ -342,7 +386,10 @@ def math_block(rng: random.Random, i: int) -> SourceBlock:
     n = 1 if env in ("equation", "display") else rng.randint(2, 3)
     exprs = []
     for _ in range(n):
-        parts = rng.sample(MATH_PARTS, rng.randint(1, 3))
+        if C().display_formulas:
+            exprs.append(rng.choice(C().display_formulas))   # 本物の数式（real のパック）。align* でも & は付けない
+            continue
+        parts = rng.sample(C().math_parts, rng.randint(1, 3))
         lhs = rng.choice(["E", "g(x)", "P", "L_{0}"])
         amp = "&" if env == "align*" else ""
         exprs.append(f"{lhs} {amp}= " + " + ".join(parts))
@@ -354,7 +401,7 @@ def math_block(rng: random.Random, i: int) -> SourceBlock:
 
 
 def code_block(rng: random.Random, i: int) -> SourceBlock:
-    lines = rng.choice(CODE_SNIPPETS)
+    lines = rng.choice(C().code_snippets)
     if rng.random() < 0.5:
         begin, end = r"\begin{verbatim}", r"\end{verbatim}"
     else:
@@ -371,8 +418,13 @@ def code_block(rng: random.Random, i: int) -> SourceBlock:
 # ---- 文書 ----
 
 
-def random_document(rng: random.Random, lang: str) -> tuple[str, list[SourceBlock], Style]:
-    """ランダムな文書の TeX、置いたブロックの一覧、見た目の設定を返す"""
+def random_document(rng: random.Random, lang: str, variant: Variant | None = None) -> tuple[str, list[SourceBlock], Style]:
+    """ランダムな文書の TeX、置いたブロックの一覧、見た目の設定を返す。variant で見た目を絞り、中身の材料を変えられる"""
+    with use_variant(variant):
+        return _random_document(rng, lang)
+
+
+def _random_document(rng: random.Random, lang: str) -> tuple[str, list[SourceBlock], Style]:
     style = random_style(rng, lang)
     blocks: list[SourceBlock] = []
     if rng.random() < 0.6:

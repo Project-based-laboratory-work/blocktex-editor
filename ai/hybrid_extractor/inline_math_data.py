@@ -29,6 +29,7 @@ docs/<id>.json の形:
 """
 
 import argparse
+from dataclasses import asdict
 import json
 from collections import Counter
 from concurrent.futures import ProcessPoolExecutor
@@ -37,6 +38,7 @@ from pathlib import Path
 from common.ir import normalize_bbox
 from hybrid_extractor.experts import INLINE_MATH_EXPERTS
 from hybrid_extractor.extract import extract_blocks, is_math, is_mono
+from hybrid_extractor.doc_gen import add_variant_args, variant_from_args
 from hybrid_extractor.inline_math_eval import glyph_key, make_case
 
 
@@ -53,8 +55,8 @@ def char_labels(chars: list[dict], owner: dict[tuple, int]) -> list[int | None]:
 
 
 def make_doc(args: tuple[int, int, str, str]) -> dict | None:
-    index, seed, lang, out = args
-    case = make_case((index, seed, lang, out))
+    index, seed, lang, out, *rest = args
+    case = make_case((index, seed, lang, out, *rest))
     if case is None:
         return None
     pdf = Path(out) / "pdfs" / f"{case['id']}.pdf"
@@ -106,18 +108,20 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--docs", type=int, default=100)
     parser.add_argument("--seed", type=int, default=10, help="比較実験（7）と重ならない種にする")
     parser.add_argument("--workers", type=int, default=8)
+    add_variant_args(parser)
     args = parser.parse_args(argv)
+    variant = variant_from_args(args)
 
     out = Path(args.out)
     (out / "docs").mkdir(parents=True, exist_ok=True)
     (out / "pdfs").mkdir(parents=True, exist_ok=True)
-    jobs = [(i, args.seed, ["ja", "en"][i % 2], str(out)) for i in range(args.docs)]
+    jobs = [(i, args.seed, ["ja", "en"][i % 2], str(out), variant) for i in range(args.docs)]
     with ProcessPoolExecutor(max_workers=args.workers) as pool:
         docs = [d for d in pool.map(make_doc, jobs) if d is not None]
     total = Counter()
     for d in docs:
         total.update({k: d[k] for k in ("chars", "math", "rule_correct", "n_math")})
-    manifest = {"seed": args.seed, "docs": docs, "total": dict(total)}
+    manifest = {"seed": args.seed, "variant": asdict(variant), "docs": docs, "total": dict(total)}
     (out / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
     print(f"{len(docs)}文書、文字 {total['chars']}、うち数式の文字 {total['math']}（{total['math'] / max(1, total['chars']):.1%}）、"
           f"文中の数式 {total['n_math']}個")
