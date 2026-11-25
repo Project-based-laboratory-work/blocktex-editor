@@ -56,7 +56,7 @@ import pymupdf
 
 from common.ir import IRDocument, normalize_bbox
 from evaluation.ground_truth import build_ground_truth, compile_tex
-from hybrid_extractor.doc_gen import document_files, random_document
+from hybrid_extractor.doc_gen import add_variant_args, document_files, random_document, variant_from_args
 from hybrid_extractor.extract import PageRows, extract_blocks, group_kind, group_rows, page_rows
 from hybrid_extractor.features import block_record, ctx_record, row_record
 from hybrid_extractor.rules import label_pages
@@ -124,10 +124,10 @@ def row_records(gt: IRDocument, page_no: int, pr: PageRows) -> tuple[list[dict],
 
 def make_doc(args: tuple[int, int, str, str]) -> dict | None:
     """1文書分を作って保存し、manifest に載せる情報を返す。コンパイルに失敗したら None"""
-    index, seed, lang, out = args
+    index, seed, lang, out, *rest = args
     doc_id = f"{index:05d}"
     rng = random.Random(seed * 1_000_003 + index)
-    tex, blocks, style = random_document(rng, lang)
+    tex, blocks, style = random_document(rng, lang, rest[0] if rest else None)
     out_dir = Path(out)
     with tempfile.TemporaryDirectory() as tmp:
         try:
@@ -172,12 +172,14 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--docs", type=int, default=100, help="作る文書の数")
     parser.add_argument("--seed", type=int, default=0, help="同じ seed なら同じデータになる。train と val は変える")
     parser.add_argument("--workers", type=int, default=8, help="同時に作る数（CPUのコア数まで）")
+    add_variant_args(parser)
     args = parser.parse_args(argv)
+    variant = variant_from_args(args)
 
     out = Path(args.out)
     (out / "docs").mkdir(parents=True, exist_ok=True)
     (out / "pdfs").mkdir(parents=True, exist_ok=True)
-    jobs = [(i, args.seed, ["ja", "en"][i % 2], str(out)) for i in range(args.docs)]
+    jobs = [(i, args.seed, ["ja", "en"][i % 2], str(out), variant) for i in range(args.docs)]
     results = []
     with ProcessPoolExecutor(max_workers=args.workers) as pool:
         for k, result in enumerate(pool.map(make_doc, jobs), start=1):
@@ -191,7 +193,7 @@ def main(argv: list[str] | None = None) -> None:
     total: Counter = Counter()
     for r in results:
         total.update(r["counts"])
-    manifest = {"seed": args.seed, "docs": results, "label_counts": dict(total.most_common())}
+    manifest = {"seed": args.seed, "variant": asdict(variant), "docs": results, "label_counts": dict(total.most_common())}
     (out / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
     print(f"{len(results)}文書を {out} に作った")
     for label, n in total.most_common():

@@ -102,9 +102,10 @@ INLINE_MATH_EXPERTS = {
 INLINE_MATH_FINDERS = ("rule", "ai")
 
 
-def get_inline_expert(name: str) -> InlineMathExpert:
-    """名前から文中の数式の専門家を返す。"ai" は学習した重み（checkpoints/inline_math.pt）を読む（torch が要る）"""
+def get_inline_expert(name: str, checkpoint: str | None = None) -> InlineMathExpert:
+    """名前から文中の数式の専門家を返す。"ai" は学習した重み（既定は checkpoints/inline_math.pt。checkpoint で
+    checkpoints/ の中の別の重み、例えば蒸留した inline_student.pt を選べる）を読む（torch が要る）"""
     if name == "ai":
-        from hybrid_extractor.ai_experts import inline_expert
-        return inline_expert()
+        from hybrid_extractor.ai_experts import CHECKPOINTS, inline_expert
+        return inline_expert(CHECKPOINTS / checkpoint) if checkpoint else inline_expert()
     return INLINE_MATH_EXPERTS[name]

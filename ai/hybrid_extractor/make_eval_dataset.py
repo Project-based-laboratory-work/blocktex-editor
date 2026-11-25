@@ -26,11 +26,11 @@ from pathlib import Path
 from common.ir import save_ir
 from evaluation.ground_truth import build_ground_truth, compile_tex
 from evaluation.images import SITE_DPI, render_pages
-from hybrid_extractor.doc_gen import document_files, random_document
+from hybrid_extractor.doc_gen import add_variant_args, document_files, random_document, variant_from_args
 
 
-def make_case(rng: random.Random, lang: str, case_dir: Path) -> dict:
-    tex, blocks, style = random_document(rng, lang)
+def make_case(rng: random.Random, lang: str, case_dir: Path, variant=None) -> dict:
+    tex, blocks, style = random_document(rng, lang, variant)
     case_dir.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory() as tmp:
         pdf = compile_tex(tex, Path(tmp), document_files(blocks))
@@ -66,7 +66,9 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--out", required=True, help="例: evaluation/data/hybrid_varied")
     parser.add_argument("--docs", type=int, default=60)
     parser.add_argument("--seed", type=int, default=3, help="学習データ（0〜2）と重ならない seed")
+    add_variant_args(parser)
     args = parser.parse_args(argv)
+    variant = variant_from_args(args)
 
     out = Path(args.out)
     cases = []
@@ -75,7 +77,7 @@ def main(argv: list[str] | None = None) -> None:
         lang = ["ja", "en"][i % 2]
         rng = random.Random(args.seed * 1_000_003 + i)
         try:
-            tags = make_case(rng, lang, out / "cases" / case_id)
+            tags = make_case(rng, lang, out / "cases" / case_id, variant)
         except subprocess.CalledProcessError:
             print(f"{case_id}: TeXのコンパイルに失敗したので飛ばす")
             continue
@@ -83,7 +85,7 @@ def main(argv: list[str] | None = None) -> None:
     manifest = {
         "name": out.name,
         "created": date.today().isoformat(),
-        "generator": {"script": "hybrid_extractor.make_eval_dataset", "seed": args.seed},
+        "generator": {"script": "hybrid_extractor.make_eval_dataset", "seed": args.seed, "variant": asdict(variant)},
         "cases": cases,
     }
     (out / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")

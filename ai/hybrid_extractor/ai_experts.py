@@ -100,13 +100,20 @@ def label_experts(directory: Path = CHECKPOINTS / "labels") -> list[Expert]:
 
 @lru_cache(maxsize=None)
 def load_tagger(path: Path) -> tuple[CharTagger, object, dict]:
+    model, std, extra = load_tagger_with_extra(path)
+    return model, std, extra["vocab"]
+
+
+@lru_cache(maxsize=None)
+def load_tagger_with_extra(path: Path) -> tuple[CharTagger, object, dict]:
+    """重みと、保存したそのほかの情報（語彙 vocab、検証用データで選んだしきい値 threshold など）"""
     ckpt = load_checkpoint(path)
     c = ckpt["config"]
     model = CharTagger(c["vocab_size"], c["n_feat"], d_model=c["d_model"], layers=c["layers"], heads=c["heads"],
                        max_len=c["max_len"])
     model.load_state_dict(ckpt["model"])
     model.eval()
-    return model, ckpt["std"], ckpt["extra"]["vocab"]
+    return model, ckpt["std"], ckpt["extra"]
 
 
 # 2つの数式のかけらの間にあっても、1つの数式としてつないでよい文字（空白・演算子・かっこ・区切り）
@@ -156,7 +163,10 @@ def spans_from_probs(chars: list[dict], probs: np.ndarray, threshold: float = TH
 
 
 def inline_expert(path: Path = CHECKPOINTS / "inline_math.pt") -> InlineMathExpert:
-    model, std, vocab = load_tagger(path)
+    model, std, extra = load_tagger_with_extra(path)
+    vocab = extra["vocab"]
+    # 蒸留した生徒（train.py distill）は、検証用データで選び直したしきい値を一緒に保存している
+    threshold = extra.get("threshold", INLINE_THRESHOLD)
 
     def find(chars: list[dict], width: float, height: float) -> list[tuple[int, int]]:
         if not chars:
@@ -168,6 +178,6 @@ def inline_expert(path: Path = CHECKPOINTS / "inline_math.pt") -> InlineMathExpe
                          [feats[k:k + MAX_LEN] for k in range(0, len(chars), MAX_LEN)],
                          [np.zeros(len(ids[k:k + MAX_LEN])) for k in range(0, len(chars), MAX_LEN)])
         probs = np.concatenate(predict_tagger(model, std, seqs))
-        return spans_from_probs(chars, probs, INLINE_THRESHOLD)
+        return spans_from_probs(chars, probs, threshold)
 
     return InlineMathExpert("inline_math_ai", find)
