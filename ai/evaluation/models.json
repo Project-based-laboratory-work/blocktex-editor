@@ -63,7 +63,7 @@
     },
     {
         "id": "image_ai",
-        "name": "画像読み込みの自作AI（座標AI＋表AI＋数式AI）",
+        "name": "画像読み込みの自作AI（座標AI＋表AI＋数式AI＋装飾AI）",
         "entry": "image_ai.pipeline:predict",
         "input": "image",
         "outputs": ["bbox", "text", "label", "runs"],
