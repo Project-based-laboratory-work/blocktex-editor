@@ -72,6 +72,8 @@ cd hybrid_extractor/sample_data && uplatex sample.tex && uplatex sample.tex && d
 | [make_eval_dataset.py](make_eval_dataset.py) | 評価サイト用の、見た目（書体も）をばらつかせたデータセット（ルールと AI の差を見る） |
 | [real_reports.py](real_reports.py) | 本物のレポート（TeX のソースがあるもの）に目印を入れてコンパイルし直し、正解付きの評価データセットにする（DocBank と同じ考え方） |
 | [AI.md](AI.md) | **自作AIのアルゴリズムの説明と結果** |
+| [FINDINGS.md](FINDINGS.md) | **調査結果のまとめ**（何をしたら精度が上がったか、効いた手法・効かなかった手法、ハイパーパラメータの比較） |
+| [sweep.py](sweep.py) / [generalization.py](generalization.py) / [content.py](content.py) | ハイパーパラメータの比較 / 見たことのない見た目・中身への強さの実験 / 中身の材料のパック |
 | [doc_gen.py](doc_gen.py) | 学習用のランダムな文書（TeX）を作る。評価用とは別の作り方 |
 | [build_dataset.py](build_dataset.py) | 学習データ（ブロック＋正解のラベル＋ルールの答え）を作る |
 | [sample_data/sample.tex](sample_data/sample.tex) | 開発用の固定サンプル（IR版3の項目がひと通り入る） |

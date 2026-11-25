@@ -127,7 +127,7 @@ def binary_scores(prob: np.ndarray, y: np.ndarray, threshold: float = 0.5) -> di
 
 def train_binary(x: np.ndarray, y: np.ndarray, xv: np.ndarray, yv: np.ndarray, hidden: int = 64,
                  epochs: int = 60, lr: float = 1e-3, batch: int = 256, patience: int = 6, seed: int = 0,
-                 log: bool = True) -> tuple[MLP, Standardizer, list[dict]]:
+                 log: bool = True, use_pos_weight: bool = True) -> tuple[MLP, Standardizer, list[dict]]:
     """MLP を二値分類で学習する。
 
     1. 特徴を、学習用データの平均・標準偏差でそろえる
@@ -143,7 +143,8 @@ def train_binary(x: np.ndarray, y: np.ndarray, xv: np.ndarray, yv: np.ndarray, h
     yvt = torch.tensor(yv, dtype=torch.float32)
     model = MLP(x.shape[1], hidden)
     positives = max(1.0, float(y.sum()))
-    loss_fn = nn.BCEWithLogitsLoss(pos_weight=torch.tensor((len(y) - positives) / positives))
+    weight = torch.tensor((len(y) - positives) / positives) if use_pos_weight else None   # 比べるために外せる（sweep.py）
+    loss_fn = nn.BCEWithLogitsLoss(pos_weight=weight)
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
     best, best_loss, waited, history = copy.deepcopy(model.state_dict()), float("inf"), 0, []
     for epoch in range(1, epochs + 1):
