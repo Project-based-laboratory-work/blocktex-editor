@@ -212,22 +212,48 @@ def pad_batch(seqs: Sequences, idx: list[int], std: Standardizer) -> tuple[torch
     return ids, feats, labels, pad
 
 
-def predict_tagger(model: CharTagger, std: Standardizer, seqs: Sequences, batch: int = 32) -> list[np.ndarray]:
-    """並びごとに、1文字ずつの「数式か」の確率"""
+def predict_tagger(model: CharTagger, std: Standardizer, seqs: Sequences, batch: int = 32,
+                   logits: bool = False) -> list[np.ndarray]:
+    """並びごとに、1文字ずつの「数式か」の確率（logits=True なら、確率にする前のロジット。蒸留の先生の答えに使う）"""
     out: list[np.ndarray] = []
     with torch.no_grad():
         for k in range(0, len(seqs.ids), batch):
             idx = list(range(k, min(k + batch, len(seqs.ids))))
             ids, feats, _, pad = pad_batch(seqs, idx, std)
-            prob = torch.sigmoid(model(ids, feats, pad))
-            out += [prob[row, :len(seqs.ids[i])].numpy() for row, i in enumerate(idx)]
+            z = model(ids, feats, pad)
+            value = z if logits else torch.sigmoid(z)
+            out += [value[row, :len(seqs.ids[i])].numpy() for row, i in enumerate(idx)]
     return out
+
+
+def pad_values(values: list[np.ndarray], idx: list[int]) -> torch.Tensor:
+    """並びごとの値（先生のロジットなど）を、pad_batch と同じ長さにそろえる"""
+    t = max(len(values[i]) for i in idx)
+    out = torch.zeros(len(idx), t)
+    for row, i in enumerate(idx):
+        out[row, :len(values[i])] = torch.tensor(values[i], dtype=torch.float32)
+    return out
+
+
+def distill_loss(student: torch.Tensor, teacher: torch.Tensor, temperature: float) -> torch.Tensor:
+    """蒸留の損失（1文字ずつ）。先生と生徒のロジットを温度 T で割ってなめらかにし、生徒の確率を先生の確率に近づける。
+
+    2値なので、ソフトマックスの代わりにシグモイド: 先生の答え p = σ(z_先生 / T)、損失 = 交差エントロピー(σ(z_生徒 / T), p)。
+    T が大きいほど 0.99 と 0.6 のような自信の差がなだらかになり、「どれくらい迷ったか」が生徒に伝わる。
+    T² を掛けるのは、T で割ったぶん勾配が 1/T² に小さくなるのを戻すため（Hinton ら 2015）"""
+    target = torch.sigmoid(teacher / temperature)
+    loss = nn.functional.binary_cross_entropy_with_logits(student / temperature, target, reduction="none")
+    return loss * temperature ** 2
 
 
 def train_tagger(train: Sequences, val: Sequences, vocab_size: int, epochs: int = 30, lr: float = 1e-3,
                  batch: int = 32, patience: int = 4, seed: int = 0, log: bool = True,
+                 teacher: list[np.ndarray] | None = None, temperature: float = 2.0, alpha: float = 0.5,
                  **model_args) -> tuple[CharTagger, Standardizer, list[dict]]:
-    """CharTagger を学習する（流れは train_binary と同じ。損失は埋め草でない文字だけで数える）"""
+    """CharTagger を学習する（流れは train_binary と同じ。損失は埋め草でない文字だけで数える）。
+
+    teacher（並びごとの先生のロジット）を渡すと蒸留: 損失 = alpha × 正解との損失 + (1 - alpha) × 先生との損失（distill_loss）。
+    早く止めるかどうかは、どちらでも検証用データの「正解との損失」で決める（比べられるように）"""
     set_seed(seed)
     std = Standardizer.fit(np.concatenate(train.feats))
     model = CharTagger(vocab_size, train.feats[0].shape[1], **model_args)
@@ -248,9 +274,15 @@ def train_tagger(train: Sequences, val: Sequences, vocab_size: int, epochs: int 
         random.shuffle(order)
         total, count = 0.0, 0
         for k in range(0, len(order), batch):
-            ids, feats, y, pad = pad_batch(train, order[k:k + batch], std)
+            idx = order[k:k + batch]
+            ids, feats, y, pad = pad_batch(train, idx, std)
             optimizer.zero_grad()
-            loss = masked_loss(model(ids, feats, pad), y, pad)
+            logits = model(ids, feats, pad)
+            loss = masked_loss(logits, y, pad)
+            if teacher is not None:
+                keep = (~pad).float()
+                soft = (distill_loss(logits, pad_values(teacher, idx), temperature) * keep).sum() / keep.sum()
+                loss = alpha * loss + (1 - alpha) * soft
             loss.backward()
             optimizer.step()
             total += loss.item()

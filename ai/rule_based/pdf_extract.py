@@ -81,6 +81,16 @@ ROW_ALIGN_RATIO = 0.5
 # セル内の折り返しとみなす行の条件。セルの右端までの余りがこの値（文字の高さに対する比率）以下で、この文字数以上あること
 WRAP_RIGHT_MARGIN_RATIO = 2.0
 WRAP_MIN_CHARS = 8
+# 段落の行をまとめるとき、同じ大きさとみなす文字サイズの差(pt)
+PARAGRAPH_SIZE_TOLERANCE = 0.6
+# 段落の行の間とみなす縦の隙間の上限（文字サイズに対する比率）
+PARAGRAPH_GAP_RATIO = 0.8
+# 段落の途中の行とみなす、行の右端の余りの上限（文字サイズに対する比率）。段落の最後の行は途中で終わる
+PARAGRAPH_RIGHT_MARGIN_RATIO = 1.2
+# 段落の途中の行とみなす、行の幅の下限（文字サイズに対する比率）。短い見出しなどをつながないため
+PARAGRAPH_MIN_WIDTH_RATIO = 8
+# 字下げとみなす、行の左端のずれの下限（文字サイズに対する比率）。新しい段落は1字下げで始まる
+PARAGRAPH_INDENT_RATIO = 0.5
 
 
 @dataclass
@@ -263,6 +273,55 @@ def _extract_text_blocks(page: pymupdf.Page, page_no: int) -> list[TextBlock]:
             )
         )
     return blocks
+
+
+def _continues_paragraph(prev: TextBlock, block: TextBlock) -> bool:
+    gap = block.bbox[1] - prev.bbox[3]
+    size = max(prev.font_size, block.font_size)
+
+    same_size = abs(prev.font_size - block.font_size) <= PARAGRAPH_SIZE_TOLERANCE
+    close = 0 <= gap <= size * PARAGRAPH_GAP_RATIO
+    prev_is_full = (
+        prev.bbox[2] >= block.bbox[2] - size * PARAGRAPH_RIGHT_MARGIN_RATIO
+        and prev.bbox[2] - prev.bbox[0] > size * PARAGRAPH_MIN_WIDTH_RATIO
+    )
+    not_indented = block.bbox[0] <= prev.bbox[0] + size * PARAGRAPH_INDENT_RATIO
+    same_column = _same_column(prev, block)
+
+    return same_size and close and prev_is_full and not_indented and same_column
+
+
+def _join_blocks(prev: TextBlock, block: TextBlock) -> TextBlock:
+    """同じ段落の2つの行を1つのブロックにする。文字は改行でつなぐ（エディタ用の変換が行をつなぎ直す）。"""
+    runs = None
+    if prev.runs or block.runs:
+        # runs の文字をつなげると text になるように、装飾の無い側も Run にし、間に改行の Run を入れる
+        runs = [*(prev.runs or [Run(prev.text)]), Run("\n"), *(block.runs or [Run(block.text)])]
+    return TextBlock(
+        page=prev.page,
+        text=prev.text + "\n" + block.text,
+        bbox=_union_bbox([prev.bbox, block.bbox]),
+        font_size=prev.font_size,
+        font_name=prev.font_name,
+        bold=prev.bold and block.bold,
+        runs=runs,
+    )
+
+
+def _same_column(a: TextBlock, b: TextBlock) -> bool:
+    """2つのブロックが横に重なっているか（2段組の同じ段にあるか）。"""
+    return a.bbox[0] < b.bbox[2] and b.bbox[0] < a.bbox[2]
+
+
+def _merge_paragraph_lines(blocks: list[TextBlock]) -> list[TextBlock]:
+    merged: list[TextBlock] = []
+    for block in sorted(blocks, key=lambda b: (b.bbox[1], b.bbox[0])):
+        i = next((k for k in reversed(range(len(merged))) if _same_column(merged[k], block)), None)
+        if i is not None and _continues_paragraph(merged[i], block):
+            merged[i] = _join_blocks(merged[i], block)
+        else:
+            merged.append(block)
+    return merged
 
 
 def _is_inside(inner: tuple, outer: tuple, tol: float = 2.0) -> bool:
@@ -690,7 +749,7 @@ def extract(pdf_path: str) -> list[PageBlocks]:
     pages = []
     with pymupdf.open(pdf_path) as doc, pdfplumber.open(pdf_path) as pdf:
         for page_no, (mu_page, plumber_page) in enumerate(zip(doc, pdf.pages)):
-            text_blocks = _extract_text_blocks(mu_page, page_no)
+            text_blocks = _merge_paragraph_lines(_extract_text_blocks(mu_page, page_no))
             table_blocks = _extract_table_blocks(plumber_page, page_no)
             table_blocks += _extract_tables_near_captions(plumber_page, page_no, text_blocks, [t.bbox for t in table_blocks])
             table_bboxes = [t.bbox for t in table_blocks]

@@ -20,6 +20,7 @@
 """
 
 import argparse
+from dataclasses import asdict
 import json
 import random
 import re
@@ -38,7 +39,7 @@ from common.text import edit_distance
 from evaluation.ground_truth import compile_tex
 from evaluation.marks import read_marks
 from evaluation.metrics import tex_tokens
-from hybrid_extractor.doc_gen import WORDS, preamble, random_style
+from hybrid_extractor.doc_gen import C, Variant, add_variant_args, preamble, random_style, use_variant, variant_from_args
 from hybrid_extractor.extract import extract_blocks, is_extension, page_lines, union_all
 from hybrid_extractor.experts import INLINE_MATH_EXPERTS, INLINE_MATH_FINDERS, InlineMathExpert, get_inline_expert
 from hybrid_extractor.math_reader import ACCENTS, make_reader, shown
@@ -132,18 +133,27 @@ def rng_join(rng: random.Random, parts: list[str]) -> str:
     return out
 
 
-def inline_document(rng: random.Random, lang: str) -> tuple[str, list[dict], object]:
-    """文中の数式をたくさん含む文書。戻り値は (TeX, 数式の一覧 [{"id", "kind", "tex"}], 見た目の設定)"""
+def inline_document(rng: random.Random, lang: str, variant: Variant | None = None) -> tuple[str, list[dict], object]:
+    """文中の数式をたくさん含む文書。戻り値は (TeX, 数式の一覧 [{"id", "kind", "tex"}], 見た目の設定)。
+    variant の材料に本物の数式（real のパック）があれば、数式はそこから選ぶ（種類は "real"）"""
+    with use_variant(variant):
+        return _inline_document(rng, lang)
+
+
+def _inline_document(rng: random.Random, lang: str) -> tuple[str, list[dict], object]:
     style = random_style(rng, lang)
     style.centered_headings = False
-    w = WORDS[lang]
+    w = C().words[lang]
     items: list[dict] = []
     paragraphs = []
     for _ in range(rng.randint(5, 9)):
         sentences = []
         for _ in range(rng.randint(2, 4)):
-            kind = rng.choice(list(INLINE_KINDS))
-            tex = INLINE_KINDS[kind](rng)
+            if C().inline_formulas:
+                kind, tex = "real", rng.choice(C().inline_formulas)
+            else:
+                kind = rng.choice(list(INLINE_KINDS))
+                tex = INLINE_KINDS[kind](rng)
             k = len(items)
             items.append({"id": k, "kind": kind, "tex": tex})
             math = rf"\mk{{m{k}s}}${tex}$\mk{{m{k}e}}"
@@ -205,9 +215,9 @@ def glyph_key(g: dict) -> tuple:
 
 def make_case(args: tuple[int, int, str, str]) -> dict | None:
     """1文書を作って PDF を保存し、正解（数式ごとの範囲・文字・LaTeX）を返す"""
-    index, seed, lang, out = args
+    index, seed, lang, out, *rest = args
     rng = random.Random(seed * 1_000_003 + index)
-    tex, items, style = inline_document(rng, lang)
+    tex, items, style = inline_document(rng, lang, rest[0] if rest else None)
     doc_id = f"{index:04d}"
     pdf_path = Path(out) / "pdfs" / f"{doc_id}.pdf"
     with tempfile.TemporaryDirectory() as tmp:
@@ -379,11 +389,14 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--math-checkpoint", help="math_ocr の重み。あれば ocr と rule+ocr も比べる")
     parser.add_argument("--finder", default="rule", choices=INLINE_MATH_FINDERS,
                         help="文中の数式の専門家（見つける段階）。ai は train.py inline で学習した重みを使う")
+    parser.add_argument("--inline-checkpoint", help="--finder ai で使う重み（checkpoints/ の中のファイル名。例: inline_student.pt）")
+    add_variant_args(parser)
     args = parser.parse_args(argv)
+    variant = variant_from_args(args)
 
     out = Path(args.out)
     (out / "pdfs").mkdir(parents=True, exist_ok=True)
-    jobs = [(i, args.seed, ["ja", "en"][i % 2], str(out)) for i in range(args.docs)]
+    jobs = [(i, args.seed, ["ja", "en"][i % 2], str(out), variant) for i in range(args.docs)]
     with ProcessPoolExecutor(max_workers=args.workers) as pool:
         cases = [c for c in pool.map(make_case, jobs) if c is not None]
     print(f"{len(cases)}文書、文中の数式 {sum(len(c['gts']) for c in cases)}個"
@@ -393,9 +406,10 @@ def main(argv: list[str] | None = None) -> None:
     if args.math_checkpoint:
         readers["ocr"] = make_reader("ocr", args.math_checkpoint)
         readers["rule+ocr"] = make_reader("rule+ocr", args.math_checkpoint)
-    report = evaluate(cases, out, readers, get_inline_expert(args.finder))
+    report = evaluate(cases, out, readers, get_inline_expert(args.finder, args.inline_checkpoint))
     report["settings"] = {"docs": len(cases), "seed": args.seed, "readers": list(readers),
-                          "math_checkpoint": args.math_checkpoint, "finder": args.finder}
+                          "math_checkpoint": args.math_checkpoint, "finder": args.finder,
+                          "inline_checkpoint": args.inline_checkpoint, "variant": asdict(variant)}
     (out / "report.json").write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
     print_report(report)
 

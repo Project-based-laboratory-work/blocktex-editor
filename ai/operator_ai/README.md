@@ -1,6 +1,6 @@
 # operator_ai — 画像ごとにOCRの設定を選ぶオペレータAI
 
-**状態：進め方1（採点表を作る `score_all.py`）まで。** この README は、何を作るか・どう進めるか・誰が何を担当するかの共有用。
+**状態：進め方1〜3（採点表 `score_all.py`、分析 `analyze.py`）まで。val 全部（850枚）で採点・分析済み。** この README は、何を作るか・どう進めるか・誰が何を担当するかの共有用。
 
 画像（スクリーンショット）を1枚受け取り、その画像に一番合う OCR の設定を1つ選ぶ。
 選ぶ候補は、Tesseract の psm・前処理（[tesseract_ocr/presets.py](../tesseract_ocr/presets.py)）と EasyOCR（[easyocr_ocr/presets.py](../easyocr_ocr/presets.py)）。
@@ -17,7 +17,7 @@
 
 ```
 準備（前もって1回）
-  image_dataset の画像 ─▶ 全部の設定で読む ─▶ 採点表（画像 × 設定 → CER・秒数）─▶ 分析 ─▶ 振り分けのルール / モデル
+  image_dataset の画像 ─▶ 全部の設定で読む ─▶ 採点表（画像 × 設定 → CER・f1）─▶ 分析 ─▶ 振り分けのルール / モデル
                                                                                                    │
 本番（画像が来るたび）                                                                              ▼
   スクショ画像 ─▶ 特徴量を測る（明るさ・文字の高さなど）─▶ オペレータAI ─▶ 選んだ設定で OCR ─▶ 構造化器 ─▶ ラベル付きIR
@@ -56,9 +56,10 @@ OCR がプロセスごと落ちた（Segmentation fault など）ときは、も
 | `cer_page` / `cer_page_ja` / `cer_page_en` | **ページ全体の文字の誤り率。設定を比べるときはこれを使う**（下の「ページ全体のCER」） |
 | `errors` / `chars` / `ja_*` / `en_*` | `cer_page` の分子と分母。全体の値は「足してから割る」（画像ごとの CER の平均にしない） |
 | `extra_chars` | どの正解のブロックにも入らなかった文字の数（ビューアの文字・ゴミなど）。`errors` に含まれる |
-| `precision` / `recall` / `f1` / `miou` | チームの評価と同じ値（段落の切り方・枠の位置）。EasyOCR は `easyocr_image_rule_based` と同じく段落にまとめてから比べる |
+| `precision` / `recall` / `f1` / `miou` / `order_acc` | チームの評価と同じ値（段落の切り方・枠の位置・読み順）。EasyOCR は `easyocr_image_rule_based` と同じく段落にまとめてから比べる |
 | `cer` | チームの評価と同じ値（対応が取れた箱の中だけの CER）。参考。取りこぼしても下がらないので、設定の比較には使わない |
-| `sec_per_page` | 1枚を読むのにかかった秒数（OCRの結果を保存したときの値） |
+| `sec_per_page` | 1枚を読むのにかかった秒数（OCRの結果を保存したときの値）。評価項目ではなく、記録として残している |
+| `n_pairs` `n_preds` `n_gts` `iou_sum` `order_concordant` `order_discordant` `text_errors` `text_chars` | チームの評価の値の分子と分母（[metrics.py](../evaluation/metrics.py) の `Counts`）。何枚かをまとめた値を、チームと同じく「足してから割る」で出すために使う |
 | `style` `dpi` `scale` `jpeg_quality` `dark_mode` `crop` `viewer` `background` | 正解IRの `params` から。崩し方が入っていれば True |
 | `lang` | 正解の文字から推定（ASCII以外が3割以上なら `ja`。`evaluation.import_dataset.guess_lang`） |
 | `columns` | 元のTeX（`<dataset>/tex/`）が twocolumn なら 2 |
@@ -79,6 +80,145 @@ OCR がプロセスごと落ちた（Segmentation fault など）ときは、も
 
 ブロック単位で比べるので、ブロックの読む順や段落の区切り方の違いは誤りにならない。文字そのものの読み取りの良さだけを比べられる。
 
+## 分析する（進め方2・3）
+
+```bash
+python -m operator_ai.analyze operator_ai/data/val/scores.csv
+```
+
+`scores.csv` と同じ場所の `analysis/` に書く（git管理外）。
+
+| 出力 | 内容 |
+|---|---|
+| `report.md` | まとめ（共有用）。下の表を全部まとめたもの |
+| `settings.csv` | 進め方2。設定ごとの `cer_page`・画像ごとの CER の真ん中（`median`）・大きく崩れた画像の割合（`broken`、CER > 0.5）・チームの評価と同じ値（`precision`・`recall`・`f1`・`miou`・`order_acc`・`cer`、足してから割る）・一番になった画像の数（`wins`、同点なら f1 が高いほう） |
+| `pairs.csv` | 2つの設定のどちらかを画像ごとに選べるときの上限。ルール版で「A か B か」を決めるときの目安 |
+| `conditions.csv` | 進め方3。条件（params の値。dpi・縮小率・JPEG品質は区間にまとめる）ごとに、その条件での単独ベスト・オラクル・各設定の CER |
+| `worst.csv` | 単独ベストで CER が悪い画像の上位30（正解が50字未満のページは除く）。`memo` 列に原因を書く。作り直しても `memo` は消えない |
+
+CER が悪い画像を目で確かめるページも作れる（[review.py](review.py)）。画像に正解とOCRの枠を重ね、原因の下書き（自動の判定）を付ける。memo はページの上で直して `worst.csv` に書き出せる。
+
+```bash
+python -m operator_ai.review image_dataset/data/val operator_ai/results/val/analysis/worst.csv   # → operator_ai/data/val/review.html
+```
+
+- CER はすべて「誤りを足してから文字数の合計で割る」
+- どれかの設定でエラーになった画像は、比べる条件を揃えるため集計から外す（`report.md` に一覧が出る）
+- 「一番良い設定」が CER で同点なら、f1 が高いほうを選ぶ
+- `effective_dpi` は dpi × 縮小率（画面上の文字の細かさ）。params には無い、分析用に足した切り口
+
+### val 全部での結果（850枚、CPU で約5.5時間、2026-11-21）
+
+全854枚のうち、EasyOCR が落ちた1枚と、正解の文字が無い3枚を除いた850枚。
+
+| 方法 | cer_page | 差の埋まり具合 |
+|---|---|---|
+| 単独ベスト（`tesseract:up2`） | 0.119 | 0% |
+| 2つから選ぶときの上限（`tesseract:up2` / `easyocr:up2_lowtext`） | 0.093 | 70% |
+| オラクル（上限） | 0.081 | 100% |
+
+- 振り分けで誤りを約3分の1減らせる余地がある。2つの設定から選ぶだけで、その7割が埋まる（200枚のときとほぼ同じ）
+- `tesseract:psm6` は全体では最下位（0.349）だが、画像ごとの真ん中は 0.060 と2番目に良く、250枚で一番になる。崩れる画像（22%）を見分けられれば強い
+- 文字が細かい画像（`effective_dpi` < 70、71枚）は、どの設定でも悪い（オラクルでも 0.31）
+- `effective_dpi` が 140 以上の画像では、拡大しない `tesseract:invert`（≒ `base`）のほうが `up2` より良い（0.064 と 0.074）
+- ダークモード（0.181）・2段組（0.185）・ビューアあり（0.157）は単独ベストで悪く、振り分けの余地も大きい
+- CER が悪い画像の上位は、Tesseract がほとんど何も読めず（CER ≒ 1）、EasyOCR では読めているものが多い。例：`doc_000040_p2_v0`（ビューアの暗い帯があり、縮小率 0.556）
+- 確認が要る画像：
+  - `doc_000092_p3_v0`：全部の設定で正解のブロックの外に約320字読んでいる。正解の箱がずれている（`image_dataset` の不具合）かもしれない
+  - `doc_000130_p1_v0`：`tesseract:up2` だけ CER 1.0。コードの行と隣の図を1行にまとめて読み、行の中心がコードのブロックから外れたため、行ごと誤りに数えている（`cer_page` の数え方の弱いところ）
+- 英語の画像は73枚
+
+## ルール版を作る（進め方4）— chihiro へ
+
+OCR を回し直さなくても始められるように、val（854枚）の採点表と特徴量を `operator_ai/results/val/` に入れてある（git で入る）。
+
+| ファイル | 内容 |
+|---|---|
+| `results/val/scores.csv` | 採点表（854枚 × 10設定）。列は上の「採点表の列」 |
+| `results/val/features.csv` | 画像から測った特徴量（1行 = 画像1枚）。列は下の「特徴量」 |
+| `results/val/analysis/report.md` | 分析のまとめ（進め方2・3）。ルールの根拠はここから探す |
+
+**手順**
+
+1. `results/val/analysis/report.md` を読む。どの条件でどの設定が勝つか、2つの設定から選ぶだけでどこまで届くか
+2. [rule_example.py](rule_example.py) を写して `rules.py` を作り、`choose(f)` を書く。`f` は特徴量の dict、返すのは設定の名前
+3. 評価する。採点表から点数を引くだけなので1秒で終わる。2〜3 を繰り返す
+
+```bash
+python -m operator_ai.evaluate operator_ai.rules:choose                                  # ai/ で
+python -m operator_ai.evaluate operator_ai.rules:choose operator_ai.rule_example:choose   # 並べて比べる
+```
+
+出力は、単独ベスト・自分のルール・オラクルの評価項目（`cer_page`・`f1`）と「差の埋まり具合」、参考の値（チームの評価と同じ `precision`・`recall`・`miou`・`order_acc`・`cer`）、条件ごとの `cer_page`、オラクルとの差が大きい画像の一覧。
+
+**守ること**
+
+- ルールに使えるのは `f`（画像から測った値）だけ。正解の params（`dark_mode`・`dpi` など）は本物のスクショに無いので使えない。
+  条件ごとの表で params を見るのは、ルールの手がかりを探すため
+- 欲しい特徴量が足りなければ、`features.py` に足す（natsuko に相談）
+- val で閾値を合わせると、val の点数は実力より良く出る。ルール版ができたら、最終テスト用の画像（test）で確かめる（下の「最終テスト（test）」）
+
+### 最終テスト（test）
+
+> [!CAUTION]
+> **`results/test/` は見ちゃだめ！** ルール版（`rules.py`）ができて、val での調整が終わるまで、`results/test/scores.csv` を開かない・集計しない・`evaluate` や `analyze` に渡さない。
+> test の点数を見ながらルールを直すと、test にも合わせ込んでしまい、「初めて見る画像での成績」が測れなくなる。うっかり見てしまったら、チームに言う。
+
+**ルール版のコードができたときの確認用。** ルールを作る途中では使わない（test の点数を見ながら直すと、test にも合わせ込んでしまい、実力より良く出るため）。
+
+| | 内容 |
+|---|---|
+| 画像 | `image_dataset/data/test/`（seed 2、300文書から827枚。val・学習用とは別の文書）。git 管理外なので、無ければ下のコマンドで作る |
+| 採点表・特徴量 | `results/test/scores.csv`（827枚 × 10設定、エラー 0 行）と `results/test/features.csv`。CPU で採点済み（約6時間半）なので、採点し直さなくてよい。**開くのはルールができてから** |
+| 使う時期 | `rules.py` ができて、val での調整が終わったとき。原則1回 |
+
+ルールができたら、これだけ実行する（ai/ で）:
+
+```bash
+python -m operator_ai.evaluate operator_ai.rules:choose --scores operator_ai/results/test/scores.csv --features operator_ai/results/test/features.csv
+```
+
+採点表を作り直すとき（画像を変えたときなど）だけ:
+
+```bash
+python -m image_dataset.build --out image_dataset/data/test --docs 300 --seed 2   # 画像（無ければ。約101MB）
+python -m operator_ai.score_all image_dataset/data/test                           # 採点表（CPU で約6時間半）
+python -m operator_ai.features image_dataset/data/test                            # 特徴量
+cp operator_ai/data/test/scores.csv operator_ai/data/test/features.csv operator_ai/results/test/
+```
+
+**いまの手がかり**（val、`report.md` から）
+
+- 単独ベストは `tesseract:up2`（0.119）、オラクルは 0.081。`tesseract:up2` と `easyocr:up2_lowtext` の2択で 0.093（差の70%）まで届く
+- 見本の `rule_example.py`（文字が大きければ `invert`）は、単独ベストと同じ 0.119 で、まだ上回らない。文字の高さだけでは足りない
+- `tesseract:psm6` は250枚で一番だが、22% の画像では大きく崩れる。崩れる画像を見分けられれば大きい
+- 単独ベストで悪いのは、ダークモード・2段組・ビューアあり・文字がとても細かい画像
+
+### 特徴量
+
+[features.py](features.py) の `measure(画像のパス)` で測る。854枚で約10秒。
+
+| 列 | 内容 | val での当たり具合 |
+|---|---|---|
+| `width` / `height` | 画像の大きさ（px） | |
+| `is_jpeg` | 拡張子が .jpg / .jpeg | JPEG の劣化ありと 854枚すべて一致 |
+| `brightness` | 画像全体の明るさ（0〜1） | |
+| `page_dark` / `page_bg` | ページの地が暗いか / 地の明るさ（画像の真ん中の明るさの中央値） | ダークモードと 854枚すべて一致 |
+| `band_ratio` | ビューアの帯・背景（ページと違う色で一様な行・列）の面積の割合 | ビューアありの中央値 0.22、なし 0 |
+| `ink_ratio` | ページの中で文字（インク）の画素の割合 | |
+| `char_height` / `char_height_rel` | 文字の高さ（px、連結成分の高さの中央値）/ 画像の高さに対する割合 | dpi × 縮小率との相関 0.85 |
+| `n_chars` | 文字くらいの大きさの連結成分の数 | |
+| `center_gap` | ページの真ん中に、左右に文字があってすき間が縦に通っている行の割合（2段組の手がかり） | **弱い**。0.5 で分けると段組みとの一致は約7割 |
+
+各ファイルを作り直すとき（natsuko）:
+
+```bash
+python -m operator_ai.score_all image_dataset/data/val
+python -m operator_ai.features image_dataset/data/val
+cp operator_ai/data/val/scores.csv operator_ai/data/val/features.csv operator_ai/results/val/
+python -m operator_ai.analyze operator_ai/results/val/scores.csv
+```
+
 ## 進め方
 
 いきなり学習させず、次の順に進める。各段階で動くものができるので、途中で止まっても結果を出せる。
@@ -98,13 +238,13 @@ OCR がプロセスごと落ちた（Segmentation fault など）ときは、も
 
 | 担当 | 範囲 | 状態 |
 |---|---|---|
-| natsuko | オペレータAI全体のまとめ役。`image_dataset`（学習データ）、採点表・分析（進め方 1〜3）、学習版（5）、評価（6） | `image_dataset`・採点表（1）は済み。2〜3 はこれから |
-| chihiro | ルールベース。構造化器 `image_rule_based`（済み）と、ルール版オペレータ（進め方 4）を担当するか | **要確認** |
+| natsuko | オペレータAI全体のまとめ役。`image_dataset`（学習データ）、採点表・分析（進め方 1〜3）、学習版（5）、評価（6） | `image_dataset`・採点表（1）・分析と原因のメモ（2〜3）・特徴量・評価ツールは済み。最終テスト用の画像（test、seed 2）の作成と採点も済み（`results/test/`、ルールができるまで見ない） |
+| chihiro | ルールベース。構造化器 `image_rule_based`（済み）と、ルール版オペレータ（進め方 4） | 4 はこれから。始め方は上の「ルール版を作る」 |
 
 - 進め方 3 の分析結果は、4（ルール版）の根拠にも、5（学習版）の材料にもなる。3 を先に共有すれば、ルール版と学習版の作業がかぶらない
 - 他の人のフォルダ（`tesseract_ocr/`・`easyocr_ocr/`・`image_rule_based/`・`evaluation/`）のコードは書き換えない。このフォルダから呼ぶだけにする
 
-## フォルダ構成（予定）
+## フォルダ構成
 
 [ai/README.md](../README.md) の「新しいモデルを作るときの構成」に合わせる。
 
@@ -113,12 +253,16 @@ ai/operator_ai/
   README.md      # これ
   __init__.py
   score_all.py   # 進め方 1：全部の設定で読んで採点表を作る（済み）
-  features.py    # 画像の特徴量を測る（明るさ・暗い画素の割合・文字の高さ・画像の大きさ・周りの灰色の帯・段組みの数など）
-  analyze.py     # 進め方 2・3：単独ベスト・オラクル、条件ごとの勝ち負けの表
+  features.py    # 画像の特徴量を測る（済み）
+  evaluate.py    # オペレータを採点表だけで評価する（済み。進め方 4〜6 で使う）
+  rule_example.py  # ルール版の見本（済み）
+  review.py      # CER が悪い画像を目で確かめるページ（済み）
+  analyze.py     # 進め方 2・3：単独ベスト・オラクル、条件ごとの勝ち負けの表（済み）
   rules.py       # 進め方 4：ルール版
   train.py       # 進め方 5：学習版
   predict.py     # 推論の入口。画像 → 設定を選ぶ → OCR → IR
   data/          # 採点表・OCRの結果・学習済みモデル（.gitignore）
+  results/       # チームで共有する採点表・特徴量・分析（git に入れる）。test/ はルールができるまで見ない
   tests/
 ```
 
@@ -134,23 +278,47 @@ ai/operator_ai/
 
 学習に使っていない画像で、次の表を埋める。
 
-| 方法 | CER（小さいほど良い） | f1 | 1枚の秒数 | 差の埋まり具合 |
-|---|---|---|---|---|
-| 単独ベスト | | | | 0% |
-| ルール版 | | | | |
-| 学習版 | | | | |
-| オラクル（上限） | | | | 100% |
+| 方法 | CER（小さいほど良い） | f1（大きいほど良い） | 差の埋まり具合 |
+|---|---|---|---|
+| 単独ベスト | | | 0% |
+| ルール版 | | | |
+| 学習版 | | | |
+| オラクル（上限） | | | 100% |
 
 差の埋まり具合 ＝（単独ベストの CER − オペレータの CER）÷（単独ベストの CER − オラクルの CER）
 
+**評価項目は CER と f1 の2つ**（2026-11-21、natsuko と chihiro で決定）。どの方法も2つを並べて出す。速さは評価項目に入れない。
+
+| 項目 | 列 | 見るもの |
+|---|---|---|
+| CER | `cer_page` | 文字の読み取りの良さ（取りこぼし・余計な文字も誤り）。小さいほど良い |
+| f1 | `f1` | 段落の切り方（ブロックの検出。チームの評価と同じ値）。大きいほど良い。後ろの構造化器はブロックを分け直さないので、OCR の設定で決まる |
+
+- 単独ベスト・オラクル・差の埋まり具合は CER で決める。CER で同点なら f1 が高いほうを選ぶ。f1 はそのとき一緒に出す
+- 2つは食い違うことがある。val では、EasyOCR（`up2_lowtext`）は CER で負けるが f1 は高い（0.59 と 0.57）
+- CER だけで選ぶと f1 が下がる。val のオラクル（CER が一番の設定を選ぶ）は、CER 0.081 と単独ベストの 0.119 より良いが、f1 は 0.47 と単独ベストの 0.57 より悪い。CER で勝ちやすい `psm6`・`psm11` は段落をうまく切れない（f1 0.16・0.15）ため
+- 読み順（`order_acc`）は、Tesseract が 0.96〜1.00、EasyOCR が約 0.95。`psm6` は段落をほとんど切らない（recall 0.11）ので、読み順はほぼ崩れない（0.999）
+- 値は「足してから割る」で、チームの評価と同じ計算（画像ごとの値の平均ではない）
 - ダークモード／通常、日本語／英語、文字の大小、のような切り口ごとにも出す
-- 採点は [evaluation/metrics.py](../evaluation/metrics.py) と同じ物差し（CER・f1）を使う
+- 採点は [evaluation/metrics.py](../evaluation/metrics.py) と同じ物差しを使う。評価項目の2つのほかに、参考として PDF 側と同じ `precision`・`recall`・`miou`・`order_acc`（読み順）・`cer` も並べて出す（何枚かをまとめるときは、チームと同じく `Counts` を足してから `summarize` で割る）
+- PDF 側の指標のうち、`label_acc`・`level_acc`・`deco_f1`・表・数式・コードの指標は出さない。ラベルや装飾は OCR の後ろの構造化器が付けるので、OCR の設定を選ぶオペレータでは変わらないため
 
 ## 未決事項
 
-- 「良い」の定義：CER だけか、f1（段落の切り方）や速さも入れるか
+- CER と f1 の重み：CER が良くなる代わりに、f1 がどこまで悪くなってよいか（例：f1 は単独ベストより下げない）
 - 目標の数字（例：ルール版で単独ベストを上回る、学習版で差の半分以上を埋める）
-- 進め方 4（ルール版オペレータ）の担当
+
+## 変更の記録
+
+README・評価の決めごとを変えたら、ここに足す（新しいものが上）。
+
+| 日付 | 変更 | 決めた人 |
+|---|---|---|
+| 2026-11-22 | test（seed 2）の採点表・特徴量を `results/test/` に入れた。**ルール版ができるまで見ない**（注意書きを「最終テスト（test）」に追加） | natsuko |
+| 2026-11-21 | 評価項目を **CER（`cer_page`）と f1 の2つ**に決定。速さ（`sec_per_page`）は評価項目から外す（採点表には記録として残す）。CER で同点のときは、速いほうではなく f1 が高いほうを選ぶ | natsuko・chihiro |
+| 2026-11-21 | 進め方4（ルール版オペレータ）の担当を chihiro に決定 | natsuko・chihiro |
+| 2026-11-21 | 採点表に読み順（`order_acc`）とチームの評価の分子・分母を追加。何枚かをまとめた値は、チームと同じく「足してから割る」で出す | natsuko |
+| 2026-11-21 | 進め方1〜3（採点表・分析・原因のメモ）を val 全部（854枚）で完了。特徴量・評価ツール・ルールの見本を追加 | natsuko |
 
 ## 関連
 

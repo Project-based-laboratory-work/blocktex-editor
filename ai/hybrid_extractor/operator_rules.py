@@ -203,19 +203,24 @@ def predict(pdf_path: str, continues: Continues = rule_continues, math: str = "r
 
 
 def predict_ai(pdf_path: str, math: str = "rule", math_checkpoint: str | None = None,
-               inline_finder: str = "auto") -> IRDocument:
+               inline_finder: str = "auto", checkpoints: str | None = None) -> IRDocument:
     """PDF → ラベル付きIR（AI モード）。区切り・ラベル・文中の数式の専門家を、学習した AI にする。
-    重みは checkpoints/（train.py で作る）。inline_finder: "ai" / "rule" / "auto"（AI の重みがあれば AI）"""
-    if inline_finder == "auto":
-        inline_finder = "ai" if CHECKPOINTS_INLINE.exists() else "rule"
-    from hybrid_extractor.ai_experts import boundary_expert, inline_expert, label_experts
+    重みは checkpoints/（train.py で作る）。inline_finder: "ai" / "rule" / "auto"（AI の重みがあれば AI）。
+    checkpoints を渡すと checkpoints/<名前>/ の重みを使う（見た目を抜いて学習した実験の重み。train.py --checkpoints）。
+    そこに文中の数式の重み（inline_math.pt）が無ければ、いつもの重みを使う"""
+    from hybrid_extractor.ai_experts import CHECKPOINTS, boundary_expert, inline_expert, label_experts
 
-    pages = extract_blocks(pdf_path, boundary_expert())
-    decided = decide_pages_ai(pages, label_experts())
+    base = CHECKPOINTS / checkpoints if checkpoints else CHECKPOINTS
+    inline_path = base / "inline_math.pt" if (base / "inline_math.pt").exists() else CHECKPOINTS_INLINE
+    if inline_finder == "auto":
+        inline_finder = "ai" if inline_path.exists() else "rule"
+
+    pages = extract_blocks(pdf_path, boundary_expert(base / "boundary.pt"))
+    decided = decide_pages_ai(pages, label_experts(base / "labels"))
     fix_code(decided)
     reader = make_reader(math, math_checkpoint)
     if reader is not None:
-        finder = inline_expert() if inline_finder == "ai" else INLINE_MATH_EXPERTS["rule"]
+        finder = inline_expert(inline_path) if inline_finder == "ai" else INLINE_MATH_EXPERTS["rule"]
         read_math(pdf_path, decided, reader, finder)
     labeled = [[(b, d.label) for b, d in items] for items in decided]
     return to_labeled_ir(pages, labeled, os.path.basename(pdf_path), NAME_AI)

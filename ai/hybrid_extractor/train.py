@@ -49,8 +49,21 @@ THRESHOLD = 0.5
 MAX_LEN = 512                                # 文中の数式の専門家が一度に見る文字の数（長いブロックは区切る）
 
 
+# どのデータで学習し、どこに保存するか（--data-prefix / --checkpoints。見た目を抜いた実験で、今の重みを上書きしないため）
+SETTINGS = {"prefix": "", "checkpoints": ""}
+
+
 def load_docs(split: str) -> list[dict]:
-    return [json.loads(p.read_text(encoding="utf-8")) for p in sorted((DATA / split / "docs").glob("*.json"))]
+    """data/<prefix><split>/docs の文書。prefix は --data-prefix（例: xtimes_ → data/xtimes_train）"""
+    folder = DATA / (SETTINGS["prefix"] + split) / "docs"
+    if not folder.exists():
+        raise SystemExit(f"学習データが無い: {folder}")
+    return [json.loads(p.read_text(encoding="utf-8")) for p in sorted(folder.glob("*.json"))]
+
+
+def ckpt_dir() -> Path:
+    """重みの保存先。--checkpoints を指定すると checkpoints/<名前>/（今の重みとは別の場所）"""
+    return CHECKPOINTS / SETTINGS["checkpoints"] if SETTINGS["checkpoints"] else CHECKPOINTS
 
 
 def show(title: str, scores: dict) -> str:
@@ -93,7 +106,7 @@ def cmd_boundary(args: argparse.Namespace) -> None:
     print("テスト用データでの比較（はい = 続き）")
     print("  " + show("ルール版", rule))
     print("  " + show("AI版", ai))
-    path = CHECKPOINTS / "boundary.pt"
+    path = ckpt_dir() / "boundary.pt"
     save_checkpoint(path, model, std, {"n_in": x.shape[1], "hidden": args.hidden, "features": PAIR_FEATURE_NAMES},
                     {"test": {"ai": ai, "rule": rule}, "history": history})
     print(f"保存した: {path}")
@@ -160,7 +173,7 @@ def cmd_labels(args: argparse.Namespace) -> None:
         print("  " + show("ルール版", rule))
         print("  " + show("AI版", ai))
         summary[target] = {"ai": ai, "rule": rule}
-        save_checkpoint(CHECKPOINTS / "labels" / f"{target}.pt", model, std,
+        save_checkpoint(ckpt_dir() / "labels" / f"{target}.pt", model, std,
                         {"n_in": train["x"].shape[1], "hidden": args.hidden, "label": target,
                          "features": BLOCK_FEATURE_NAMES}, {"test": summary[target], "epochs": len(history)})
 
@@ -174,7 +187,7 @@ def cmd_labels(args: argparse.Namespace) -> None:
         mask = labels == label
         print(f"  {label:10} {n:6d} {float((test['rules'][mask] == label).mean()):8.3f} "
               f"{float((decided[mask] == label).mean()):8.3f}")
-    (CHECKPOINTS / "labels" / "summary.json").write_text(json.dumps(
+    (ckpt_dir() / "labels" / "summary.json").write_text(json.dumps(
         {"experts": summary, "operator": {"ai_acc": ai_acc, "rule_acc": rule_acc}}, ensure_ascii=False, indent=2),
         encoding="utf-8")
 
@@ -222,7 +235,7 @@ def cmd_inline(args: argparse.Namespace) -> None:
     n_chars = sum(len(s) for s in train.ids)
     print(f"  学習 {len(train.ids)}並び・{n_chars}文字、語彙 {len(vocab)}、特徴 {train.feats[0].shape[1]}個")
     model_args = {"d_model": args.d_model, "layers": args.layers, "heads": 4, "max_len": MAX_LEN}
-    model, std, history = train_tagger(train, val, len(vocab), epochs=args.epochs, **model_args)
+    model, std, history = train_tagger(train, val, len(vocab), epochs=args.epochs, seed=args.seed, **model_args)
     prob = np.concatenate(predict_tagger(model, std, test))
     yt = np.concatenate(test.labels)
     ai = binary_scores(prob, yt)
@@ -230,17 +243,150 @@ def cmd_inline(args: argparse.Namespace) -> None:
     print("テスト用データでの比較（1文字ずつ。はい = 数式の文字）")
     print("  " + show("ルール版", rule_scores))
     print("  " + show("AI版", ai))
-    path = CHECKPOINTS / "inline_math.pt"
+    path = ckpt_dir() / args.out
     save_checkpoint(path, model, std, {"vocab_size": len(vocab), "n_feat": train.feats[0].shape[1], **model_args,
-                                       "features": CHAR_FEATURE_NAMES},
+                                       "features": CHAR_FEATURE_NAMES, "seed": args.seed},
                     {"vocab": vocab, "test": {"ai": ai, "rule": rule_scores}, "history": history})
     print(f"保存した: {path}")
     print("見つける段階の比較は: python -m hybrid_extractor.inline_math_eval --out hybrid_extractor/data/inline_math "
           "--docs 60 --finder ai")
 
 
+# =====================================================================
+# 蒸留（文中の数式の専門家）
+# =====================================================================
+
+THRESHOLDS = [0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.85, 0.9, 0.95]
+
+
+def block_probs(docs: list[dict], seq_values: list[np.ndarray]) -> list[np.ndarray]:
+    """inline_sequences で MAX_LEN 文字ずつに区切った並びの値を、ブロックごとにつなぎ直す（同じ順に並んでいる）"""
+    out, k = [], 0
+    for doc in docs:
+        for b in doc["blocks"]:
+            n = (len(b["chars"]) + MAX_LEN - 1) // MAX_LEN
+            out.append(np.concatenate(seq_values[k:k + n]) if n else np.zeros(0))
+            k += n
+    return out
+
+
+def gt_spans(chars: list[dict]) -> list[tuple[int, int]]:
+    """正解の数式の範囲: 同じ math_id が続くところ"""
+    spans, k = [], 0
+    while k < len(chars):
+        mid = chars[k].get("math_id")
+        if mid is None:
+            k += 1
+            continue
+        start = k
+        while k < len(chars) and chars[k].get("math_id") == mid:
+            k += 1
+        spans.append((start, k))
+    return spans
+
+
+def span_scores(docs: list[dict], probs: list[np.ndarray], threshold: float) -> dict:
+    """数式のまとまりの成績。予測の範囲（spans_from_probs、実際の専門家と同じ後処理）と正解の範囲を、
+    文字の重なり（共通 ÷ 合わせた範囲）が 0.5 以上なら1対1で対応させる"""
+    from hybrid_extractor.ai_experts import spans_from_probs
+
+    n_gt = n_pred = n_pair = 0
+    k = 0
+    for doc in docs:
+        for b in doc["blocks"]:
+            chars = b["chars"]
+            gts = gt_spans(chars)
+            preds = spans_from_probs(chars, probs[k], threshold) if len(chars) else []
+            k += 1
+            used: set[int] = set()
+            for gs, ge in gts:
+                for j, (ps, pe) in enumerate(preds):
+                    inter = max(0, min(ge, pe) - max(gs, ps))
+                    if j not in used and inter / (max(ge, pe) - min(gs, ps)) >= 0.5:
+                        used.add(j)
+                        n_pair += 1
+                        break
+            n_gt += len(gts)
+            n_pred += len(preds)
+    precision = n_pair / n_pred if n_pred else 0.0
+    recall = n_pair / n_gt if n_gt else 0.0
+    f1 = 2 * precision * recall / (precision + recall) if precision + recall else 0.0
+    return {"precision": precision, "recall": recall, "f1": f1}
+
+
+def sigmoid(z: np.ndarray) -> np.ndarray:
+    return 1 / (1 + np.exp(-z))
+
+
+def evaluate_tagger(name: str, val_docs, val_logits, test_docs, test_logits, test_labels) -> dict:
+    """1文字ずつの成績（しきい値 0.5）と、数式のまとまりの成績（しきい値は検証用データで一番良いもの）"""
+    val_probs = block_probs(val_docs, [sigmoid(z) for z in val_logits])
+    best = max(THRESHOLDS, key=lambda t: span_scores(val_docs, val_probs, t)["f1"])
+    char = binary_scores(sigmoid(np.concatenate(test_logits)), test_labels)
+    span = span_scores(test_docs, block_probs(test_docs, [sigmoid(z) for z in test_logits]), best)
+    print(f"  {name:22} 1文字 F1 {char['f1']:.4f}   まとまり F1 {span['f1']:.4f}"
+          f"（適合率 {span['precision']:.3f} 再現率 {span['recall']:.3f}、しきい値 {best}）")
+    return {"char": char, "span": span, "threshold": best}
+
+
+def cmd_distill(args: argparse.Namespace) -> None:
+    """先生（同じ形のモデルを何人か。平均のロジット = アンサンブル）の答えを使って、生徒を学習する（蒸留）"""
+    from hybrid_extractor.ai_experts import load_tagger_with_extra
+
+    teachers = [load_tagger_with_extra(ckpt_dir() / name) for name in args.teachers]
+    vocab = teachers[0][2]["vocab"]
+    if any(t[2]["vocab"] != vocab for t in teachers):
+        raise SystemExit("先生どうしで語彙（文字の ID）が違う。同じ学習データで作った先生を使う")
+    print(f"蒸留: 先生 {len(teachers)}人（{', '.join(args.teachers)}）、温度 T={args.temperature}、alpha={args.alpha}")
+    docs = {split: load_docs(split) for split in ("inline_train", "inline_val", "inline_test")}
+    seqs = {split: inline_sequences(d, vocab)[0] for split, d in docs.items()}
+    _, rule = inline_sequences(docs["inline_test"], vocab)
+
+    def teacher_logits(split: str) -> tuple[list[list[np.ndarray]], list[np.ndarray]]:
+        each = [predict_tagger(model, std, seqs[split], logits=True) for model, std, _ in teachers]
+        mean = [np.mean([e[k] for e in each], axis=0) for k in range(len(seqs[split].ids))]
+        return each, mean
+
+    print("  先生の答えを計算する")
+    _, train_teacher = teacher_logits("inline_train")
+    val_each, val_mean = teacher_logits("inline_val")
+    test_each, test_mean = teacher_logits("inline_test")
+
+    model_args = {"d_model": args.d_model, "layers": args.layers, "heads": 4, "max_len": MAX_LEN}
+    print(f"  生徒を学習する（d_model {args.d_model}、{args.layers}層、seed {args.seed}）")
+    model, std, history = train_tagger(seqs["inline_train"], seqs["inline_val"], len(vocab), epochs=args.epochs,
+                                       seed=args.seed, teacher=train_teacher, temperature=args.temperature,
+                                       alpha=args.alpha, **model_args)
+    student_val = predict_tagger(model, std, seqs["inline_val"], logits=True)
+    student_test = predict_tagger(model, std, seqs["inline_test"], logits=True)
+
+    yt = np.concatenate(seqs["inline_test"].labels)
+    print("テスト用データでの比較")
+    rule_char = binary_scores(rule, yt)
+    print(f"  {'ルール版':22} 1文字 F1 {rule_char['f1']:.4f}")
+    results = {}
+    for name, v, t in zip(args.teachers, val_each, test_each):
+        results[name] = evaluate_tagger(f"先生 {name}", docs["inline_val"], v, docs["inline_test"], t, yt)
+    results["ensemble"] = evaluate_tagger("先生の平均（アンサンブル）", docs["inline_val"], val_mean,
+                                          docs["inline_test"], test_mean, yt)
+    results["student"] = evaluate_tagger("生徒（蒸留）", docs["inline_val"], student_val,
+                                         docs["inline_test"], student_test, yt)
+    path = ckpt_dir() / args.out
+    save_checkpoint(path, model, std, {"vocab_size": len(vocab), "n_feat": seqs["inline_train"].feats[0].shape[1],
+                                       **model_args, "features": CHAR_FEATURE_NAMES, "seed": args.seed,
+                                       "distill": {"teachers": args.teachers, "temperature": args.temperature,
+                                                   "alpha": args.alpha}},
+                    {"vocab": vocab, "threshold": results["student"]["threshold"], "test": results, "history": history})
+    print(f"保存した: {path}（しきい値 {results['student']['threshold']} も一緒に保存）")
+    (ckpt_dir() / (Path(args.out).stem + "_report.json")).write_text(
+        json.dumps({"args": vars(args) | {"func": None}, "rule": rule_char, "results": results}, ensure_ascii=False,
+                   indent=2, default=float), encoding="utf-8")
+
+
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description="自作AIの専門家を学習させ、ルール版と比べる")
+    parser.add_argument("--data-prefix", default="", help="学習データのフォルダ名の頭（例: xtimes_ → data/xtimes_train など）")
+    parser.add_argument("--checkpoints", default="", help="重みを checkpoints/<名前>/ に保存する（今の重みを上書きしない）")
     sub = parser.add_subparsers(dest="command", required=True)
     p = sub.add_parser("boundary", help="区切りの専門家")
     p.add_argument("--hidden", type=int, default=64)
@@ -256,8 +402,21 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--layers", type=int, default=2)
     p.add_argument("--epochs", type=int, default=20)
     p.add_argument("--min-count", type=int, default=5)
+    p.add_argument("--seed", type=int, default=0, help="乱数の種（蒸留の先生を何人か作るときに変える）")
+    p.add_argument("--out", default="inline_math.pt", help="checkpoints/ の中の保存先のファイル名")
     p.set_defaults(func=cmd_inline)
+    p = sub.add_parser("distill", help="文中の数式の専門家を蒸留する（先生の答えで生徒を学習する）")
+    p.add_argument("--teachers", nargs="+", required=True, help="checkpoints/ の中の先生の重み（同じ学習データで作ったもの）")
+    p.add_argument("--temperature", type=float, default=2.0, help="温度 T。大きいほど先生の確率をなだらかにする")
+    p.add_argument("--alpha", type=float, default=0.5, help="正解との損失の割合（残りが先生との損失）")
+    p.add_argument("--d-model", type=int, default=64)
+    p.add_argument("--layers", type=int, default=2)
+    p.add_argument("--epochs", type=int, default=10)
+    p.add_argument("--seed", type=int, default=3, help="先生と違う種にする")
+    p.add_argument("--out", default="inline_student.pt")
+    p.set_defaults(func=cmd_distill)
     args = parser.parse_args(argv)
+    SETTINGS.update(prefix=args.data_prefix, checkpoints=args.checkpoints)
     args.func(args)
 
 
