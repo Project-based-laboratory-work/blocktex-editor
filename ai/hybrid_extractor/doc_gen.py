@@ -201,6 +201,8 @@ def sentence(rng: random.Random, lang: str, math: bool = False) -> str:
     w = C().words[lang]
     if C().sentences:
         text = rng.choice(C().sentences[lang])   # 本物の文（real のパック）
+    elif C().templates:
+        text = fill_template(rng, rng.choice(C().templates[lang]), w, lang)   # いくつかの文の形（wide のパック）
     elif lang == "ja":
         text = rng.choice(w["nouns"]) + "と" + rng.choice(w["nouns"]) + rng.choice(w["verbs"]) + rng.choice(w["ends"])
     else:
@@ -210,6 +212,18 @@ def sentence(rng: random.Random, lang: str, math: bool = False) -> str:
         part = f"${rng.choice(C().inline_formulas)}$" if C().inline_formulas else rng.choice(C().inline_parts)
         text = (f"{part}について、" if lang == "ja" else f"For {part}, ") + (text if lang == "ja" else text[0].lower() + text[1:])
     return text
+
+
+def fill_template(rng: random.Random, template: str, w: dict, lang: str) -> str:
+    """文の形の {n}（名詞）・{N}（文頭の名詞）・{v}（動詞）・{e}（文の終わり）を、前から順に埋める"""
+    out = template
+    for key, pool in (("{N}", "nouns"), ("{n}", "nouns"), ("{v}", "verbs"), ("{e}", "ends")):
+        while key in out:
+            word = rng.choice(w[pool])
+            if key == "{N}":
+                word = word[0].upper() + word[1:]
+            out = out.replace(key, word, 1)
+    return out
 
 
 def sentences(rng: random.Random, lang: str, n: int, math_rate: float = 0.0) -> str:

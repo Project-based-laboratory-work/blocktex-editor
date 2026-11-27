@@ -68,3 +68,45 @@ def test_aozora_and_gutenberg_sentences():
     text = ("header\n*** START OF THE BOOK ***\nThe flame of a candle is a beautiful thing to study closely. "
             "It burns.\n*** END OF THE BOOK ***")
     assert gutenberg_sentences(text) == ["The flame of a candle is a beautiful thing to study closely."]
+
+
+def test_wide_adds_words_that_alt_never_uses():
+    # 学習用の wide に足した語は、評価用の alt と1語も重ならない（重なると、見たことのない中身の評価にならない）
+    from hybrid_extractor.content import WIDE_EXTRA_WORDS
+    for lang, extra in WIDE_EXTRA_WORDS.items():
+        for key, words in extra.items():
+            assert not set(words) & set(ALT.words[lang][key]), (lang, key)
+
+
+def test_wide_templates_fill_every_slot():
+    from hybrid_extractor.content import WIDE
+    from hybrid_extractor.doc_gen import fill_template
+    rng = random.Random(0)
+    for lang, templates in WIDE.templates.items():
+        for t in templates:
+            text = fill_template(rng, t, WIDE.words[lang], lang)
+            assert "{" not in text and "}" not in text
+    assert fill_template(random.Random(0), "{N} {v} {n}{e}", WIDE.words["en"], "en")[0].isupper()
+
+
+def test_text_packs_keep_default_math():
+    from hybrid_extractor.content import get_content
+    alt_text = get_content("alt_text")
+    assert alt_text.math_parts == DEFAULT.math_parts and alt_text.inline_parts == DEFAULT.inline_parts
+    assert alt_text.words == ALT.words
+
+
+def test_without_math_drops_gt_math_and_overlapping_preds():
+    from common.ir import Element, IRDocument, Page
+    from hybrid_extractor.generalization import without_math
+
+    def doc(elements):
+        return IRDocument("x.pdf", "t", [Page(1, 595, 842, "pt", elements)])
+
+    gt = doc([Element("text", (0.1, 0.1, 0.9, 0.2), text="段落", label="paragraph"),
+              Element("text", (0.3, 0.3, 0.7, 0.35), text="x=1", label="math")])
+    pred = doc([Element("text", (0.1, 0.1, 0.9, 0.2), text="段落", label="math"),      # 段落を数式と答えた → 残す
+                Element("text", (0.31, 0.3, 0.69, 0.35), text="x=1", label="paragraph")])  # 正解の数式に重なる → 外す
+    p, g = without_math(pred, gt)
+    assert [e.label for e in g.pages[0].elements] == ["paragraph"]
+    assert [e.label for e in p.pages[0].elements] == ["math"]

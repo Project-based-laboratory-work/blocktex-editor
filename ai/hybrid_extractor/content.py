@@ -7,6 +7,8 @@
     default  今までの材料（学習に使う）
     alt      手で用意した別の材料（単語・見出し・キャプションの語・数式の部品・コード）。評価だけに使う
     real     alt に、本物の文（青空文庫・Project Gutenberg）と本物の数式（im2latex-100k）を足したもの。評価だけに使う
+    wide     default に、手で用意した単語・見出し・キャプションの語・コード・文の形を足したもの（学習に使う。alt と重ならない）
+    alt_text / real_text   alt / real の数式だけを default に戻したもの（数式の精度が混ざらない評価）
 
 real の材料は外から取ってきたもので、git には入れない（data/content/、build_real で作る）:
 
@@ -36,6 +38,9 @@ class Content:
     sentences: dict | None = None    # 言語 → 本物の文の一覧（あれば、文はここから選ぶ）
     display_formulas: list[str] | None = None  # 本物の別行立ての数式（あれば math_parts の代わり）
     inline_formulas: list[str] | None = None   # 本物の文中の数式（あれば inline_parts と、文中の数式の実験の数式の代わり）
+    # 文の形（あれば、文はここから選んで埋める）。{n} 名詞、{N} 文頭の名詞（英語は大文字で始める）、{v} 動詞、{e} 文の終わり。
+    # 無ければ今までの1つの形（「名詞と名詞＋動詞＋終わり」）
+    templates: dict | None = None
 
 
 DEFAULT = Content(
@@ -139,6 +144,66 @@ def real_content() -> Content:
                    display_formulas=read["display_formulas"], inline_formulas=read["inline_formulas"])
 
 
+def merged(base: dict, extra: dict) -> dict:
+    """言語ごとの単語の一覧を足し合わせる（"sep" などの文字列はそのまま）"""
+    return {lang: {k: (v + extra[lang].get(k, [])) if isinstance(v, list) else v for k, v in words.items()}
+            for lang, words in base.items()}
+
+
+# 学習用に増やす材料（案 B: 本物の文は評価だけに残し、学習には手で用意した材料だけを増やす）。
+# 評価用の ALT と1語も重ならないようにする（tests/test_variant.py で確かめる）。数式の材料は増やさない（数式は担当外）
+WIDE_EXTRA_WORDS = {
+    "ja": {
+        "nouns": ["会議", "報告書", "売上", "顧客", "商品", "在庫", "価格", "配送", "学生", "授業", "宿題", "成績", "教科書",
+                  "公園", "河川", "森林", "気温", "降水量", "人口", "交通", "建物", "道路", "歴史", "文化", "祭り", "言語",
+                  "単語", "文章", "写真", "映画", "選手", "試合", "練習", "食材", "調味料", "献立", "睡眠", "運動", "健康", "体重"],
+        "verbs": ["を整理した", "を確かめた", "を分類した", "を作成した", "を説明した", "を変更した", "を増やした", "を減らした",
+                  "を選んだ", "を並べた"],
+        "ends": ["ようだ。", "場合がある。", "とよい。", "ことにした。"],
+        "headings": ["概要", "動機", "調査の方法", "調査結果", "分析", "議論", "先行事例", "準備したもの", "作業の流れ", "振り返り",
+                     "改善点", "感想", "用語", "前提", "条件", "制約", "発展", "補遺", "資料", "質疑"],
+        "captions": ["の内訳", "の割合", "の時間変化", "の例", "の地図", "の手順", "の集計"],
+        "leads": ["留意点", "参考", "メモ", "要点"],
+        "authors": ["佐々木優", "山口翔太", "松本彩", "井上拓海"],
+    },
+    "en": {
+        "nouns": ["the meeting", "the report", "the customer", "the product", "the price", "the student", "the lesson",
+                  "the river", "the forest", "the population", "the building", "the road", "the festival", "the language",
+                  "the photo", "the movie", "the player", "the match", "the ingredient", "the menu"],
+        "verbs": ["improves", "shapes", "includes", "requires", "compares", "connects", "organizes", "highlights"],
+        "ends": [" in practice.", " for now.", " every week.", " in this case."],
+        "headings": ["Overview", "Motivation", "Data Collection", "Case Study", "Lessons Learned", "Limitations",
+                     "Future Work", "Glossary", "Preliminaries", "Implementation Notes", "Reflections", "Timeline",
+                     "Resources", "FAQ"],
+        "captions": [" by category", " per month", " as a map", " in summary", " step by step"],
+        "leads": ["Hint.", "Memo.", "Key point.", "Reminder."],
+        "authors": ["Sora Inoue", "Lisa Green", "Tom White", "Hana Mori"],
+    },
+}
+WIDE = replace(
+    DEFAULT,
+    name="wide",
+    words=merged(DEFAULT.words, WIDE_EXTRA_WORDS),
+    cell_words={"ja": DEFAULT.cell_words["ja"] + ["地域", "月", "件数", "金額", "比率", "担当", "状態", "区分"],
+                "en": DEFAULT.cell_words["en"] + ["Region", "Month", "Cases", "Amount", "Ratio", "Owner", "Status", "Group"]},
+    code_snippets=DEFAULT.code_snippets + [
+        ["public int add(int a, int b) {", "    return a + b;", "}"],
+        ["def greet(name)", "  puts \"Hello, #{name}\"", "end"],
+        ["func max(a, b int) int {", "    if a > b {", "        return a", "    }", "    return b", "}"],
+        ["UPDATE items", "SET price = price * 1.1", "WHERE stock < 10;"],
+        ["counts = {}", "for w in words:", "    counts[w] = counts.get(w, 0) + 1"],
+        ["x <- c(1, 2, 3)", "mean(x)"],
+    ],
+    title_kinds=["調査", "記録", "検討", "整理", "比較", "紹介"],
+    templates={
+        "ja": ["{n}と{n}{v}{e}", "{n}は{n}{v}{e}", "まず、{n}{v}{e}", "次に、{n}と{n}{v}{e}", "{n}の{n}{v}{e}",
+               "今回は{n}を中心に{n}{v}{e}", "{n}{v}が、{n}{v}{e}", "{n}と{n}と{n}{v}{e}"],
+        "en": ["{N} {v} {n}{e}", "In short, {n} {v} {n}{e}", "Here, {n} {v} {n}{e}", "{N} {v} {n} and {n}{e}",
+               "When {n} {v} {n}, {n} {v} {n}{e}", "{N} clearly {v} {n}{e}"],
+    },
+)
+
+
 def get_content(name: str) -> Content:
     if name == "default":
         return DEFAULT
@@ -146,7 +211,15 @@ def get_content(name: str) -> Content:
         return ALT
     if name == "real":
         return real_content()
-    raise ValueError(f"知らない材料のパック: {name}（default / alt / real）")
+    if name == "wide":
+        return WIDE
+    # 数式だけ今の材料のまま（数式は担当外なので、中身の実験で数式の精度が混ざらないように）
+    if name == "alt_text":
+        return replace(ALT, name="alt_text", math_parts=DEFAULT.math_parts, inline_parts=DEFAULT.inline_parts)
+    if name == "real_text":
+        return replace(real_content(), name="real_text", math_parts=DEFAULT.math_parts, inline_parts=DEFAULT.inline_parts,
+                       display_formulas=None, inline_formulas=None)
+    raise ValueError(f"知らない材料のパック: {name}（default / alt / real / wide / alt_text / real_text）")
 
 
 # =====================================================================
