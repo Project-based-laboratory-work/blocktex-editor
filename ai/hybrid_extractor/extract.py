@@ -629,6 +629,14 @@ def build_table(words: list[tuple], region: PtBox, seg: Segments, body: float, p
     return Table(bbox=bbox, cells=cells, aligns=aligns, col_rules=col_rules, row_rules=row_rules, col_widths=col_widths)
 
 
+def mono_share(rows: list[dict], region: PtBox) -> float:
+    """範囲の中の、見えている文字のうち等幅の文字の割合（送り幅で決めた印。extract.mark_char_kinds）"""
+    x0, y0, x1, y1 = region
+    shown = [ch for row in rows for ch in visible(row["chars"])
+             if x0 <= (ch["bbox"][0] + ch["bbox"][2]) / 2 <= x1 and y0 <= (ch["bbox"][1] + ch["bbox"][3]) / 2 <= y1]
+    return sum(is_mono(ch) for ch in shown) / len(shown) if shown else 0.0
+
+
 def find_tables(page: pymupdf.Page, rows: list[dict], seg: Segments, body: float, two_column: bool) -> list[Table]:
     """表を探す。
     1. 罫線のある表: 左右の端がそろった横線が2本以上、縦に並んでいるところ（grid / hline / booktabs）
@@ -653,6 +661,8 @@ def find_tables(page: pymupdf.Page, rows: list[dict], seg: Segments, body: float
         if len(group) < 2:
             continue
         region = (min(h[0] for h in group), group[0][2], max(h[1] for h in group), group[-1][2])
+        if mono_share(rows, region) >= MONO_RATIO:
+            continue   # 枠（frame=single）で囲んだコード。字下げや { の前の空白で列に分かれて、表に見えてしまう
         table = build_table(words, region, seg, body, page.rect.width, ruled_edges=True)
         if table is not None:
             tables.append(table)

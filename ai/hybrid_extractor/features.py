@@ -467,3 +467,67 @@ def block_char_size(chars: list[dict]) -> float:
         if ch["bbox"] is not None and not ch["c"].isspace():
             counts[round(ch["size"], 1)] = counts.get(round(ch["size"], 1), 0) + 1
     return max(counts, key=lambda s: counts[s]) if counts else 10.0
+
+
+# =====================================================================
+# 見出しのレベルの手がかり（レベルの専門家。2026-11-28）
+# =====================================================================
+
+LEVEL_FEATURE_NAMES = [
+    "size_ratio", "rank_0", "rank_1", "rank_2", "rank_3plus", "rank_norm", "n_sizes", "ratio_to_max", "is_body_size",
+    "bold", "gap_above", "gap_below", "two_column", "body_font", "log_len",
+]
+
+
+def is_heading_like(b: dict, body: float) -> bool:
+    """見出しらしいブロック（ラベルの答えを使わずに選ぶ。学習のときと使うときで同じになるように）:
+    文字のブロックで、1〜2行、短く、太字か本文より大きい。キャプション・番号だけの行は除く"""
+    text = (b.get("text") or "").strip()
+    return (b["kind"] == "text" and 0 < len(text) <= 60 and b.get("n_rows", 1) <= 2 and not CAPTION_HEAD.match(text)
+            and not DIGITS_ONLY.match(text) and (bool(b.get("bold")) or (b.get("font_size") or 0) >= body * 1.05))
+
+
+def heading_sizes(pages: list[dict], body: float) -> list[float]:
+    """文書の中の見出しらしいブロックの大きさの種類（大きい順。0.3pt 以内は同じ大きさとみなす）"""
+    sizes = sorted({round(b["font_size"], 1) for p in pages for b in p["blocks"]
+                    if is_heading_like(b, body) and b.get("font_size")}, reverse=True)
+    out: list[float] = []
+    for s in sizes:
+        if not out or out[-1] - s > 0.3:
+            out.append(s)
+    return out
+
+
+def level_features(blocks: list[dict], i: int, page: dict, doc: dict) -> list[float]:
+    """見出しのレベルの手がかり。doc は {"body", "font", "sizes"（heading_sizes）, "two_column"（段組らしさ）}。
+    本文の何倍かだけでは、文書クラスや段組で大きさが変わる（jsarticle の2段組では subsection が本文と同じ大きさ）ので、
+    文書の中での大きさの順位と、上下の空きも見る"""
+    b = blocks[i]
+    body, h = doc["body"], page["height"]
+    size = b.get("font_size") or body
+    sizes = doc["sizes"] or [size]
+    rank = next((k for k, s in enumerate(sizes) if abs(s - size) <= 0.3), len(sizes))
+    prev = blocks[i - 1] if i > 0 else None
+    nxt = blocks[i + 1] if i + 1 < len(blocks) else None
+    return [
+        size / body,
+        *[float(rank == k) for k in range(3)], float(rank >= 3),
+        rank / max(1, len(sizes) - 1),
+        min(len(sizes), 4) / 4,
+        size / max(sizes),
+        float(abs(size - body) <= 0.3),
+        float(bool(b.get("bold"))),
+        clip((b["bbox"][1] - prev["bbox"][3]) * h / body, -5, 20) if prev else 20.0,
+        clip((nxt["bbox"][1] - b["bbox"][3]) * h / body, -5, 20) if nxt else 20.0,
+        doc["two_column"],
+        float(b.get("font") == doc["font"]),
+        math.log1p(len((b.get("text") or "").strip())),
+    ]
+
+
+def level_doc_info(pages: list[dict]) -> dict:
+    """level_features に渡す、文書全体の情報"""
+    body, font = doc_body(pages)
+    texts = [b for p in pages for b in p["blocks"] if b["kind"] == "text" and b.get("n_rows", 1) >= 2]
+    narrow = sum(1 for b in texts if b["bbox"][2] - b["bbox"][0] < 0.45) / len(texts) if texts else 0.0
+    return {"body": body, "font": font, "sizes": heading_sizes(pages, body), "two_column": narrow}

@@ -19,6 +19,7 @@ from pathlib import Path
 import numpy as np
 
 from hybrid_extractor.features import (
+    SECTION_NUMBER,
     BLOCK_FEATURE_NAMES,
     CHAR_FEATURE_NAMES,
     PAIR_FEATURE_NAMES,
@@ -387,6 +388,59 @@ def cmd_distill(args: argparse.Namespace) -> None:
                    indent=2, default=float), encoding="utf-8")
 
 
+# =====================================================================
+# 見出しのレベルの専門家
+# =====================================================================
+
+LEVELS = [1, 2, 3]
+
+
+def level_examples(docs: list[dict]) -> dict[str, np.ndarray]:
+    """番号の無い見出しごとに、レベルの手がかり・正解のレベル・ルールの答え（本文の何倍か）。
+    番号のある見出しは番号の深さで決まる（ルールで当たる）ので、学習にも採点にも入れない"""
+    from hybrid_extractor.features import level_doc_info, level_features
+    from hybrid_extractor.rules import LEVEL1_RATIO, LEVEL2_RATIO
+
+    x, y, rule = [], [], []
+    for doc in docs:
+        pages = doc["pages"]
+        info = level_doc_info(pages)
+        for page in pages:
+            blocks = page["blocks"]
+            for i, b in enumerate(blocks):
+                if b["label"] != "heading" or b.get("level") not in LEVELS or SECTION_NUMBER.match((b.get("text") or "").strip()):
+                    continue
+                x.append(level_features(blocks, i, page, info))
+                y.append(b["level"])
+                ratio = (b.get("font_size") or info["body"]) / info["body"]
+                rule.append(1 if ratio >= LEVEL1_RATIO else 2 if ratio >= LEVEL2_RATIO else 3)
+    return {"x": np.array(x, dtype=np.float32), "y": np.array(y), "rule": np.array(rule)}
+
+
+def cmd_levels(args: argparse.Namespace) -> None:
+    """見出しのレベルの専門家（レベル1・2・3 にそれぞれ MLP。一番自信のあるレベルを選ぶ）"""
+    from hybrid_extractor.features import LEVEL_FEATURE_NAMES
+
+    train, val, test = (level_examples(load_docs(s)) for s in ("train", "val", "test"))
+    print(f"見出しのレベルの専門家（番号の無い見出し）: 学習 {len(train['y'])}、検証 {len(val['y'])}、テスト {len(test['y'])}、"
+          f"手がかり {train['x'].shape[1]}個")
+    probs = []
+    for level in LEVELS:
+        model, std, history = train_binary(train["x"], (train["y"] == level).astype(np.float32), val["x"],
+                                           (val["y"] == level).astype(np.float32), hidden=args.hidden, epochs=args.epochs,
+                                           log=False, seed=args.seed)
+        probs.append(predict_binary(model, std, test["x"]))
+        save_checkpoint(ckpt_dir() / "levels" / f"level{level}.pt", model, std,
+                        {"n_in": train["x"].shape[1], "hidden": args.hidden, "level": level, "features": LEVEL_FEATURE_NAMES},
+                        {"epochs": len(history)})
+    ai = np.array(LEVELS)[np.stack(probs, axis=1).argmax(axis=1)]
+    print(f"テスト用データでのレベルの正解率（番号の無い見出し）: ルール版 {(test['rule'] == test['y']).mean():.4f} → "
+          f"AI版 {(ai == test['y']).mean():.4f}")
+    for level in LEVELS:
+        mask = test["y"] == level
+        print(f"  レベル{level}  {int(mask.sum()):5d}件  ルール {(test['rule'][mask] == level).mean():.3f}  AI {(ai[mask] == level).mean():.3f}")
+
+
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description="自作AIの専門家を学習させ、ルール版と比べる")
     parser.add_argument("--data-prefix", default="", help="学習データのフォルダ名の頭（例: xtimes_ → data/xtimes_train など）")
@@ -404,6 +458,11 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--seed", type=int, default=0)
     p.add_argument("--n-features", type=int, default=0, help="手がかりの先頭この数だけで学習する（0 なら全部）")
     p.set_defaults(func=cmd_labels)
+    p = sub.add_parser("levels", help="見出しのレベルの専門家（番号の無い見出し）")
+    p.add_argument("--hidden", type=int, default=64)
+    p.add_argument("--epochs", type=int, default=60)
+    p.add_argument("--seed", type=int, default=0)
+    p.set_defaults(func=cmd_levels)
     p = sub.add_parser("inline", help="文中の数式の専門家")
     p.add_argument("--d-model", type=int, default=64)
     p.add_argument("--layers", type=int, default=2)

@@ -223,7 +223,11 @@ def predict_ai(pdf_path: str, math: str = "rule", math_checkpoint: str | None = 
         finder = inline_expert(inline_path) if inline_finder == "ai" else INLINE_MATH_EXPERTS["rule"]
         read_math(pdf_path, decided, reader, finder)
     labeled = [[(b, d.label) for b, d in items] for items in decided]
-    return to_labeled_ir(pages, labeled, os.path.basename(pdf_path), NAME_AI)
+    levels = None
+    if (base / "levels" / "level1.pt").exists():
+        from hybrid_extractor.ai_experts import heading_levels_ai
+        levels = heading_levels_ai(pages, labeled, base / "levels")   # 見出しのレベルの専門家（あれば）
+    return to_labeled_ir(pages, labeled, os.path.basename(pdf_path), NAME_AI, levels)
 
 
 def main() -> None:

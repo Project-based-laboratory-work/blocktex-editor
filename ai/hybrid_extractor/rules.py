@@ -218,10 +218,12 @@ def label_pages(pages: list[PageBlocks]) -> list[list[tuple[Block, str]]]:
     return result
 
 
-def to_labeled_ir(pages: list[PageBlocks], labeled: list[list[tuple[Block, str]]], source: str, structurer: str) -> IRDocument:
-    """(ブロック, ラベル) の並びをラベル付きIRにする。見出しのレベルもここで決める"""
+def to_labeled_ir(pages: list[PageBlocks], labeled: list[list[tuple[Block, str]]], source: str, structurer: str,
+                  levels: list[int | None] | None = None) -> IRDocument:
+    """(ブロック, ラベル) の並びをラベル付きIRにする。見出しのレベルもここで決める（levels を渡せばそれを使う。
+    AI モードのレベルの専門家。ai_experts.heading_levels_ai）"""
     flat = [item for items in labeled for item in items]
-    levels = iter(heading_levels(flat))
+    levels = iter(levels if levels is not None else heading_levels(flat))
     ir_pages = []
     for page, items in zip(pages, labeled):
         elements = [to_element(b, page.width, page.height, label=label, level=next(levels)) for b, label in items]

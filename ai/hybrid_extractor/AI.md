@@ -375,6 +375,7 @@ python -m hybrid_extractor.inline_math_data --out hybrid_extractor/data/inline_v
 python -m hybrid_extractor.inline_math_data --out hybrid_extractor/data/inline_test --docs 120 --seed 12
 python -m hybrid_extractor.train boundary      # 約1分半（CPU）
 python -m hybrid_extractor.train labels        # 約1分
+python -m hybrid_extractor.train levels        # 見出しのレベルの専門家（番号の無い見出し。FINDINGS.md 4.8）
 python -m hybrid_extractor.train inline --epochs 10   # CPU で1時間くらい
 python -m hybrid_extractor.inline_math_eval --out hybrid_extractor/data/inline_math --docs 60 --finder ai
 python -m hybrid_extractor.operator_rules hybrid_extractor/sample_data/sample.pdf out.json --ai --trace

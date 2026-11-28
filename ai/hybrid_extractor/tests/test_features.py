@@ -111,3 +111,23 @@ def test_list_layout_counts_bold_start_rows():
     assert list_layout(marks, blocks + [marks], page, 10.0)[2] == pytest.approx(np.log1p(3))
     # 行の記録が無い古い記録は 0
     assert list_layout({"kind": "text", "bbox": [0.1, 0.1, 0.2, 0.2]}, blocks, page, 10.0) == [0.0] * 5
+
+
+def test_level_features_use_rank_in_document():
+    from hybrid_extractor.features import LEVEL_FEATURE_NAMES, heading_sizes, level_doc_info, level_features
+
+    def blk(y, size, text, bold=True, rows=1):
+        return {"kind": "text", "bbox": [0.13, y, 0.6, y + 0.02], "text": text, "font_size": size, "bold": bold,
+                "font": "Gothic" if bold else "Mincho", "n_rows": rows}
+
+    # jsarticle の2段組のような文書: section 13.3pt、subsection は本文と同じ 11.1pt の太字
+    body_text = "本文の段落です。" * 10
+    blocks = [blk(0.1, 13.3, "課題"), blk(0.13, 11.1, body_text, bold=False, rows=4), blk(0.3, 11.1, "準備"),
+              blk(0.33, 11.1, body_text, bold=False, rows=4)]
+    page = {"page": 1, "width": 595.0, "height": 842.0, "blocks": blocks}
+    info = level_doc_info([page])
+    assert heading_sizes([page], info["body"]) == [13.3, 11.1]
+    sec = dict(zip(LEVEL_FEATURE_NAMES, level_features(blocks, 0, page, info)))
+    sub = dict(zip(LEVEL_FEATURE_NAMES, level_features(blocks, 2, page, info)))
+    assert sec["rank_0"] == 1.0 and sub["rank_1"] == 1.0   # 本文の何倍かでは 1.2 と 1.0 だが、順位では1番目と2番目
+    assert sub["is_body_size"] == 1.0 and sec["is_body_size"] == 0.0

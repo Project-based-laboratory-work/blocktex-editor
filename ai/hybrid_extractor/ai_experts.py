@@ -182,3 +182,34 @@ def inline_expert(path: Path = CHECKPOINTS / "inline_math.pt") -> InlineMathExpe
         return spans_from_probs(chars, probs, threshold)
 
     return InlineMathExpert("inline_math_ai", find)
+
+
+# ---- 見出しのレベルの専門家 ----
+
+
+def heading_levels_ai(pages: list, labeled: list[list[tuple[Block, str]]], directory: Path) -> list[int | None]:
+    """見出しのレベル（ラベルの並び flat と同じ順）。番号（1.2.3）があればその深さ（必ず当たる）、
+    無ければレベルの専門家（レベル1・2・3 の MLP）の一番自信のあるレベル。学習（train.py levels）と同じ手がかりを使う"""
+    from hybrid_extractor.features import SECTION_NUMBER, block_record, level_doc_info, level_features
+
+    experts = []
+    for level in (1, 2, 3):
+        model, std, _ = load_mlp(directory / f"level{level}.pt")
+        experts.append((level, model, std))
+    records = [{"page": p.page, "width": p.width, "height": p.height,
+                "blocks": [block_record(b, p.width, p.height) for b in p.blocks]} for p in pages]
+    info = level_doc_info(records)
+    levels: list[int | None] = []
+    for page, rec, items in zip(pages, records, labeled):
+        index = {id(b): i for i, b in enumerate(page.blocks)}
+        for b, label in items:
+            if label != "heading":
+                levels.append(None)
+                continue
+            m = SECTION_NUMBER.match((b.text or "").strip())
+            if m:
+                levels.append(min(3, m.group(0).strip().rstrip(".").count(".") + 1))
+                continue
+            f = level_features(rec["blocks"], index[id(b)], rec, info)
+            levels.append(max(experts, key=lambda e: mlp_prob(e[1], e[2], f))[0])
+    return levels
