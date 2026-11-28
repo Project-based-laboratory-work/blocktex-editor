@@ -77,7 +77,30 @@ def block_record(block: Block, width: float, height: float) -> dict:
         "n_rows": block.n_rows,
         "first_indent": block.first_indent,
         "list_head": block.list_head,
+        "rows": row_starts(block, width),
     }
+
+
+def row_starts(block: Block, width: float) -> list[list[float]]:
+    """ブロックの行ごとの [左端（0〜1）, 太字の語で始まるか, 記号・番号で始まるか]。
+    箇条書きを、見出し語の単語ではなく見た目で見分けるため（description の「太字の見出し語＋説明」が縦に続く、
+    記号がそろった位置で繰り返す）。太字で始まっても、行の全部が太字なら（見出し）数えない"""
+    rows: list[list[tuple[dict, tuple]]] = [[]]
+    for ch, deco in zip(block.chars, block.decorations or [()] * len(block.chars)):
+        if ch["c"] == "\n" and ch["bbox"] is None:
+            rows.append([])
+        elif ch["bbox"] is not None and not ch["c"].isspace():
+            rows[-1].append((ch, deco))
+    out = []
+    for row in rows:
+        if not row:
+            continue
+        text = "".join(ch["c"] for ch, _ in row)
+        bold = ["bold" in d for _, d in row]
+        bold_start = bold[0] and not all(bold)
+        marker = text[0] in BULLETS or bool(ENUM_HEAD.match(text + " ")) or bool(re.match(r"^\(?\d{1,2}[.)]", text))
+        out.append([round(row[0][0]["bbox"][0] / width, 5), float(bold_start), float(marker)])
+    return out
 
 
 # =====================================================================
@@ -216,6 +239,8 @@ BLOCK_FEATURE_NAMES = [
     "gap_above", "gap_below", "prev_size_ratio", "next_size_ratio", "prev_same_font", "next_same_font",
     "prev_mono", "next_mono", "prev_list_head", "next_list_head", "prev_is_table", "next_is_table",
     "prev_is_figure", "next_is_figure", "repeats",
+    # 箇条書きを見た目で見分ける手がかり（2026-11-28 に足した。前の重みは先頭の52個だけを使う）
+    "rows_bold_start", "items_hanging", "markers_aligned", "indent_from_text_left", "bold_start_rows",
 ]
 
 
@@ -279,6 +304,40 @@ def block_features(blocks: list[dict], i: int, page: dict, doc: dict) -> list[fl
         float(bool(prev and prev["kind"] == "figure")),     # キャプションは図・表のすぐ隣にある
         float(bool(nxt and nxt["kind"] == "figure")),
         float(text in doc["repeated"]),
+        *list_layout(b, blocks, page, body),
+    ]
+
+
+def list_layout(b: dict, blocks: list[dict], page: dict, body: float) -> list[float]:
+    """箇条書きの見た目の手がかり（行ごとの記録 rows から）:
+    - rows_bold_start: 太字の語で始まる行の割合
+    - items_hanging: 太字の語で始まり、ほかの行より左に出ている（ぶら下げの）行の数（description の項目の数）
+    - markers_aligned: 記号・番号で始まる行のうち、最初の記号と同じ位置にそろっている行の数（記号の種類は問わない）
+    - indent_from_text_left: ブロックの左端が、ページの本文の左端からどれだけ右にあるか（文字の数。箇条書きは字下げされる）
+    - bold_start_rows: 太字の語で始まる行の数。description の箇条書きは項目ごとに1行ずつあるが、
+      「太字の語で始まる段落」は最初の1行だけ（jsarticle の description はぶら下げにならないので、items_hanging では見分けられない）
+    rows の無い古い記録では 0"""
+    rows = b.get("rows") or []
+    w = page["width"]
+    unit = body / w   # 本文の文字1つの幅（0〜1）
+    if not rows:
+        return [0.0, 0.0, 0.0, 0.0, 0.0]
+    bold_rows = [r for r in rows if r[1]]
+    others = [r[0] for r in rows if not r[1]]
+    base = statistics.median(others) if others else None
+    hanging = sum(1 for r in bold_rows if base is not None and r[0] < base - 0.5 * unit)
+    markers = [r[0] for r in rows if r[2]]
+    aligned = sum(1 for x in markers if abs(x - markers[0]) <= 0.3 * unit) if len(markers) >= 2 else 0
+    # 本文の左端: 同じ段（ページの左半分 / 右半分）の文字のブロックの左端の、下から4分の1
+    half = b["bbox"][0] >= 0.5
+    lefts = sorted(o["bbox"][0] for o in blocks if o["kind"] == "text" and (o["bbox"][0] >= 0.5) == half)
+    text_left = lefts[len(lefts) // 4] if lefts else b["bbox"][0]
+    return [
+        len(bold_rows) / len(rows),
+        math.log1p(hanging),
+        math.log1p(aligned),
+        clip((b["bbox"][0] - text_left) / unit, -5, 20),
+        math.log1p(len(bold_rows)),
     ]
 
 

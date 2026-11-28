@@ -367,9 +367,9 @@ python -m hybrid_extractor.inline_math_eval --out hybrid_extractor/data/inline_m
 ```bash
 cd ai
 pip install torch --index-url https://download.pytorch.org/whl/cpu      # CPU版の PyTorch
-python -m hybrid_extractor.build_dataset --out hybrid_extractor/data/train --docs 1500 --seed 0   # 区切り・ラベル
-python -m hybrid_extractor.build_dataset --out hybrid_extractor/data/val --docs 300 --seed 1
-python -m hybrid_extractor.build_dataset --out hybrid_extractor/data/test --docs 300 --seed 2
+python -m hybrid_extractor.build_dataset --out hybrid_extractor/data/train --docs 1500 --seed 0 --content wide   # 区切り・ラベル
+python -m hybrid_extractor.build_dataset --out hybrid_extractor/data/val --docs 300 --seed 1 --content wide     # （材料を増やした wide。FINDINGS.md 4.7）
+python -m hybrid_extractor.build_dataset --out hybrid_extractor/data/test --docs 300 --seed 2 --content wide
 python -m hybrid_extractor.inline_math_data --out hybrid_extractor/data/inline_train --docs 600 --seed 10   # 文中の数式
 python -m hybrid_extractor.inline_math_data --out hybrid_extractor/data/inline_val --docs 120 --seed 11
 python -m hybrid_extractor.inline_math_data --out hybrid_extractor/data/inline_test --docs 120 --seed 12

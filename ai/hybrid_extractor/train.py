@@ -100,7 +100,7 @@ def cmd_boundary(args: argparse.Namespace) -> None:
     xv, yv, _ = boundary_examples(load_docs("val"))
     xt, yt, rt = boundary_examples(load_docs("test"))
     print(f"  学習 {len(y)}組（続き {y.mean():.1%}）、検証 {len(yv)}組、テスト {len(yt)}組、特徴 {x.shape[1]}個")
-    model, std, history = train_binary(x, y, xv, yv, hidden=args.hidden, epochs=args.epochs)
+    model, std, history = train_binary(x, y, xv, yv, hidden=args.hidden, epochs=args.epochs, seed=args.seed)
     ai = binary_scores(predict_binary(model, std, xt), yt)
     rule = binary_scores(rt, yt)
     print("テスト用データでの比較（はい = 続き）")
@@ -156,6 +156,10 @@ def operator_decide(probs: dict[str, np.ndarray], data: dict[str, np.ndarray]) -
 def cmd_labels(args: argparse.Namespace) -> None:
     print("ラベルの専門家: 特徴を作る")
     train, val, test = (label_examples(load_docs(s)) for s in ("train", "val", "test"))
+    if args.n_features:
+        # 手がかりの先頭 n 個だけで学習する（後から足した手がかりを使わない、前と同じ条件の比べる相手を作るとき）
+        for data in (train, val, test):
+            data["x"] = data["x"][:, :args.n_features]
     print(f"  学習 {len(train['labels'])}、検証 {len(val['labels'])}、テスト {len(test['labels'])}ブロック、"
           f"特徴 {train['x'].shape[1]}個")
     probs = {}
@@ -165,7 +169,7 @@ def cmd_labels(args: argparse.Namespace) -> None:
         y = (train["labels"] == target).astype(np.float32)
         yv = (val["labels"] == target).astype(np.float32)
         model, std, history = train_binary(train["x"], y, val["x"], yv, hidden=args.hidden, epochs=args.epochs,
-                                           log=args.verbose)
+                                           log=args.verbose, seed=args.seed)
         yt = (test["labels"] == target).astype(np.float32)
         probs[target] = predict_binary(model, std, test["x"])
         ai = binary_scores(probs[target], yt)
@@ -391,11 +395,14 @@ def main(argv: list[str] | None = None) -> None:
     p = sub.add_parser("boundary", help="区切りの専門家")
     p.add_argument("--hidden", type=int, default=64)
     p.add_argument("--epochs", type=int, default=60)
+    p.add_argument("--seed", type=int, default=0)
     p.set_defaults(func=cmd_boundary)
     p = sub.add_parser("labels", help="ラベルの専門家")
     p.add_argument("--hidden", type=int, default=64)
     p.add_argument("--epochs", type=int, default=60)
     p.add_argument("--verbose", action="store_true", help="エポックごとの損失を表示する")
+    p.add_argument("--seed", type=int, default=0)
+    p.add_argument("--n-features", type=int, default=0, help="手がかりの先頭この数だけで学習する（0 なら全部）")
     p.set_defaults(func=cmd_labels)
     p = sub.add_parser("inline", help="文中の数式の専門家")
     p.add_argument("--d-model", type=int, default=64)

@@ -89,3 +89,25 @@ def test_mlp_learns_a_simple_rule():
     y = (x[:, 0] > 0).astype(np.float32)
     model, std, _ = train_binary(x[:400], y[:400], x[400:], y[400:], epochs=40, log=False)
     assert binary_scores(predict_binary(model, std, x[400:]), y[400:])["acc"] >= 0.95
+
+
+def test_list_layout_counts_bold_start_rows():
+    from hybrid_extractor.features import list_layout
+
+    page = {"page": 1, "width": 595.0, "height": 842.0}
+    # description の箇条書き: 3行とも太字の語で始まる。「太字の語で始まる段落」: 1行目だけ
+    desc = {"kind": "text", "bbox": [0.15, 0.3, 0.8, 0.36], "rows": [[0.15, 1.0, 0.0], [0.15, 1.0, 0.0], [0.15, 1.0, 0.0]]}
+    para = {"kind": "text", "bbox": [0.13, 0.4, 0.87, 0.46], "rows": [[0.15, 1.0, 0.0], [0.13, 0.0, 0.0], [0.13, 0.0, 0.0]]}
+    body = {"kind": "text", "bbox": [0.13, 0.5, 0.87, 0.6], "rows": [[0.13, 0.0, 0.0]]}
+    blocks = [desc, para, body]
+    d = dict(zip(["bold_ratio", "hanging", "aligned", "indent", "bold_rows"], list_layout(desc, blocks, page, 10.0)))
+    p = dict(zip(["bold_ratio", "hanging", "aligned", "indent", "bold_rows"], list_layout(para, blocks, page, 10.0)))
+    assert d["bold_ratio"] == 1.0 and p["bold_ratio"] < 0.5
+    assert d["bold_rows"] > p["bold_rows"]
+    assert d["indent"] > 0   # 本文の左端（0.13）より右にある
+    # 記号の箇条書き: 記号がそろった位置で3行
+    marks = {"kind": "text", "bbox": [0.16, 0.6, 0.8, 0.66], "rows": [[0.16, 0.0, 1.0], [0.18, 0.0, 0.0], [0.16, 0.0, 1.0],
+                                                                       [0.16, 0.0, 1.0]]}
+    assert list_layout(marks, blocks + [marks], page, 10.0)[2] == pytest.approx(np.log1p(3))
+    # 行の記録が無い古い記録は 0
+    assert list_layout({"kind": "text", "bbox": [0.1, 0.1, 0.2, 0.2]}, blocks, page, 10.0) == [0.0] * 5

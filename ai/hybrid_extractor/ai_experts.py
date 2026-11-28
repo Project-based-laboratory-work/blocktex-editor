@@ -88,8 +88,9 @@ def label_experts(directory: Path = CHECKPOINTS / "labels") -> list[Expert]:
     for path in sorted(directory.glob("*.pt")):
         model, std, config = load_mlp(path)
 
-        def judge(block: Block, info, model=model, std=std) -> float:
-            return mlp_prob(model, std, info.features[id(block)])
+        # 特徴は後ろに足していくので、前に学習した重みには、学習したときの数（n_in）だけ先頭から渡す
+        def judge(block: Block, info, model=model, std=std, n_in=config["n_in"]) -> float:
+            return mlp_prob(model, std, info.features[id(block)][:n_in])
 
         experts.append(Expert(f"{config['label']}_ai", config["label"], judge))
     return experts
