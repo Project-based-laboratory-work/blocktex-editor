@@ -55,6 +55,10 @@ KEEP_LABELS = {"table", "figure"}  # 帯の中でも other にしないラベル
 MERGE_GAP = 0.8  # ブロックに入らなかった行どうしは、行の高さのこの倍までの縦のすき間ならつなぐ
 MATH_LINE_GAP = 0.25  # 数式の行の間とみなす空白の高さ（文字の行の高さに対する割合）。分数の中の小さな空白では切らない
 MATH_MIN_GAP = 6  # 文字の行の高さが分からないときの、行の間とみなす空白の高さ（画素）
+LOOSE_LABELS = {"figure", "table", "math"}  # 四角を座標AIのままにするラベル（それ以外は、中の文字の行にぴったり合わせる）
+INDENT_MIN, INDENT_MAX = 0.6, 3.0  # 段落の1行目の字下げとみなす、左端のずれ（行の高さに対する倍率）
+SHORT_END = 1.5  # 行の右端が、ブロックの右端から行の高さのこの倍より手前で終わっていたら「段落の最後の行」とみなす
+MARK_ZOOM = 2  # 帯の中の小さな文字（ページ番号）は、切り抜いてこの倍に拡大してから読む。そのままだと EasyOCR が見つけない
 RELATIONS = {"=", "<", ">", r"\leq", r"\geq", r"\neq", r"\approx", r"\equiv", r"\sim", r"\simeq", r"\propto"}
 
 Box = tuple[float, float, float, float]  # 画素
@@ -149,25 +153,21 @@ def assign_lines(boxes: list[tuple[str, Box]], lines: list[Line]) -> tuple[list[
 def orphan_blocks(orphans: list[Line], height: float) -> list[Block]:
     """ブロックに入らなかった行 → 上端・下端の帯の行は1行ずつ、それ以外は近い行をまとめて paragraph のブロックにする
     （帯の中のものは、あとで margin_others が other にする）"""
-
-    def union(lines: list[Line]) -> Box:
-        return (min(l.box[0] for l in lines), min(l.box[1] for l in lines), max(l.box[2] for l in lines), max(l.box[3] for l in lines))
-
     out, groups = [], []
     for row in rows_of(orphans):
-        box = union(row)
+        box = union_box(row)
         cy = (box[1] + box[3]) / 2
         if cy < TOP_BAND * height or cy > BOTTOM_BAND * height:
             out.append(Block("paragraph", box, row))
             continue
         if groups:
-            last = union(groups[-1])
+            last = union_box(groups[-1])
             line_height = box[3] - box[1]
             if box[1] - last[3] <= MERGE_GAP * line_height and box[0] < last[2] and last[0] < box[2]:
                 groups[-1] += row
                 continue
         groups.append(list(row))
-    return out + [Block("paragraph", union(g), g) for g in groups]
+    return out + [Block("paragraph", union_box(g), g) for g in groups]
 
 
 def rows_of(lines: list[Line]) -> list[list[Line]]:
@@ -184,6 +184,71 @@ def rows_of(lines: list[Line]) -> list[list[Line]]:
     return [sorted(row, key=lambda l: l.box[0]) for row in rows]
 
 
+def union_box(lines: list[Line]) -> Box:
+    return (min(l.box[0] for l in lines), min(l.box[1] for l in lines), max(l.box[2] for l in lines), max(l.box[3] for l in lines))
+
+
+def split_paragraphs(blocks: list[Block]) -> list[Block]:
+    """座標AIが続けてしまった段落を分ける。前の行が右端まで届かずに終わり、次の行が1文字ぶん字下げしていたら、
+    そこで新しい段落が始まっている（TeX の段落の組み方）"""
+    out = []
+    for b in blocks:
+        rows = rows_of(b.lines)
+        if b.label != "paragraph" or len(rows) < 2:
+            out.append(b)
+            continue
+        boxes = [union_box(row) for row in rows]
+        left, right = min(x[0] for x in boxes), max(x[2] for x in boxes)
+        start = 0
+        for k in range(1, len(rows)):
+            h = boxes[k][3] - boxes[k][1]
+            short = boxes[k - 1][2] < right - SHORT_END * h
+            indent = INDENT_MIN * h <= boxes[k][0] - left <= INDENT_MAX * h
+            if short and indent:
+                out.append(Block("paragraph", b.box, [l for row in rows[start:k] for l in row]))
+                start = k
+        out.append(Block("paragraph", b.box, [l for row in rows[start:] for l in row]))
+    return out
+
+
+def fit_boxes(blocks: list[Block]) -> None:
+    """文字のブロックの四角を、中の文字の行（OCRの枠）にぴったり合わせる。座標AIの四角は余白を含みやすい"""
+    for b in blocks:
+        if b.label not in LOOSE_LABELS and b.lines:
+            b.box = union_box(b.lines)
+
+
+def margin_marks(gray: np.ndarray, blocks: list[Block]) -> list[Block]:
+    """上端・下端の帯で、どのブロックにも入っていない文字（ページ番号など）を切り抜いて読み、other のブロックにする。
+    ページ全体を読んだときの EasyOCR は、ぽつんとある「1」のような小さな文字を見落とす"""
+    height = gray.shape[0]
+    rows_h = [max(l.box[3] for l in row) - min(l.box[1] for l in row) for b in blocks for row in rows_of(b.lines)]
+    line_h = float(np.median(rows_h)) if rows_h else 0.0  # 本文の1行の高さ。ほかの文字のブロックと同じく、四角は1行ぶんの高さにする
+    ink = gray < 128
+    for b in blocks:
+        x0, y0, x1, y1 = (int(v) for v in b.box)
+        ink[max(0, y0 - 4) : y1 + 5, max(0, x0 - 4) : x1 + 5] = False
+    out = []
+    for top, bottom in ((0, int(TOP_BAND * height)), (int(BOTTOM_BAND * height), height)):
+        rows = np.flatnonzero(ink[top:bottom].any(axis=1))
+        for group in np.split(rows, np.flatnonzero(np.diff(rows) > 3) + 1) if len(rows) else []:
+            y0, y1 = top + group[0], top + group[-1] + 1
+            cols = np.flatnonzero(ink[y0:y1].any(axis=0))
+            for part in np.split(cols, np.flatnonzero(np.diff(cols) > 2 * (y1 - y0)) + 1):
+                x0, x1 = part[0], part[-1] + 1
+                if y1 - y0 < 5 or x1 - x0 > 30 * (y1 - y0):  # 小さすぎる点・横線は文字ではない
+                    continue
+                pad = y1 - y0
+                piece = gray[max(0, y0 - pad) : y1 + pad, max(0, x0 - pad) : x1 + pad]
+                zoomed = np.asarray(Image.fromarray(piece).resize((piece.shape[1] * MARK_ZOOM, piece.shape[0] * MARK_ZOOM), Image.BICUBIC))
+                text = " ".join(t for _, t, _ in _reader().readtext(zoomed) if t.strip())
+                if text:
+                    cy, half, grow = (y0 + y1) / 2, max(y1 - y0, line_h) / 2, max(0.0, line_h - (y1 - y0)) / 4
+                    box = (max(0.0, x0 - grow), max(0.0, cy - half), x1 + grow, min(float(height), cy + half))
+                    out.append(Block("other", box, [Line(box, text)]))
+    return out
+
+
 def margin_others(blocks: list[Block], height: float) -> None:
     """上端・下端の帯にある、本文より大きくない1行だけのブロックを other にする（ヘッダー・ページ番号）"""
     rows = [row for b in blocks for row in rows_of(b.lines)]
@@ -193,7 +258,9 @@ def margin_others(blocks: list[Block], height: float) -> None:
         cy = (b.box[1] + b.box[3]) / 2
         if b.label in KEEP_LABELS or not (cy < TOP_BAND * height or cy > BOTTOM_BAND * height):
             continue
-        if len(rows_of(b.lines)) <= 1 and (body is None or b.box[3] - b.box[1] <= MARGIN_LINE_HEIGHT * body):
+        # 大きさは文字の行の高さで比べる（座標AIの四角は文字より高めに出ることがある）。行が無ければ四角の高さ
+        size = max(l.box[3] for l in b.lines) - min(l.box[1] for l in b.lines) if b.lines else b.box[3] - b.box[1]
+        if len(rows_of(b.lines)) <= 1 and (body is None or size <= MARGIN_LINE_HEIGHT * body):
             b.label = "other"
 
 
@@ -359,8 +426,11 @@ def predict(image_path: str, layout_checkpoint: str = LAYOUT_CHECKPOINT, table_c
     with Image.open(image_path) as opened:
         image = opened.convert("L")
     blocks, orphans = assign_lines(detect_blocks(image_path, layout_checkpoint), read_lines(np.asarray(image)) if ocr else [])
-    blocks += orphan_blocks(orphans, image.height)
+    blocks = split_paragraphs(blocks + orphan_blocks(orphans, image.height))
+    fit_boxes(blocks)
     margin_others(blocks, image.height)
+    if ocr:
+        blocks += margin_marks(np.asarray(image), blocks)
     body_stroke = page_body_stroke(blocks, image)
     elements = [to_element(b, image, table_checkpoint, math_checkpoint, ocr, deco_checkpoint, body_stroke)
                 for b in reading_order(blocks, image.width)]  # fmt: skip
