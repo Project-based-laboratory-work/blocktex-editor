@@ -1,7 +1,7 @@
 import numpy as np
 from PIL import Image
 
-from image_ai.pipeline import (Block, Line, align_mark, assign_lines, block_text, code_text, margin_others, math_lines,
+from image_ai.pipeline import (fit_boxes, split_paragraphs, stroke_width, Block, Line, align_mark, assign_lines, block_text, code_text, margin_others, math_lines,
                                orphan_blocks, reading_order)  # fmt: skip
 
 
@@ -27,10 +27,11 @@ def test_margin_others_relabels_small_single_lines_but_keeps_big_titles_and_tabl
     body = [Block("paragraph", (100, 300 + 30 * k, 900, 320 + 30 * k), [Line((100, 300 + 30 * k, 900, 320 + 30 * k), "本文")]) for k in range(5)]
     number = Block("math", (480, 950, 520, 970), [Line((480, 950, 520, 970), "12")])
     header = Block("date", (700, 100, 900, 118), [Line((700, 100, 900, 118), "評価用の文書")])
+    tall_box = Block("math", (700, 80, 900, 115), [Line((700, 92, 900, 110), "Evaluation document")])  # 四角だけ高い
     title = Block("title", (200, 60, 800, 110), [Line((200, 60, 800, 110), "大きなタイトル")])
     table = Block("table", (100, 920, 900, 990), [])
-    margin_others(body + [number, header, title, table], height)
-    assert (number.label, header.label, title.label, table.label) == ("other", "other", "title", "table")
+    margin_others(body + [number, header, tall_box, title, table], height)
+    assert (number.label, header.label, tall_box.label, title.label, table.label) == ("other", "other", "other", "title", "table")
     assert all(b.label == "paragraph" for b in body)
 
 
@@ -80,3 +81,29 @@ def test_align_mark_goes_before_the_first_top_level_relation():
     assert align_mark(r"y=\frac{a}{b}") == r"y&=\frac{a}{b}"
     assert align_mark(r"f_{x=1}\leq2") == r"f_{x=1}&\leq2"
     assert align_mark("abc") == "abc"
+
+
+def test_stroke_width_measures_line_thickness():
+    def bars(width: int) -> np.ndarray:
+        image = np.full((40, 60), 255, np.uint8)
+        for x in (10, 30, 50):
+            image[5:35, x : x + width] = 0  # 縦線3本
+        return image
+
+    assert abs(stroke_width(bars(2)) - 2) < 0.3 and abs(stroke_width(bars(4)) - 4) < 0.5
+
+
+def test_split_paragraphs_at_short_end_and_indent():
+    # 1段落目は2行（2行目が短く終わる）、2段落目は字下げで始まる2行、3段落目は字下げなしで続く行（分けない）
+    rows = [(0, 1000), (0, 600), (30, 1000), (0, 1000)]
+    lines = [Line((x0, 40 * k, x1, 40 * k + 20), f"行{k}") for k, (x0, x1) in enumerate(rows)]
+    parts = split_paragraphs([Block("paragraph", (0, 0, 1000, 160), lines), Block("list", (0, 0, 1000, 160), list(lines))])
+    assert [[l.text for l in b.lines] for b in parts[:2]] == [["行0", "行1"], ["行2", "行3"]]
+    assert parts[2].label == "list" and len(parts[2].lines) == 4  # 段落以外は分けない
+
+
+def test_fit_boxes_shrinks_text_blocks_to_their_lines_but_keeps_tables():
+    text = Block("paragraph", (0, 0, 500, 300), [Line((10, 20, 400, 40), "a"), Line((10, 50, 300, 70), "b")])
+    table = Block("table", (0, 0, 500, 300), [Line((10, 20, 400, 40), "a")])
+    fit_boxes([text, table])
+    assert text.box == (10, 20, 400, 70) and table.box == (0, 0, 500, 300)
